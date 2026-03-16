@@ -1,0 +1,18 @@
+OPAL Feasibility Test 4 — Equation Count Scaling
+Run : 2026-03-16 03:27:58
+
+     N   Eqs(flat)   Eqs(back)   States   BLTblks   MaxBlk   t_inst   t_flat   t_back
+  -----------------------------------------------------------------------------------
+     1           4           4        2         4        1     0.02     0.02     0.04
+     5          16          16       10        16        1     0.01     0.03     0.05
+    10          31          31       20        31        1     0.02     0.04     0.07
+    20          61          61       40        61        1     0.02     0.05     0.11
+
+Findings:
+  Equation scaling: 4 eqs @ N=1 → 61 eqs @ N=20  (ratio=15.25, N ratio=20.0) → SUPER-LINEAR
+  BackEnd time scaling: 0.04s → 0.11s  (ratio=2.8×)
+
+Decision criteria (FM4):
+  PASS: equation count linear in N, backEnd time ≤ 2× linear → proceed
+  WARN: super-linear time → may need to extract before index reduction
+  FAIL: extraction fails for large N → vessel must be external C++

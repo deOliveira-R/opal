@@ -1,0 +1,22 @@
+OPAL Feasibility Test 3 — Modelica.Fluid Compatibility
+Run  : 2026-03-16 03:27:39
+omc  : v1.27.0-dev-228-g6a54693060-cmake
+Model: FluidPipeLoop (static / dynamic / two-phase) with MSL 4.1.0
+
+Step                             Status   Vars    Eqs  States    BLT  Loops    ZC  Match   Adj   Time(s)
+--------------------------------------------------------------------------------------------------------
+FluidPipeLoopStatic               PASS      57     27       0     27      0     0   yes    yes       3.3
+FluidPipeLoopDynamic              PASS     176    101       4     79      3     0   yes    yes       5.2
+FluidPipeLoopTwophase             PASS      93     33       0     33      0     2   yes    yes       2.7
+--------------------------------------------------------------------------------------------------------
+
+FM3 (opaque external calls) assessment:
+  Baseline (SimpleLoop, Test 1): vars=5  eqs=5  BLT=2
+  FluidPipeLoopStatic: eqs=27  states=0  FM3=OPAQUE (external calls present)  time=1.1s
+  FluidPipeLoopDynamic: eqs=101  states=4  FM3=OPAQUE (external calls present)  time=1.6s
+  FluidPipeLoopTwophase: eqs=33  states=0  FM3=OPAQUE (external calls present)  time=0.7s
+
+Decision criteria:
+  PASS: translation succeeds + equations accessible → proceed to solver
+  PARTIAL (opaque): external C calls present → need own media library
+  FAIL (translate error): FM3 confirmed → write pure-Modelica IAPWS-IF97

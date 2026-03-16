@@ -1,0 +1,27 @@
+OPAL Feasibility Test 2 — Information Completeness
+Run  : 2026-03-16 03:26:50
+omc  : v1.27.0-dev-228-g6a54693060-cmake
+Model: WhenLoop (events) + StreamLoop (stream connectors)
+
+Step                             Status   Vars    Eqs  States    BLT  Loops    ZC  Match   Adj   Time(s)
+--------------------------------------------------------------------------------------------------------
+WhenLoop dumpXMLDAE(flat)         PASS       9      9       1      6      1     2   yes    yes       0.0
+WhenLoop dumpXMLDAE(optimiser)    PASS       9      9       1      6      1     2   yes    yes       0.0
+WhenLoop dumpXMLDAE(backEnd)      PASS       9      9       1      6      1     2   yes    yes       0.0
+StreamLoop dumpXMLDAE(flat)       PASS    None   None       0      0      0     0   yes    yes       0.0
+StreamLoop dumpXMLDAE(backEnd)    PASS    None   None       0      0      0     0   yes    yes       0.0
+--------------------------------------------------------------------------------------------------------
+
+Findings:
+  [A] Adjacency matrix decoded: 5 eqs, 5 vars, sparsity=0.480, parseable=YES
+  [B] WhenLoop backEnd: ZC=2, discrete=3, whenEq=1, events_survived=YES
+  [C] inStream() in flat XML: 0 calls, in backEnd: 0 calls  (0 = expanded, >0 = opaque call remaining)
+  [C] h_outflow vars visible: flat=4, backEnd=4
+  [D] Component name traceability: 19/19 = 100% have dot-prefix (FM5 assessment)
+
+Decision criteria:
+  FM1 (for-loop unrolling): tested in Test 5
+  FM2 (BLT scattering): see WhenLoop BLT block count
+  FM3 (opaque media): inStream() expansion shows mechanism
+  FM4 (scaling): tested in Tests 4 & 5
+  FM5 (name mangling): D check above

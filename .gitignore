@@ -1,0 +1,21 @@
+# Build outputs
+external/OpenModelica/build_cmake/
+
+# Python virtualenv
+external/venv/
+
+# Feasibility test outputs (large XML / flat Modelica files)
+feasibility/results/*.xml
+feasibility/results/*.mo
+feasibility/results/report.txt
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Claude Code local settings (machine-specific paths)
+.claude/settings.local.json
+
+# macOS
+.DS_Store

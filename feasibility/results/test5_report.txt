@@ -1,0 +1,20 @@
+OPAL Feasibility Test 5 — 3D Array Component Extraction
+Run : 2026-03-16 03:33:45
+
+  Mesh           Cells   Eqs(bk)   States    BLT   FM1(loops)   FM5(p_ok)   FM2(coh)   t_back
+  -------------------------------------------------------------------------------------------
+  2×2×3             12        40       24     40  0 loops left       12/12         NO     0.14
+  3×3×5             45       144       90    144  0 loops left       45/45         NO     0.38
+  4×4×8            128       400      256    400  0 loops left     128/128         NO     0.98
+
+Findings:
+  FM1 (for-loop unrolling): YES — for-loops unrolled in flat Modelica
+  FM5 (array index preservation): YES — p[i,j,k] names intact
+  FM2 (BLT coherence): 0/3 mesh sizes show column-aligned BLT blocks
+  FM4 (scaling): time 0.14s→0.98s for cells 12→128 (time ratio=7.0×, cell ratio=10.7×)
+
+Decision criteria:
+  FM1: for-loops unrolled → pattern-reconstruction pass needed (expected, Easy fix)
+  FM5: indices preserved → good; mangled → FM1 reconstruction handles it
+  FM2: BLT coherent → vessel stays together; scattered → use 'flat' level extraction
+  FM4: time linear in cells → proceed; super-linear → vessel internals to C++
