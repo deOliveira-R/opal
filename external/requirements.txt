@@ -1,0 +1,11 @@
+# OPAL project Python dependencies
+# Install: pip install -r external/requirements.txt
+
+# OpenModelica Python bridge (feasibility tests, extraction pipeline)
+OMPython==4.0.0
+
+# Numerical
+numpy>=2.0
+
+# pybind11 — C++ extension build system
+pybind11>=3.0

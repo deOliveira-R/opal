@@ -9,13 +9,21 @@ feasibility/results/*.xml
 feasibility/results/*.mo
 feasibility/results/report.txt
 
+# Solver build artifacts
+solver/single_phase/build/
+solver/single_phase/*.so
+
 # Python
 __pycache__/
 *.pyc
 *.pyo
+
+# Temporary Modelica probe files
+library/Media/tests/_probe.mo
 
 # Claude Code local settings (machine-specific paths)
 .claude/settings.local.json
 
 # macOS
 .DS_Store
+.gitnexus
