@@ -251,34 +251,13 @@ package Region2 "IAPWS-IF97 Region 2 — superheated steam (T ∈ [273,1073] K, 
     input Real h "Specific enthalpy [J/kg]";
     output Real T_val;
   protected
-    // IAPWS-IF97 backward equation for Region 2a (p < 4 MPa, h < 4000 kJ/kg)
-    // T(π,η) = Σ n_i π^I_i (η−2.1)^J_i,  π=p/1e6, η=h/2000e3
-    // Table B3 in the IAPWS 2003 backward-equations supplement (35 coefficients)
-    constant Integer I_bw[34] = {0,1,1,1,1,1,2,2,2,2,2,3,3,3,3,3,4,4,4,4,4,5,5,5,5,5,6,6,6,6,7,7,7,7};
-    constant Integer J_bw[34] = {0,0,1,2,3,5,0,1,2,3,5,0,1,2,3,4,0,1,2,3,4,0,1,2,3,4,0,1,2,4,0,1,3,4};
-    constant Real    n_bw[34] = {
-       1089.8952318288,  849.51654495535,  107.81748091826,
-      -3.3254990205468e2,  4.0347722262698e1,  2.0532509748600e-1,
-      -2.8116807679947e3, -4.2777600484963e3, -1.6843039085817e3,
-       5.2978617068793e2, -1.1521900018622e1,  4.9800018427219e2,
-       6.5162519539448e2,  1.1567193163397e3, -1.2048390024660e3,
-       5.2476628583730e2, -1.2068979543600e2, -9.9862523562800e1,
-       1.4468468049120e2, -5.1378985278285e2,  2.0498127000000e2,
-       1.0420920682840e2,  3.3267753866070e2, -8.2649613880100e1,
-      -3.2546539019940e2,  1.6620427024100e2, -1.4183219278680e2,
-       2.1800668898620e2, -4.9956736230370e2,  3.8022428697110e2,
-       1.2345754814400e2, -7.4490261750970e2,  3.1673117736990e2,
-      -4.6028461958800e2};
-    Real pi_bw = p / 1.0e6;
-    Real eta_bw = h / 2000.0e3;
-    Real T_guess;
-    Real f, dT;
     Real T_iter;
+    Real f, dT;
   algorithm
-    T_guess := sum(n_bw[i] * pi_bw^I_bw[i] * (eta_bw - 2.1)^J_bw[i] for i in 1:34);
-
-    T_iter := T_guess;
-    for iter in 1:5 loop
+    // Simple starting guess — mid-range for Region 2 (273–1073 K).
+    // Newton converges in 5–8 iterations from any reasonable guess.
+    T_iter := 600.0;
+    for iter in 1:10 loop
       f  := h_pT(p, T_iter) - h;
       dT := -f / cp_pT(p, T_iter);
       T_iter := T_iter + dT;

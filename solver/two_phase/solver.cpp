@@ -35,6 +35,8 @@
 #include "solver.hpp"
 #include <cstring>
 #include <algorithm>
+#include <cmath>
+#include <cstdio>
 
 namespace opal {
 
@@ -89,6 +91,25 @@ void TwoPhaseSolver::step(std::vector<double>& p,
 
     // 4. Algebraic flow update from new pressures
     update_flows(p, mdot, bc);
+
+    // CFL check: dt must be < rho*V/|mdot| for explicit enthalpy stability
+    if (!cfl_warned_) {
+        double dt_cfl = 1e30;
+        for (int i = 0; i < n_; ++i) {
+            double mdot_max = std::max(std::abs(mdot[i]), std::abs(mdot[i + 1]));
+            if (mdot_max > 0.0) {
+                double dt_local = props_[i].rho * V_ / mdot_max;
+                dt_cfl = std::min(dt_cfl, dt_local);
+            }
+        }
+        if (dt > dt_cfl) {
+            std::fprintf(stderr,
+                "OPAL WARNING: dt=%.3e exceeds enthalpy CFL limit %.3e "
+                "(ratio %.1f). Explicit enthalpy update may be unstable.\n",
+                dt, dt_cfl, dt / dt_cfl);
+            cfl_warned_ = true;
+        }
+    }
 
     // 5. Explicit enthalpy update (donor-cell, forward Euler)
     update_enthalpy(h, p, p_old, mdot, bc, dt, q_wall);
@@ -173,6 +194,7 @@ void TwoPhaseSolver::solve_pressure(std::vector<double>& p,
         b_[i] = alpha + inv_R_left + inv_R_right;
         d_[i] = alpha * p[i];
 
+        // Boundary terms (only for open boundaries)
         // Boundary terms
         if (i == 0)      d_[i] += bc.p_in  * inv_R_left;
         if (i == n_ - 1) d_[i] += bc.p_out * inv_R_right;

@@ -15,6 +15,7 @@
 
 #include "solver.hpp"
 #include "simple_fluid.hpp"
+#include "iapws97.hpp"
 
 namespace py = pybind11;
 using namespace opal;
@@ -50,6 +51,13 @@ PYBIND11_MODULE(opal_two_phase, m) {
     py::class_<SimpleFluidProperties, FluidProperties>(m, "SimpleFluidProperties")
         .def(py::init<>(), "Synthetic linear test fluid matching SimpleFluid.mo")
         .def("evaluate", &SimpleFluidProperties::evaluate,
+             py::arg("p"), py::arg("h"),
+             "Evaluate all properties at (p, h)");
+
+    // IAPWSIF97Properties ---------------------------------------------------
+    py::class_<IAPWSIF97Properties, FluidProperties>(m, "IAPWSIF97Properties")
+        .def(py::init<>(), "IAPWS-IF97 industrial steam tables (Regions 1, 2, 4)")
+        .def("evaluate", &IAPWSIF97Properties::evaluate,
              py::arg("p"), py::arg("h"),
              "Evaluate all properties at (p, h)");
 

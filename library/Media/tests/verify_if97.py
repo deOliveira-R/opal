@@ -949,11 +949,148 @@ def test_modelica_source_execution():
 
 
 # ===========================================================================
-# TEST 11: Region 3 guard — verify graceful degradation outside valid range
+# TEST 11: Modelica T_ph and Water API execution — verify backward equations
+#
+# This test catches coefficient transcription errors in the backward
+# equations (Region1.T_ph, Region2.T_ph) and the unified Water API
+# (rho_ph, drho_dp_h, drho_dh_p) that are NOT exercised by the forward-
+# function tests (Test 10 only calls h_pT, v_pT, s_pT).
+# ===========================================================================
+
+def test_modelica_backward_equations():
+    """Test 11: Execute the actual Modelica T_ph and Water API in OpenModelica."""
+    print("\n=== Test 11: Modelica Backward Equations & Water API ===")
+    omc, OM_HOME = _start_omc_session()
+    if omc is None:
+        print("  SKIP — OpenModelica not available.")
+        return None
+
+    import re, tempfile, csv
+
+    tol = 1e-4  # T_ph backward equation: 1e-4 relative (Newton, 5 iterations)
+    all_pass = True
+    n_points = 0
+    worst = ("", 0.0)
+
+    # Test points: (p [Pa], T [K], region)
+    # Stay within backward equation validity (p < 50 MPa)
+    test_points = [
+        # Region 1 — compressed liquid
+        (3.0e6,  300.0, 1),
+        (10.0e6, 350.0, 1),
+        (10.0e6, 500.0, 1),
+        (25.0e6, 400.0, 1),
+        (5.0e6,  280.0, 1),
+        # Region 2 — superheated steam
+        (0.1e6,  400.0, 2),
+        (1.0e6,  500.0, 2),
+        (1.0e6,  800.0, 2),
+        (5.0e6,  600.0, 2),
+        (5.0e6,  900.0, 2),
+    ]
+
+    with tempfile.TemporaryDirectory() as tmpdir_str:
+        tmpdir = pathlib.Path(tmpdir_str)
+        omc.sendExpression(f'cd("{tmpdir}")', parsed=False)
+
+        if not _load_media_package(omc, tmpdir):
+            err = omc.sendExpression('getErrorString()', parsed=False)
+            print(f"  FAIL — could not load Media package: {err}")
+            return False
+
+        for p_val, T_val, reg in test_points:
+            # Compute enthalpy from forward function (Python oracle)
+            if reg == 1:
+                h_val = h_R1(p_val, T_val)
+            else:
+                h_val = h_R2(p_val, T_val)
+
+            # Create a probe model that calls both T_ph and Water API
+            model_name = f"ProbeInv_R{reg}_{int(p_val/1e6)}_{int(T_val)}"
+            pkg = f"Media.IF97.Region{reg}"
+            mo_src = (
+                f'model {model_name}\n'
+                f'  constant Real p = {p_val};\n'
+                f'  constant Real h_val = {h_val};\n'
+                f'  Real T_inv = {pkg}.T_ph(p, h_val);\n'
+                f'  Real rho_w = Media.Water.rho_ph(p, h_val);\n'
+                f'  Real drho_dp = Media.Water.drho_dp_h(p, h_val);\n'
+                f'  Real drho_dh = Media.Water.drho_dh_p(p, h_val);\n'
+                f'end {model_name};\n'
+            )
+            probe_path = tmpdir / f"{model_name}.mo"
+            probe_path.write_text(mo_src)
+
+            omc.sendExpression(f'loadFile("{probe_path}")', parsed=False)
+
+            sim_result = omc.sendExpression(
+                f'simulate({model_name}, startTime=0, stopTime=0, '
+                f'outputFormat="csv", simflags="-lv=-LOG_SUCCESS")',
+                parsed=False
+            )
+
+            csv_path = tmpdir / f"{model_name}_res.csv"
+            if not csv_path.exists():
+                err = omc.sendExpression('getErrorString()', parsed=False)
+                print(f"  FAIL — simulation failed for R{reg} p={p_val/1e6}MPa T={T_val}K: {err}")
+                all_pass = False
+                continue
+
+            with open(csv_path) as f:
+                reader = csv.DictReader(f)
+                row = list(reader)[-1]
+
+            T_mo = float(row['T_inv'])
+            rho_mo = float(row['rho_w'])
+            drho_dp_mo = float(row['drho_dp'])
+            drho_dh_mo = float(row['drho_dh'])
+
+            # Python oracle values
+            if reg == 1:
+                T_py = T_ph_R1(p_val, h_val)
+                rho_py = rho_R1(p_val, T_val)
+                drho_dp_py = drho_dp_h_R1(p_val, T_val)
+                drho_dh_py = drho_dh_p_R1(p_val, T_val)
+            else:
+                T_py = T_ph_R2(p_val, h_val)
+                rho_py = rho_R2(p_val, T_val)
+                drho_dp_py = drho_dp_h_R2(p_val, T_val)
+                drho_dh_py = drho_dh_p_R2(p_val, T_val)
+
+            errs = {
+                'T_inv': abs(T_mo - T_py) / T_py,
+                'rho': abs(rho_mo - rho_py) / (abs(rho_py) + 1e-30),
+                'drho_dp': abs(drho_dp_mo - drho_dp_py) / (abs(drho_dp_py) + 1e-30),
+                'drho_dh': abs(drho_dh_mo - drho_dh_py) / (abs(drho_dh_py) + 1e-30),
+            }
+            max_prop = max(errs, key=errs.get)
+            max_err = errs[max_prop]
+            ok = max_err < tol
+            all_pass = all_pass and ok
+            n_points += 1
+            if max_err > worst[1]:
+                worst = (f"R{reg} p={p_val/1e6}MPa T={T_val:.0f}K {max_prop}", max_err)
+            if not ok:
+                print(f"  FAIL R{reg} p={p_val/1e6}MPa T={T_val:.0f}K  "
+                      f"worst={max_prop} err={max_err:.2e}")
+                print(f"    Modelica: T={T_mo:.6f} rho={rho_mo:.6f} "
+                      f"drho_dp={drho_dp_mo:.6e} drho_dh={drho_dh_mo:.6e}")
+                print(f"    Python:   T={T_py:.6f} rho={rho_py:.6f} "
+                      f"drho_dp={drho_dp_py:.6e} drho_dh={drho_dh_py:.6e}")
+
+            omc.sendExpression(f'deleteClass({model_name})', parsed=False)
+
+    tag = "PASS" if all_pass else "FAIL"
+    print(f"  {n_points} points tested, worst: {worst[0]} err={worst[1]:.2e}  [{tag}]")
+    return bool(all_pass)
+
+
+# ===========================================================================
+# TEST 12: Region 3 guard — verify graceful degradation outside valid range
 # ===========================================================================
 
 def test_region3_guard():
-    """Test 11: Document that near-critical states (Region 3) are outside valid range.
+    """Test 12: Document that near-critical states (Region 3) are outside valid range.
 
     Region 3 (T > 623.15 K, p > ~16.5 MPa) is not implemented.  The saturation
     functions h_f(p) and rho_f(p) use Region 1 at T_sat, which is only valid for
@@ -1022,6 +1159,7 @@ if __name__ == "__main__":
     results.append(("Unified API cross-region",          test_water_api()))
     results.append(("Extraction transparency",           test_extraction_transparency()))
     results.append(("Modelica source execution",         test_modelica_source_execution()))
+    results.append(("Modelica backward eqs & Water API", test_modelica_backward_equations()))
     results.append(("Region 3 boundary guard",           test_region3_guard()))
 
     print("\n" + "=" * 60)

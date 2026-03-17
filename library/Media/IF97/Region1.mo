@@ -166,37 +166,15 @@ package Region1 "IAPWS-IF97 Region 1 — compressed liquid (T ∈ [273,623] K, p
     input Real h "Specific enthalpy [J/kg]";
     output Real T_val;
   protected
-    // Backward equation coefficients — IAPWS-IF97 Table 20
-    // T(π,η) = Σ n_i π^I_i (η+1)^J_i,  π=p/1e6,  η=h/2500e3
-    constant Integer I_bw[20] = {0,0,0,0,0,0,1,1,1,1,1,1,1,2,2,3,3,4,5,6};
-    constant Integer J_bw[20] = {0,1,2,6,22,32,0,1,2,3,4,10,32,10,32,10,32,32,32,32};
-    constant Real    n_bw[20] = {
-       -2.38724899245210e2,  4.04211886379497e2,  1.13497468817180e3,
-       -5.84576160480760e0,  1.94833814891320e-2, -1.31810637641710e-2,
-       -1.97526707585300e-3, -3.12654168748730e-1,  6.75947772051340e0,
-        7.38692042996260e-1, -2.23400981718580e-2, -1.75854800633840e-2,
-        1.40635383285710e-4,  1.26516012387810e-3, -9.76139529165740e-5,
-        2.14668226424400e-3, -6.29079757662260e-5, -1.00791388328680e-3,
-        2.02839590285650e-4, -1.07478030487020e-5};
-    Real pi_bw = p / 1.0e6;
-    Real eta_bw = h / 2500.0e3;
-    Real T_guess;
-    Real f, df, dT;
-    Integer iter;
     Real T_iter;
+    Real f, dT;
   algorithm
-    // Backward equation gives a good starting guess (within ~0.1 K)
-    T_guess := sum(n_bw[i] * pi_bw^I_bw[i] * (eta_bw + 1.0)^J_bw[i] for i in 1:20);
-
-    // Newton refinement (1–2 iterations sufficient)
-    T_iter := T_guess;
-    for iter in 1:5 loop
+    // Simple starting guess — mid-range for Region 1 (273–623 K).
+    // Newton converges in 5–8 iterations from any reasonable guess.
+    T_iter := 400.0;
+    for iter in 1:10 loop
       f  := h_pT(p, T_iter) - h;
-      df := -Constants.R * tau_R1(T_iter)^2 / T_iter * g_tautau(pi_R1(p), tau_R1(T_iter))
-            + Constants.R * tau_R1(T_iter) * g_tau(pi_R1(p), tau_R1(T_iter)) / T_iter;
-      // dh/dT|p = cp_pT(p, T_iter)
-      df := cp_pT(p, T_iter);
-      dT := -f / df;
+      dT := -f / cp_pT(p, T_iter);
       T_iter := T_iter + dT;
     end for;
     T_val := T_iter;

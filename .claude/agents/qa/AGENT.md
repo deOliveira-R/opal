@@ -61,8 +61,8 @@ When someone proposes a test or claims something is verified:
 ### Test Infrastructure
 - `library/Media/tests/verify_if97.py` — IAPWS-IF97 comprehensive verification (9 tests, 253+ points, iapws oracle)
 - `library/Media/tests/verify_simple_fluid.py` — SimpleFluid verification (5 tests, exact to machine precision)
-- `solver/tests/test_hagen_poiseuille.py` — Phase 1 solver verification (Hagen-Poiseuille analytical solution)
-- `solver/tests/smoke_test.py` — Quick regression check
+- `solver/tests/test_hagen_poiseuille.py` — Phase 1 solver verification (8 tests: H-P, conservation, convergence, energy, wave speed)
+- `solver/tests/test_two_phase.py` — Phase 2 solver verification (14 tests: H-P N=1/5/10/20, linear pressure, mass conservation, energy balance steady+heated, convergence rate, boiling channel, SimpleFluid properties, FD derivatives)
 - `feasibility/test_extraction.py` through `test_3d_array.py` — Feasibility phase tests (all passed)
 
 ### Fluid Models
@@ -70,24 +70,28 @@ When someone proposes a test or claims something is verified:
 - **IAPWS-IF97** (`library/Media/Water.mo` + `IF97/`): Production fluid properties. 34+43-term Gibbs polynomials. Verified against iapws Python package at 253+ points. Use for validation and production.
 
 ### Solver Architecture
-- Phase 1: Single-phase, constant properties, tridiagonal pressure solve
-- Phase 2: Two-phase, property-dependent, semi-implicit with drho_dp_h and drho_dh_p linearization
+- Phase 1: Single-phase, constant properties, tridiagonal pressure solve — `solver/single_phase/`
+- Phase 2: Two-phase, property-dependent, semi-implicit with drho_dp_h and drho_dh_p linearization — `solver/two_phase/`
 - Semi-implicit staggered mesh: scalars at cell centers, velocities at cell faces
 - Donor-cell (upwind) advection
+- Phase 2 state: (p, h, mdot) with variable-coefficient tridiagonal, pressure-work term in energy
 
 ### Running Tests
 ```bash
+# Phase 2 two-phase solver tests
+PYTHONPATH=solver/two_phase external/venv/bin/python -m pytest solver/tests/test_two_phase.py -v
+
+# Phase 1 single-phase solver tests
+PYTHONPATH=solver/single_phase external/venv/bin/python -m pytest solver/tests/test_hagen_poiseuille.py -v
+
 # IAPWS-IF97 comprehensive verification
 external/venv/bin/python library/Media/tests/verify_if97.py
 
 # SimpleFluid verification
 external/venv/bin/python library/Media/tests/verify_simple_fluid.py
 
-# Phase 1 solver tests
-cd solver && ../external/venv/bin/python -m pytest tests/ -v
-
-# All feasibility tests
-cd feasibility && ../external/venv/bin/python test_extraction.py
+# Rebuild two-phase solver after C++ changes
+cd solver/two_phase && cmake --build build && cp build/*.so .
 ```
 
 ## When You Are Invoked

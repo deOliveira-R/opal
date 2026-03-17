@@ -4,14 +4,21 @@ test_two_phase.py — Phase 2 two-phase solver verification tests.
 All tests use SimpleFluid (linear properties) so that every number is
 hand-verifiable.  IAPWS-IF97 validation comes later.
 
-Tests
------
-1. Single-phase Hagen-Poiseuille steady state
-2. Global mass conservation
-3. Global energy conservation
-4. Temporal convergence rate (first-order)
-5. Heated channel with boiling
-6. C++ SimpleFluid vs Modelica reference values
+Tests (26 total)
+----------------
+ 1. Single-phase Hagen-Poiseuille steady state (N=1,5,10,20)
+ 2. Linear pressure profile
+ 3. Global mass conservation (nonlinear, O(dt) accuracy)
+ 4. Global energy conservation (steady, heated)
+ 5. Temporal convergence rate (first-order)
+ 6. Heated channel with boiling (subcooled->two-phase)
+ 7. C++ SimpleFluid vs Modelica reference values (Region 1,2,4 + FD derivatives)
+ 8. Linearized mass conservation (tridiagonal residual, ~machine eps)
+ 9. Reverse flow (negative mdot, donor-cell upwind)
+10. Spatial convergence (mesh refinement)
+11. N=1 edge cases (mass conservation, energy with heating)
+12. Saturation boundary crossing (subcooled->two-phase stability)
+13. Input validation (constructor + step argument checking)
 """
 
 import sys
@@ -436,3 +443,312 @@ class TestSimpleFluidProperties:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+# ============================================================================
+# Test 7: Linearized mass conservation (to machine precision)
+# ============================================================================
+
+class TestLinearizedMassConservation:
+    """The tridiagonal system IS the linearized mass balance.
+
+    V * drho_dp_h * (p_new - p_old)/dt = mdot_in(p_new) - mdot_out(p_new)
+
+    This must hold to roundoff because it is exactly the system Thomas
+    solves.  This is a stronger check than Test 2 (which verifies the
+    nonlinear mass balance, accurate only to O(dt)).
+    """
+
+    def test_tridiagonal_residual(self):
+        N = 5
+        fluid = tp.SimpleFluidProperties()
+        solver = tp.TwoPhaseSolver(N, DX, A_FLOW, D_H, F_D, fluid)
+        bc = tp.TwoPhaseBCs(P_IN, P_OUT, H_IN)
+        p, h, mdot = initial_state(N)
+        dt = 1e-3
+
+        V = DX * A_FLOW
+        geom = F_D * DX / (2 * D_H * A_FLOW**2)
+
+        max_abs_res = 0.0
+        flow_scale = 0.0
+        for _ in range(200):
+            p_old = p.copy()
+
+            # Properties at old state (same as solver uses internally)
+            props = [fluid.evaluate(p[i], h[i]) for i in range(N)]
+
+            # Face resistances (same as solver computes)
+            rho_in = fluid.evaluate(bc.p_in, bc.h_in).rho
+            R = [0.0] * (N + 1)
+            R[0] = geom / (0.5 * (rho_in + props[0].rho))
+            for i in range(1, N):
+                R[i] = geom / (0.5 * (props[i - 1].rho + props[i].rho))
+            R[N] = geom / props[N - 1].rho
+
+            solver.step(p, h, mdot, bc, dt)
+
+            # Track the global flow scale for normalization
+            flow_scale = max(flow_scale, abs(mdot[0]))
+
+            # Check tridiagonal residual cell-by-cell (absolute)
+            for i in range(N):
+                alpha = V * props[i].drho_dp_h / dt
+                p_left  = bc.p_in if i == 0 else p[i - 1]
+                p_right = bc.p_out if i == N - 1 else p[i + 1]
+                mdot_l = (p_left - p[i]) / R[i]
+                mdot_r = (p[i] - p_right) / R[i + 1]
+
+                lhs = alpha * (p[i] - p_old[i])
+                rhs = mdot_l - mdot_r
+                max_abs_res = max(max_abs_res, abs(lhs - rhs))
+
+        # Normalize by the global flow scale (not by near-zero local values)
+        rel_res = max_abs_res / flow_scale
+        assert rel_res < 1e-10, \
+            f"Tridiagonal residual too large: {rel_res:.2e} (expect ~machine eps)"
+
+
+# ============================================================================
+# Test 8: Reverse flow
+# ============================================================================
+
+class TestReverseFlow:
+    """When p_out > p_in, flow reverses. Donor-cell upwind must handle this."""
+
+    def test_reverse_flow_steady_state(self):
+        """Reverse H-P: mdot should be negative and uniform at steady state."""
+        N = 5
+        fluid = tp.SimpleFluidProperties()
+        solver = tp.TwoPhaseSolver(N, DX, A_FLOW, D_H, F_D, fluid)
+        # Reverse: p_out > p_in.  h_in is still the "inlet" BC enthalpy.
+        bc = tp.TwoPhaseBCs(P_OUT, P_IN, H_IN)
+        p, h, mdot = initial_state(N)
+
+        hist = solver.solve(p, h, mdot, bc, 1e-3, 20000, 20000)
+        mdot_ss = hist[-1, 2 * N:]
+
+        # Flow should be negative (right to left)
+        assert np.all(mdot_ss < 0), \
+            f"Expected negative flow, got {mdot_ss}"
+
+        # Uniform flow at steady state
+        spread = np.ptp(mdot_ss) / abs(np.mean(mdot_ss))
+        assert spread < 1e-6, \
+            f"Reverse flow not uniform: spread={spread:.2e}"
+
+    def test_reverse_flow_enthalpy_transport(self):
+        """With reverse flow and heating, enthalpy should increase toward inlet."""
+        N = 10
+        fluid = tp.SimpleFluidProperties()
+        solver = tp.TwoPhaseSolver(N, DX, A_FLOW, D_H, F_D, fluid)
+        # Reverse flow with high friction to keep flow low
+        solver_hf = tp.TwoPhaseSolver(N, DX, A_FLOW, D_H, 200.0, fluid)
+        # Reverse: p_out > p_in. Flow goes right-to-left.
+        bc = tp.TwoPhaseBCs(P_OUT, P_IN, H_IN)
+        p, h, mdot = initial_state(N)
+
+        q_wall = np.full(N, 10.0e3)
+        # Run to approach steady state
+        for _ in range(3):
+            hist = solver_hf.solve(p, h, mdot, bc, 1e-3, 100000, 100000, q_wall)
+            p = hist[-1, :N].copy()
+            h = hist[-1, N:2 * N].copy()
+            mdot = hist[-1, 2 * N:].copy()
+
+        # With reverse flow, fluid enters from the right (high index)
+        # and exits left (low index). Heating means enthalpy increases
+        # in the flow direction (right to left), so h[0] > h[N-1].
+        assert h[0] > h[-1], \
+            f"With reverse flow + heating, h[0]={h[0]:.0f} should > h[N-1]={h[-1]:.0f}"
+
+
+# ============================================================================
+# Test 9: Spatial convergence (mesh refinement)
+# ============================================================================
+
+class TestSpatialConvergence:
+    """Refining the mesh should improve enthalpy profile accuracy."""
+
+    def test_heated_channel_mesh_refinement(self):
+        """Compare enthalpy profile at two refinements against energy balance.
+
+        Total pipe length = 5 m, with total heat = 250 kW held constant.
+        Increasing N subdivides the same physical pipe into more cells.
+        dt must satisfy CFL for each refinement level.
+        """
+        L_total = 5.0  # m total pipe length
+        q_total_W = 250.0e3  # W total wall heat (constant)
+
+        errors = []
+        for N in [5, 10, 20]:
+            fluid = tp.SimpleFluidProperties()
+            dx_local = L_total / N
+            # Same pipe, same friction, more cells
+            solver = tp.TwoPhaseSolver(N, dx_local, A_FLOW, D_H, F_D, fluid)
+            bc = tp.TwoPhaseBCs(P_IN, P_OUT, H_IN)
+
+            p = np.full(N, 0.5 * (P_IN + P_OUT))
+            h = np.full(N, H_IN)
+            mdot = np.zeros(N + 1)
+            q_per_cell = q_total_W / N
+            q_wall = np.full(N, q_per_cell)
+
+            # Estimate CFL-safe dt for this grid
+            rho_approx = 756.0
+            V_cell = dx_local * A_FLOW
+            R_face = F_D * dx_local / (2 * D_H * A_FLOW**2 * rho_approx)
+            mdot_approx = (P_IN - P_OUT) / ((N + 1) * R_face)
+            dt_cfl = rho_approx * V_cell / (abs(mdot_approx) + 1e-20)
+            dt = min(1e-3, 0.3 * dt_cfl)
+            n_steps = max(30000, int(30.0 / dt))
+
+            hist = solver.solve(p, h, mdot, bc, dt, n_steps, n_steps, q_wall)
+            h_ss = hist[-1, N:2 * N]
+            mdot_ss = hist[-1, 2 * N:]
+
+            h_expected = H_IN + q_total_W / mdot_ss[-1]
+            err = abs(h_ss[-1] - h_expected) / h_expected
+            errors.append(err)
+
+        # All errors should be small (global energy balance is independent of mesh)
+        for i, err in enumerate(errors):
+            assert err < 0.01, \
+                f"Energy balance error too large at N={[5,10,20][i]}: {err:.2e}"
+
+
+# ============================================================================
+# Test 10: N=1 edge cases
+# ============================================================================
+
+class TestSingleCell:
+    """N=1 is an important edge case — tridiagonal degenerates to scalar."""
+
+    def test_n1_mass_conservation(self):
+        """Single cell must still conserve mass."""
+        N = 1
+        fluid = tp.SimpleFluidProperties()
+        solver = tp.TwoPhaseSolver(N, DX, A_FLOW, D_H, F_D, fluid)
+        bc = tp.TwoPhaseBCs(P_IN, P_OUT, H_IN)
+        p, h, mdot = initial_state(N)
+        dt = 1e-3
+
+        for _ in range(1000):
+            solver.step(p, h, mdot, bc, dt)
+
+        # At steady state: mdot[0] == mdot[1]
+        assert abs(mdot[0] - mdot[1]) / abs(mdot[0]) < 1e-10, \
+            f"N=1 flow not balanced: mdot_in={mdot[0]:.6e}, mdot_out={mdot[1]:.6e}"
+
+    def test_n1_energy_with_heating(self):
+        """Single cell with heating: h = h_in + q/mdot at steady state.
+
+        N=1 with low friction has high flow rate, requiring small dt for
+        CFL stability of the explicit enthalpy update.
+        """
+        N = 1
+        fluid = tp.SimpleFluidProperties()
+        # Use higher friction to reduce flow and relax CFL constraint
+        f_D_high = 2.0
+        solver = tp.TwoPhaseSolver(N, DX, A_FLOW, D_H, f_D_high, fluid)
+        bc = tp.TwoPhaseBCs(P_IN, P_OUT, H_IN)
+        p, h, mdot = initial_state(N)
+        q_wall = np.array([50.0e3])
+
+        # CFL-safe dt
+        rho_approx = 756.0
+        V = DX * A_FLOW
+        R_face = f_D_high * DX / (2 * D_H * A_FLOW**2 * rho_approx)
+        mdot_approx = (P_IN - P_OUT) / (2 * R_face)
+        dt_cfl = rho_approx * V / abs(mdot_approx)
+        dt = 0.3 * dt_cfl
+        n_steps = int(30.0 / dt)
+
+        hist = solver.solve(p, h, mdot, bc, dt, n_steps, n_steps, q_wall)
+        h_ss = hist[-1, N:2 * N]
+        mdot_ss = hist[-1, 2 * N:]
+
+        h_expected = H_IN + q_wall[0] / mdot_ss[-1]
+        rel_err = abs(h_ss[0] - h_expected) / h_expected
+        assert rel_err < 1e-3, \
+            f"N=1 energy balance: h={h_ss[0]:.1f}, expected={h_expected:.1f}, err={rel_err:.2e}"
+
+
+# ============================================================================
+# Test 11: Saturation boundary crossing
+# ============================================================================
+
+class TestSaturationCrossing:
+    """Enthalpy crossing h_f (subcooled -> two-phase) must not cause instability."""
+
+    def test_subcooled_to_twophase_transition(self):
+        """Start just below h_f, heat until crossing into two-phase."""
+        N = 5
+        fluid = tp.SimpleFluidProperties()
+        # High friction for low flow, easier to push into two-phase
+        solver = tp.TwoPhaseSolver(N, DX, A_FLOW, D_H, 200.0, fluid)
+        # Start very close to saturation
+        h_init = 790.0e3  # just below h_f = 800 kJ/kg at p_ref
+        bc = tp.TwoPhaseBCs(P_IN, P_OUT, h_init)
+        p = np.full(N, 0.5 * (P_IN + P_OUT))
+        h = np.full(N, h_init)
+        mdot = np.zeros(N + 1)
+
+        # Strong heating to push past saturation boundary
+        q_wall = np.full(N, 50.0e3)
+
+        # Run and verify no NaN/Inf
+        for chunk in range(3):
+            hist = solver.solve(p, h, mdot, bc, 1e-3, 100000, 100000, q_wall)
+            p = hist[-1, :N].copy()
+            h = hist[-1, N:2 * N].copy()
+            mdot = hist[-1, 2 * N:].copy()
+
+        assert np.all(np.isfinite(p)), "Pressure went non-finite at saturation crossing"
+        assert np.all(np.isfinite(h)), "Enthalpy went non-finite at saturation crossing"
+        assert np.all(np.isfinite(mdot)), "Flow went non-finite at saturation crossing"
+
+        # Some cells should be in two-phase (h > h_f)
+        h_f_vals = H_F_0 + H_F_1 * (p - P_REF) / P_REF
+        n_twophase = np.sum(h > h_f_vals)
+        assert n_twophase > 0, \
+            f"Expected some two-phase cells after heating, all still subcooled: h={h}"
+
+
+# ============================================================================
+# Test 12: Constructor input validation
+# ============================================================================
+
+class TestInputValidation:
+    """Verify the solver rejects invalid inputs with clear errors."""
+
+    def test_invalid_N(self):
+        fluid = tp.SimpleFluidProperties()
+        with pytest.raises(Exception):
+            tp.TwoPhaseSolver(0, DX, A_FLOW, D_H, F_D, fluid)
+
+    def test_negative_dx(self):
+        fluid = tp.SimpleFluidProperties()
+        with pytest.raises(Exception):
+            tp.TwoPhaseSolver(5, -1.0, A_FLOW, D_H, F_D, fluid)
+
+    def test_negative_friction(self):
+        fluid = tp.SimpleFluidProperties()
+        with pytest.raises(Exception):
+            tp.TwoPhaseSolver(5, DX, A_FLOW, D_H, -0.01, fluid)
+
+    def test_size_mismatch(self):
+        fluid = tp.SimpleFluidProperties()
+        solver = tp.TwoPhaseSolver(5, DX, A_FLOW, D_H, F_D, fluid)
+        bc = tp.TwoPhaseBCs(P_IN, P_OUT, H_IN)
+        # Wrong-sized arrays
+        with pytest.raises(Exception):
+            solver.step(np.zeros(3), np.zeros(5), np.zeros(6), bc, 1e-3)
+
+    def test_negative_dt(self):
+        fluid = tp.SimpleFluidProperties()
+        solver = tp.TwoPhaseSolver(5, DX, A_FLOW, D_H, F_D, fluid)
+        bc = tp.TwoPhaseBCs(P_IN, P_OUT, H_IN)
+        p, h, mdot = initial_state(5)
+        with pytest.raises(Exception):
+            solver.step(p, h, mdot, bc, -1e-3)

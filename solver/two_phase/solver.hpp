@@ -19,6 +19,13 @@
  *   - Tridiagonal coefficients vary per cell (from local drho_dp_h)
  *   - Face resistance varies per face (from local density)
  *   - Energy equation includes pressure-work term V*dp/dt
+ *
+ * Thread safety: NOT thread-safe per instance.  Mutable scratch arrays
+ * (props_, R_face_, Thomas coefficients) are shared across calls to step().
+ * Each thread must use its own TwoPhaseSolver instance.
+ *
+ * CFL constraint: the explicit enthalpy update requires dt < rho*V/|mdot|.
+ * The solver prints a one-time warning to stderr if this is violated.
  */
 
 #include "properties.hpp"
@@ -94,6 +101,7 @@ private:
     // Per-cell scratch (mutable: logical const, computational scratch)
     mutable std::vector<FluidProps> props_;      // property cache
     mutable std::vector<double>     R_face_;     // face resistance [N+1]
+    mutable bool cfl_warned_ = false;            // one-shot CFL warning flag
 
     // Thomas algorithm scratch
     mutable std::vector<double> a_, b_, c_, d_;  // tridiagonal coefficients
