@@ -8,17 +8,20 @@ Architecture: "Option 4" — extract equations from OpenModelica, route to purpo
 
 ## Current Phase
 
-**Feasibility testing.** Verifying that equation extraction from OpenModelica works for TH models. This is the decision gate — nothing else proceeds until extraction is proven viable. See `feasibility/CLAUDE.md` for test plan and decision criteria.
+**Phase 2 — Two-phase solver.** Feasibility proven (Phase 0), single-phase solver built and verified (Phase 1). Now implementing property-dependent two-phase semi-implicit solver with IAPWS-IF97. See `docs/architecture.md` for full roadmap.
 
 ## Repository Layout
 
 ```
 opal/
-├── feasibility/       # Phase 0: extraction tests (has its own CLAUDE.md)
+├── feasibility/       # Phase 0: extraction tests — COMPLETE (has its own CLAUDE.md)
 ├── solver/            # Custom solver backend (has its own CLAUDE.md)
+│   ├── single_phase/  #   Phase 1 C++ solver — COMPLETE
+│   ├── partitioner/   #   Equation routing (XML → grid) — COMPLETE
+│   └── tests/         #   8 solver tests + 36 partitioner tests
 ├── library/           # OPAL Modelica component library (has its own CLAUDE.md)
+│   └── Media/         #   IAPWS-IF97 (Water.mo) + SimpleFluid.mo + tests
 ├── diagnostics/       # AI failure diagnosis skill (has its own CLAUDE.md)
-├── tests/             # Verification, validation, benchmarking, real-time
 ├── docs/              # Detailed architecture, physics, design docs
 │   ├── architecture.md
 │   ├── vessel.md
@@ -27,16 +30,18 @@ opal/
 │   ├── diagnostics.md
 │   ├── extraction_failure_modes.md
 │   ├── openmodelica_internals.md
-│   ├── xs_format.md
-│   └── physics/
+│   └── xs_format.md
+├── external/          # OpenModelica (submodule), Python venv, requirements.txt
 └── .claude/
-    └── rules/         # Path-scoped coding rules
+    ├── agents/        #   QA agent, solver-architect agent
+    └── commands/      #   /verify-iapws, /verify-solver, etc.
 ```
 
 ## Build Path (Summary)
 
 Phase 1: Single-phase solver coupling (proves extraction→solver pipeline)
 Phase 2: Two-phase solver plugin + oracle benchmarking
+Phase 2.5: Second-order spatial accuracy (MUSCL + slope limiters)
 Phase 3: Multi-domain plant demo + real-time benchmark
 Phase 4: Component library + point kinetics + own media package
 Phase 4.5: 3D vessel component

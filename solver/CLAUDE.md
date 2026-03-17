@@ -35,6 +35,17 @@ Same semi-implicit scheme, larger sparse matrix (7-diagonal for 3D vs. tridiagon
 
 At Δt=0.05s (20 steps/sec simulated), budget is 50ms/step. Training fidelity: ~2-3ms (15-20× margin). Licensing fidelity: ~10-20ms (2-5× margin).
 
+## Spatial/Temporal Accuracy Roadmap
+
+Phase 2: First-order (donor-cell upwind, implicit Euler pressure, forward Euler energy).
+Sufficient for verification and initial two-phase development.
+
+Phase 2.5: Second-order spatial (MUSCL + slope limiter). Pressure solve stays tridiagonal
+and first-order (deliberately damps acoustics). Energy/void transport gets linear
+reconstruction with TVD limiter (minmod or van Leer). Optional predictor-corrector
+for second-order temporal on energy. Motivation: coarse-mesh front tracking (temperature,
+void, boron) — enables 20-cell models with accuracy comparable to 50-cell first-order.
+
 ## Subdirectories
 
 - `single_phase/` — Phase 1 solver

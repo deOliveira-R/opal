@@ -9,16 +9,17 @@
 
 ## Subdirectories
 
+### Implemented
+- `Media/` — IAPWS-IF97 (Water.mo) + SimpleFluid (verification fluid) + analytical derivatives
+  - `IF97/` — Gibbs functions, saturation, derivatives (Regions 1, 2, 4)
+  - `tests/` — 12 IAPWS tests (300+ points), 6 SimpleFluid tests
+
+### Planned (Phase 3+)
 - `Pipes/` — 1D pipe components
 - `Pumps/` — Pump models
 - `HeatExchangers/` — Heat exchangers, steam generators
-- `Vessels/` — 3D vessel (Approach B: monolithic equation-based). See `@docs/vessel.md`
+- `Vessels/` — 3D vessel (Approach B). See `@docs/vessel.md`
 - `Kinetics/` — Reactor kinetics. See `@docs/kinetics.md`
-  - `Interfaces/PartialKineticsModel.mo` — Common interface for both kinetics levels
-  - `PointKinetics/` — Level 1: 6-group PK, ANS 5.1 decay heat, Xe/Sm
-  - `SpatialDiffusion/` — Level 2: few-group 3D diffusion (C++ solver, Modelica wrapper)
-  - `Data/` — Reactivity coefficients, delayed neutron data, power shapes, rod worth
-- `Media/` — Own IAPWS-IF97 in pure Modelica with analytical thermodynamic derivatives
 
 ## Kinetics Interface
 
@@ -26,4 +27,7 @@ Both kinetics levels implement `PartialKineticsModel`. Swapping point kinetics f
 
 ## Media Package
 
-Pure-Modelica IAPWS-IF97 implementation. Must flatten to algebraic equations (no external C calls). Must provide analytical derivatives (∂ρ/∂P|_h, ∂ρ/∂h|_P) needed by semi-implicit pressure linearization.
+Two fluid models with identical API (`rho_ph`, `T_ph`, `drho_dp_h`, `drho_dh_p`):
+
+- **Water.mo** — Production: IAPWS-IF97 Regions 1, 2, 4. Pure Modelica (no external C). 12 verification tests, 300+ points against iapws oracle + IAPWS Tables 5/15/35. Coefficients verified via OMPython execution of the actual .mo files.
+- **SimpleFluid.mo** — Verification: linear saturation, constant single-phase derivatives. For isolating solver bugs from property bugs. 6 tests, machine-precision accuracy.

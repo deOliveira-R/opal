@@ -40,8 +40,24 @@ We treat OM as a dependency we're willing to improve:
 
 ### Phase 2 — Two-phase solver plugin
 - Semi-implicit two-phase solver as pluggable backend
+- Property-dependent EOS: ρ(p,h), ∂ρ/∂p|h, ∂ρ/∂h|p from IAPWS-IF97
 - Equation routing: which subsystem → which solver
-- Verify against Edwards blowdown, benchmark against oracle
+- First-order spatial (donor-cell) and temporal (implicit Euler / forward Euler)
+- Verify with SimpleFluid (synthetic linear fluid, isolates solver from properties)
+- Validate against Edwards blowdown, benchmark against oracle
+
+### Phase 2.5 — Second-order spatial accuracy
+- MUSCL reconstruction with slope limiter (minmod default, van Leer for void fronts)
+- Face enthalpy: h_face = h_upwind + 0.5 · φ(r) · (h_down − h_up), all algebraic
+- Pressure solve unchanged (tridiagonal) — MUSCL only affects advective fluxes
+- Optional: predictor-corrector temporal for energy (~20-30% cost, second-order time)
+- Stencil widens from 2-point to 4-point for energy, partitioner updated accordingly
+- Pure Modelica expressions (min/max/if) — no OPAQUE risk, extraction-transparent
+- Motivation: first-order donor-cell smears thermal/void fronts over ~√N cells;
+  second-order enables coarse-mesh accuracy (20 cells ≈ 50 first-order cells),
+  directly benefiting real-time performance target
+- Industry precedent: RELAP5/CATHARE-2 started first-order, TRACE/CATHARE-3/ATHLET
+  all upgraded to second-order MUSCL for front tracking (boron, temperature, void)
 
 ### Phase 3 — Multi-domain demonstration
 - Complete plant: reactor + SG + turbine + condenser + feedwater + controls
