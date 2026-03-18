@@ -245,6 +245,11 @@ def step_edwards(p, h, mdot, dt):
         flux = mdot[i] * (h_face_in - h[i]) - mdot[i+1] * (h_face_out - h[i])
         p_work = V_cell * (p[i] - p_old[i]) / dt
 
+        # No non-equilibrium flashing: HEM EOS gives T=T_sat in two-phase,
+        # so superheat-based flashing produces zero source. Proper non-eq
+        # flashing requires a two-fluid model (separate liquid superheat).
+        # This is a known HEM limitation for rapid depressurization.
+
         h[i] = h[i] + dt / (rho_i * V_cell) * (flux + p_work)
 
     return p, h, mdot
