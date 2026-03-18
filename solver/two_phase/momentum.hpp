@@ -206,8 +206,10 @@ public:
                        - dt * (fric[i] - fric[i + 1]);
 
             // Generic source terms (mass source, momentum body force)
+            // Mass source: S_mass * V enters the continuity equation as
+            // an additional flux [kg/s], consistent with the mdot terms.
             if (sources && !sources->mass.empty())
-                tri.d[i] += sources->mass[i] * mesh.V * dt;
+                tri.d[i] += sources->mass[i] * mesh.V;
             if (sources && !sources->momentum.empty())
                 tri.d[i] += dt * (sources->momentum[i] - sources->momentum[i + 1])
                            * mesh.A_flow;
