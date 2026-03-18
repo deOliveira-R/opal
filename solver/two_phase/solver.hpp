@@ -22,7 +22,7 @@
  * Thread safety: NOT thread-safe per instance.
  */
 
-#include "properties.hpp"
+#include "fluid_package.hpp"
 #include "reconstruction.hpp"
 #include "flow_model.hpp"
 #include "hem_model.hpp"
@@ -46,17 +46,17 @@ public:
      * Legacy constructors (backward compatible — algebraic momentum, no critical flow).
      */
     TwoPhaseSolver(int N, double dx, double A_flow, double D_h,
-                   double f_D, const FluidProperties& fluid);
+                   double f_D, const FluidPackage& fluid);
 
     TwoPhaseSolver(int N, double dx, double A_flow, double D_h,
-                   double f_D, const FluidProperties& fluid,
+                   double f_D, const FluidPackage& fluid,
                    const FaceReconstruction& recon);
 
     /**
      * Constructor with FlowModel selection (algebraic momentum).
      */
     TwoPhaseSolver(int N, double dx, double A_flow, double D_h,
-                   double f_D, const FluidProperties& fluid,
+                   double f_D, const FluidPackage& fluid,
                    const FaceReconstruction& recon,
                    const FlowModel& model);
 
@@ -64,7 +64,7 @@ public:
      * Full constructor with all strategies.
      */
     TwoPhaseSolver(int N, double dx, double A_flow, double D_h,
-                   double f_D, const FluidProperties& fluid,
+                   double f_D, const FluidPackage& fluid,
                    const FaceReconstruction& recon,
                    const FlowModel& model,
                    const MomentumModel& momentum,
@@ -112,7 +112,7 @@ private:
     int    n_;
     double dx_, A_, D_h_, f_D_;
     double V_;
-    const FluidProperties& fluid_;
+    const FluidPackage& fluid_;
     const FaceReconstruction* recon_;
     const FlowModel* model_;
     const MomentumModel* momentum_;

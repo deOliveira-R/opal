@@ -22,6 +22,7 @@
 #include "solver.hpp"
 #include "simple_fluid.hpp"
 #include "iapws97.hpp"
+#include "fluid_package.hpp"
 #include "reconstruction.hpp"
 #include "flow_model.hpp"
 #include "hem_model.hpp"
@@ -58,14 +59,13 @@ static void copy_back(py::array_t<double>& arr, const std::vector<double>& vec) 
 PYBIND11_MODULE(opal_two_phase, m) {
     m.doc() = "OPAL two-phase semi-implicit staggered-mesh solver";
 
-    // FluidProperties base (abstract, not directly constructible) -----------
+    // Property hierarchy: FluidProperties → FluidPackage (+ PhasicProperties)
     py::class_<FluidProperties>(m, "FluidProperties");
-
-    // PhasicProperties (abstract, must be registered before derived classes)
     py::class_<PhasicProperties>(m, "PhasicProperties");
+    py::class_<FluidPackage, FluidProperties, PhasicProperties>(m, "FluidPackage");
 
     // SimpleFluidProperties -------------------------------------------------
-    py::class_<SimpleFluidProperties, FluidProperties, PhasicProperties>(m, "SimpleFluidProperties")
+    py::class_<SimpleFluidProperties, FluidPackage>(m, "SimpleFluidProperties")
         .def(py::init<>(), "Synthetic linear test fluid matching SimpleFluid.mo")
         .def("evaluate", &SimpleFluidProperties::evaluate,
              py::arg("p"), py::arg("h"),
@@ -83,7 +83,7 @@ PYBIND11_MODULE(opal_two_phase, m) {
              py::arg("p"), py::arg("h_v"));
 
     // IAPWSIF97Properties ---------------------------------------------------
-    py::class_<IAPWSIF97Properties, FluidProperties, PhasicProperties>(m, "IAPWSIF97Properties")
+    py::class_<IAPWSIF97Properties, FluidPackage>(m, "IAPWSIF97Properties")
         .def(py::init<>(), "IAPWS-IF97 industrial steam tables (Regions 1, 2, 4)")
         .def("evaluate", &IAPWSIF97Properties::evaluate,
              py::arg("p"), py::arg("h"),
@@ -269,8 +269,17 @@ PYBIND11_MODULE(opal_two_phase, m) {
         .def(py::init<>(), "Time-advanced inertial momentum for transients");
 
     // CriticalFlowModel hierarchy ------------------------------------------
+    // CriticalFlowResult struct
+    py::class_<CriticalFlowResult>(m, "CriticalFlowResult")
+        .def_readonly("mdot_crit", &CriticalFlowResult::mdot_crit)
+        .def_readonly("is_choked", &CriticalFlowResult::is_choked);
+
     py::class_<CriticalFlowModel>(m, "CriticalFlowModel")
-        .def_property_readonly("name", &CriticalFlowModel::name);
+        .def_property_readonly("name", &CriticalFlowModel::name)
+        .def("evaluate", &CriticalFlowModel::evaluate,
+             py::arg("p_cell"), py::arg("h_mix"), py::arg("rho"),
+             py::arg("drho_dp_h"), py::arg("p_back"), py::arg("A_flow"),
+             py::arg("C_d"), py::arg("mdot_momentum"));
 
     py::class_<NoCriticalFlow, CriticalFlowModel>(m, "NoCriticalFlow")
         .def(py::init<>(), "No critical flow (never choked)");
@@ -300,7 +309,7 @@ PYBIND11_MODULE(opal_two_phase, m) {
     py::class_<TwoPhaseSolver>(m, "TwoPhaseSolver")
         // Legacy constructor (no recon, no model — uses DonorCell + HEM)
         .def(py::init<int, double, double, double, double,
-                      const FluidProperties&>(),
+                      const FluidPackage&>(),
              py::arg("N"), py::arg("dx"), py::arg("A_flow"),
              py::arg("D_h"), py::arg("f_D"), py::arg("fluid"),
              py::keep_alive<1, 7>(),
@@ -308,7 +317,7 @@ PYBIND11_MODULE(opal_two_phase, m) {
 
         // Legacy constructor with reconstruction (no model — uses HEM)
         .def(py::init<int, double, double, double, double,
-                      const FluidProperties&, const FaceReconstruction&>(),
+                      const FluidPackage&, const FaceReconstruction&>(),
              py::arg("N"), py::arg("dx"), py::arg("A_flow"),
              py::arg("D_h"), py::arg("f_D"), py::arg("fluid"),
              py::arg("recon"),
@@ -318,7 +327,7 @@ PYBIND11_MODULE(opal_two_phase, m) {
 
         // New constructor with model selection
         .def(py::init<int, double, double, double, double,
-                      const FluidProperties&, const FaceReconstruction&,
+                      const FluidPackage&, const FaceReconstruction&,
                       const FlowModel&>(),
              py::arg("N"), py::arg("dx"), py::arg("A_flow"),
              py::arg("D_h"), py::arg("f_D"), py::arg("fluid"),
@@ -330,7 +339,7 @@ PYBIND11_MODULE(opal_two_phase, m) {
 
         // Full constructor with momentum + critical flow
         .def(py::init<int, double, double, double, double,
-                      const FluidProperties&, const FaceReconstruction&,
+                      const FluidPackage&, const FaceReconstruction&,
                       const FlowModel&, const MomentumModel&,
                       const CriticalFlowModel*>(),
              py::arg("N"), py::arg("dx"), py::arg("A_flow"),

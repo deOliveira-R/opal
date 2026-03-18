@@ -7,13 +7,12 @@
  * Use this for solver verification — every value is hand-checkable.
  */
 
-#include "properties.hpp"
-#include "phasic_properties.hpp"
+#include "fluid_package.hpp"
 #include <cmath>
 
 namespace opal {
 
-class SimpleFluidProperties : public FluidProperties, public PhasicProperties {
+class SimpleFluidProperties : public FluidPackage {
 public:
     // ---- Constants (match SimpleFluid.mo lines 8-32) ----
     static constexpr double p_ref   = 10.0e6;

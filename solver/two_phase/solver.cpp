@@ -35,7 +35,7 @@ const AlgebraicMomentum TwoPhaseSolver::default_algebraic_momentum_{};
 // ---------------------------------------------------------------------------
 
 TwoPhaseSolver::TwoPhaseSolver(int N, double dx, double A_flow, double D_h,
-                               double f_D, const FluidProperties& fluid)
+                               double f_D, const FluidPackage& fluid)
     : TwoPhaseSolver(N, dx, A_flow, D_h, f_D, fluid,
                      default_donor_cell_, default_hem_model_,
                      default_algebraic_momentum_, nullptr)
@@ -43,7 +43,7 @@ TwoPhaseSolver::TwoPhaseSolver(int N, double dx, double A_flow, double D_h,
 }
 
 TwoPhaseSolver::TwoPhaseSolver(int N, double dx, double A_flow, double D_h,
-                               double f_D, const FluidProperties& fluid,
+                               double f_D, const FluidPackage& fluid,
                                const FaceReconstruction& recon)
     : TwoPhaseSolver(N, dx, A_flow, D_h, f_D, fluid, recon,
                      default_hem_model_, default_algebraic_momentum_, nullptr)
@@ -51,7 +51,7 @@ TwoPhaseSolver::TwoPhaseSolver(int N, double dx, double A_flow, double D_h,
 }
 
 TwoPhaseSolver::TwoPhaseSolver(int N, double dx, double A_flow, double D_h,
-                               double f_D, const FluidProperties& fluid,
+                               double f_D, const FluidPackage& fluid,
                                const FaceReconstruction& recon,
                                const FlowModel& model)
     : TwoPhaseSolver(N, dx, A_flow, D_h, f_D, fluid, recon, model,
@@ -60,7 +60,7 @@ TwoPhaseSolver::TwoPhaseSolver(int N, double dx, double A_flow, double D_h,
 }
 
 TwoPhaseSolver::TwoPhaseSolver(int N, double dx, double A_flow, double D_h,
-                               double f_D, const FluidProperties& fluid,
+                               double f_D, const FluidPackage& fluid,
                                const FaceReconstruction& recon,
                                const FlowModel& model,
                                const MomentumModel& momentum,

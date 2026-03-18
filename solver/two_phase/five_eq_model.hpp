@@ -54,13 +54,13 @@ public:
 
     void evaluate_properties(
         const SolverState& state,
-        const FluidProperties& fluid,
+        const FluidPackage& fluid,
         std::vector<FluidProps>& props) const override;
 
     void compute_face_resistance(
         const SolverState& state,
         const BoundaryConditions& bc,
-        const FluidProperties& fluid,
+        const FluidPackage& fluid,
         const MeshParams& mesh,
         const std::vector<FluidProps>& props,
         std::vector<double>& R_face) const override;

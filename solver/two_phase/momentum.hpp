@@ -67,7 +67,7 @@ public:
         const std::vector<double>& rho_face,
         double dt,
         const FlowModel& model,
-        const FluidProperties& fluid,
+        const FluidPackage& fluid,
         TridiagCoeffs& tri,
         const CriticalFlowResult* cf) const = 0;
 
@@ -100,17 +100,15 @@ public:
         const std::vector<double>& /*rho_face*/,
         double dt,
         const FlowModel& model,
-        const FluidProperties& fluid,
+        const FluidPackage& fluid,
         TridiagCoeffs& tri,
         const CriticalFlowResult* /*cf*/) const override
     {
-        // Compute face resistances (existing path) and cache for velocity update
+        // Delegate entirely to FlowModel (which computes its own R_face)
         int N = mesh.N;
-        R_face_cache_.resize(N + 1);
-        model.compute_face_resistance(state, bc, fluid, mesh, props, R_face_cache_);
-
-        // Delegate to FlowModel
-        model.assemble_pressure_system(state, bc, mesh, props, R_face_cache_, dt, tri);
+        R_face_.resize(N + 1);
+        model.compute_face_resistance(state, bc, fluid, mesh, props, R_face_);
+        model.assemble_pressure_system(state, bc, mesh, props, R_face_, dt, tri);
     }
 
     void update_velocities(
@@ -122,12 +120,15 @@ public:
         const FlowModel& model,
         const CriticalFlowResult* /*cf*/) const override
     {
-        // Reuse R_face from pressure assembly (must be identical for conservation)
-        model.update_velocities(state, bc, mesh, R_face_cache_);
+        // Use the SAME R_face computed in assemble_pressure_system.
+        // The solver guarantees these are called in sequence.
+        model.update_velocities(state, bc, mesh, R_face_);
     }
 
 private:
-    mutable std::vector<double> R_face_cache_;
+    // R_face computed once in assemble, reused in update_velocities.
+    // The solver calls these in strict sequence within a single timestep.
+    mutable std::vector<double> R_face_;
 };
 
 /**
@@ -154,7 +155,7 @@ public:
         const std::vector<double>& rho_face,
         double dt,
         const FlowModel& /*model*/,
-        const FluidProperties& /*fluid*/,
+        const FluidPackage& /*fluid*/,
         TridiagCoeffs& tri,
         const CriticalFlowResult* cf) const override
     {

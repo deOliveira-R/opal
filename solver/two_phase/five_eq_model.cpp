@@ -154,7 +154,7 @@ void FiveEqModel::compute_phasic_state(
 
 void FiveEqModel::evaluate_properties(
     const SolverState& state,
-    const FluidProperties& fluid,
+    const FluidPackage& fluid,
     std::vector<FluidProps>& props) const
 {
     int N = static_cast<int>(state.p.size());
@@ -182,7 +182,7 @@ void FiveEqModel::evaluate_properties(
 void FiveEqModel::compute_face_resistance(
     const SolverState& /*state*/,
     const BoundaryConditions& bc,
-    const FluidProperties& /*fluid*/,
+    const FluidPackage& /*fluid*/,
     const MeshParams& mesh,
     const std::vector<FluidProps>& props,
     std::vector<double>& R_face) const

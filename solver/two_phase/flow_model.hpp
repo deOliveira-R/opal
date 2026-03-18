@@ -16,7 +16,7 @@
 
 #include "solver_state.hpp"
 #include "boundary_conditions.hpp"
-#include "properties.hpp"
+#include "fluid_package.hpp"
 #include "reconstruction.hpp"
 
 #include <vector>
@@ -73,7 +73,7 @@ public:
      */
     virtual void evaluate_properties(
         const SolverState& state,
-        const FluidProperties& fluid,
+        const FluidPackage& fluid,
         std::vector<FluidProps>& props) const = 0;
 
     /**
@@ -83,7 +83,7 @@ public:
     virtual void compute_face_resistance(
         const SolverState& state,
         const BoundaryConditions& bc,
-        const FluidProperties& fluid,
+        const FluidPackage& fluid,
         const MeshParams& mesh,
         const std::vector<FluidProps>& props,
         std::vector<double>& R_face) const = 0;

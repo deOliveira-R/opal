@@ -9,14 +9,13 @@
  * Usage: create IAPWSIF97Properties, call evaluate(p, h) → FluidProps.
  */
 
-#include "properties.hpp"
-#include "phasic_properties.hpp"
+#include "fluid_package.hpp"
 #include <cmath>
 #include <cstdio>
 
 namespace opal {
 
-class IAPWSIF97Properties : public FluidProperties, public PhasicProperties {
+class IAPWSIF97Properties : public FluidPackage {
 public:
 
     // =====================================================================
