@@ -218,5 +218,87 @@ class TestBoundaryContinuity:
         assert abs(rho_below - rho_above) / rho_below < 0.01
 
 
+# ============================================================================
+# P3: Two-phase derivatives at high pressure (15 MPa)
+# ============================================================================
+
+class TestHighPressureTwoPhase:
+    """IAPWS two-phase derivatives at 15 MPa (near validity boundary)."""
+
+    def test_twophase_density_15MPa(self, fluid):
+        ref_f = iapws.IAPWS97(P=15, x=0)
+        ref_g = iapws.IAPWS97(P=15, x=1)
+        h_mix = 0.5 * (ref_f.h + ref_g.h) * 1e3
+        fp = fluid.evaluate(15e6, h_mix)
+        rho_exp = 1.0 / (0.5 / ref_g.rho + 0.5 / ref_f.rho)
+        assert abs(fp.rho - rho_exp) / rho_exp < 1e-5
+
+    def test_twophase_drho_dh_15MPa(self, fluid):
+        """FD cross-check of drho_dh_p at 15 MPa two-phase."""
+        ref_f = iapws.IAPWS97(P=15, x=0)
+        ref_g = iapws.IAPWS97(P=15, x=1)
+        h = 0.5 * (ref_f.h + ref_g.h) * 1e3
+        p = 15e6
+        fp = fluid.evaluate(p, h)
+
+        dh = 100.0
+        rho_plus  = fluid.evaluate(p, h + dh).rho
+        rho_minus = fluid.evaluate(p, h - dh).rho
+        fd = (rho_plus - rho_minus) / (2 * dh)
+        assert abs(fd - fp.drho_dh_p) / abs(fp.drho_dh_p) < 1e-3
+
+    def test_twophase_drho_dp_15MPa(self, fluid):
+        """FD cross-check of drho_dp_h at 15 MPa two-phase."""
+        ref_f = iapws.IAPWS97(P=15, x=0)
+        ref_g = iapws.IAPWS97(P=15, x=1)
+        h = 0.5 * (ref_f.h + ref_g.h) * 1e3
+        p = 15e6
+        fp = fluid.evaluate(p, h)
+
+        dp = 1000.0
+        rho_plus  = fluid.evaluate(p + dp, h).rho
+        rho_minus = fluid.evaluate(p - dp, h).rho
+        fd = (rho_plus - rho_minus) / (2 * dp)
+        # Wider tolerance for two-phase dp (FD over saturation boundary changes)
+        assert abs(fd - fp.drho_dp_h) / abs(fp.drho_dp_h) < 0.05
+
+
+# ============================================================================
+# P3: IAPWS + SimpleFluid cross-check (same solver, both fluids)
+# ============================================================================
+
+class TestIAPWSSimpleFluidCrossCheck:
+    """Run the same H-P problem with both fluids — results should be qualitatively similar."""
+
+    def test_steady_state_flow_direction(self):
+        """Both fluids: positive dp → positive flow at steady state."""
+        import opal_two_phase as tp
+
+        N = 5
+        dx, A, Dh, fD = 1.0, 0.01, 0.1, 0.02
+        p_in, p_out = 10.1e6, 10.0e6
+
+        for FluidClass, h_in in [
+            (tp.SimpleFluidProperties, 700e3),    # subcooled in SimpleFluid
+            (tp.IAPWSIF97Properties, 800e3),       # subcooled in IAPWS
+        ]:
+            fluid = FluidClass()
+            solver = tp.TwoPhaseSolver(N, dx, A, Dh, fD, fluid)
+            bc = tp.TwoPhaseBCs(p_in, p_out, h_in)
+            p = np.full(N, 0.5 * (p_in + p_out))
+            h = np.full(N, h_in)
+            mdot = np.zeros(N + 1)
+
+            hist = solver.solve(p, h, mdot, bc, 5e-4, 20000, 20000)
+            mdot_ss = hist[-1, 2*N:]
+
+            # All flows should be positive and uniform at steady state
+            assert np.all(mdot_ss > 0), \
+                f"{FluidClass.__name__}: expected positive flow"
+            spread = np.ptp(mdot_ss) / np.mean(mdot_ss)
+            assert spread < 0.01, \
+                f"{FluidClass.__name__}: flow not uniform, spread={spread:.2e}"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
