@@ -189,8 +189,11 @@ void TwoPhaseSolver::step(SolverState& state,
 
     // 5. Solve tridiagonal + pressure bounds
     solve_tridiagonal(state.p);
-    constexpr double p_floor   = 700.0;      // above triple point (611 Pa)
-    constexpr double p_ceiling = 21.0e6;     // below critical point (22.064 MPa)
+    // Water-specific pressure bounds (IAPWS-IF97 validity range).
+    // p_floor > triple point (611 Pa), p_ceiling < critical point (22.064 MPa).
+    // Must be updated if OPAL ever supports other fluids (CO2, sodium, etc.).
+    constexpr double p_floor   = 700.0;
+    constexpr double p_ceiling = 21.0e6;
     for (int i = 0; i < n_; ++i) {
         state.p[i] = std::clamp(state.p[i], p_floor, p_ceiling);
     }

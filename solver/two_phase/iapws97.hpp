@@ -121,14 +121,16 @@ public:
     }
 
     static double T_ph_R1(double p, double h) {
-        // Simple starting guess — mid-range for Region 1 (273–623 K).
-        // Newton converges in ~8 iterations from any reasonable guess.
+        // Newton iteration for T(p,h) in Region 1.
+        // Converges in ~8 iterations from the starting guess of 400 K.
         double T_iter = 400.0;
         for (int iter = 0; iter < 10; ++iter) {
             double f  = h_pT_R1(p, T_iter) - h;
             double df = cp_pT_R1(p, T_iter);
+            if (std::abs(df) < 1e-30) break;  // prevent division by zero
             T_iter -= f / df;
             T_iter = std::max(273.15, std::min(T_iter, 623.15));
+            if (std::abs(f) < 1e-6 * std::abs(h)) break;  // converged
         }
         return T_iter;
     }
@@ -257,14 +259,16 @@ public:
     }
 
     static double T_ph_R2(double p, double h) {
-        // Simple starting guess — mid-range for Region 2 (273–1073 K).
-        // Newton converges in ~8 iterations from any reasonable guess.
+        // Newton iteration for T(p,h) in Region 2.
+        // Converges in ~8 iterations from the starting guess of 600 K.
         double T_iter = 600.0;
         for (int iter = 0; iter < 10; ++iter) {
             double f  = h_pT_R2(p, T_iter) - h;
             double df = cp_pT_R2(p, T_iter);
+            if (std::abs(df) < 1e-30) break;  // prevent division by zero
             T_iter -= f / df;
             T_iter = std::max(273.15, std::min(T_iter, 1073.15));
+            if (std::abs(f) < 1e-6 * std::abs(h)) break;  // converged
         }
         return T_iter;
     }

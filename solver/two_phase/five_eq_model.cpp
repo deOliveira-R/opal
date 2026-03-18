@@ -305,6 +305,14 @@ std::pair<double, double> FiveEqModel::split_phasic_flux(
 // ---------------------------------------------------------------------------
 // Explicit transport: void fraction + phasic enthalpies
 // Derived in: derivations/five_eq_phasic_energy.py
+//
+// Enthalpy advection uses the "relative" form:
+//   flux = mdot_in*(h_face_in - h_cell) - mdot_out*(h_face_out - h_cell)
+// instead of the conservative form mdot*h_face. Both are mathematically
+// equivalent when the pressure solve has already enforced mass conservation
+// (the h_cell*(mdot_in - mdot_out) part is implicit in the pressure
+// equation). The relative form has smaller round-off for near-uniform
+// enthalpy, which is the common case in practice.
 // ---------------------------------------------------------------------------
 
 void FiveEqModel::update_transport(
