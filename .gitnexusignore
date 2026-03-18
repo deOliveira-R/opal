@@ -1,0 +1,6 @@
+external/
+solver/two_phase/build/
+*.so
+*.npz
+*.png
+*.pdf
