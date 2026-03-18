@@ -419,6 +419,9 @@ void FiveEqModel::update_transport(
         // Derived in: derivations/five_eq_phasic_energy.py
         // ────────────────────────────────────────────────────
 
+        // Ghost cell order for reconstruction
+        int ng = recon.ghost_cells();
+
         // Wall heat split: proportional to wetted fraction
         double q_total = (q_wall != nullptr) ? (*q_wall)[i] : 0.0;
         double q_wall_l = q_total * (1.0 - al);
@@ -434,18 +437,32 @@ void FiveEqModel::update_transport(
             // when the phase reappears via condensation.
             state.h_l[i] = phasic_props_[i].h_sat_l;
         } else {
-            // Advective flux with reconstruction
-            double h_LL = (i >= 2) ? h_l_old[i - 2] : ((i >= 1) ? h_l_old[i - 1] : bc.h_l_in);
-            double h_L  = (i >= 1) ? h_l_old[i - 1] : bc.h_l_in;
-            double h_R  = h_l_old[i];
-            double h_RR = (i < N - 1) ? h_l_old[i + 1] : h_l_old[i];
-            double h_face_in = recon.face_value(h_LL, h_L, h_R, h_RR, mdot_l_in);
+            // Advective flux with reconstruction.
+            // Boundary face (face 0): Dirichlet — inflow uses BC directly.
+            // Interior faces: MUSCL with second-order ghost extrapolation.
+            double h_face_in;
+            if (i == 0 && mdot_l_in >= 0.0) {
+                // Inlet face, positive inflow: fluid entering has BC enthalpy
+                h_face_in = bc.h_l_in;
+            } else {
+                double h_LL, h_L, h_R, h_RR;
+                build_stencil(h_l_old.data(), N, i,
+                              bc.h_l_in, h_l_old[N - 1], ng,
+                              h_LL, h_L, h_R, h_RR);
+                h_face_in = recon.face_value(h_LL, h_L, h_R, h_RR, mdot_l_in);
+            }
 
-            double h_LL2 = (i >= 1) ? h_l_old[i - 1] : bc.h_l_in;
-            double h_L2  = h_l_old[i];
-            double h_R2  = (i < N - 1) ? h_l_old[i + 1] : h_l_old[i];
-            double h_RR2 = (i < N - 2) ? h_l_old[i + 2] : h_R2;
-            double h_face_out = recon.face_value(h_LL2, h_L2, h_R2, h_RR2, mdot_l_out);
+            double h_face_out;
+            if (i == N - 1 && mdot_l_out >= 0.0) {
+                // Outlet face, positive outflow: uses last cell value (upwind)
+                h_face_out = h_l_old[N - 1];
+            } else {
+                double h_LL2, h_L2, h_R2, h_RR2;
+                build_stencil(h_l_old.data(), N, i + 1,
+                              bc.h_l_in, h_l_old[N - 1], ng,
+                              h_LL2, h_L2, h_R2, h_RR2);
+                h_face_out = recon.face_value(h_LL2, h_L2, h_R2, h_RR2, mdot_l_out);
+            }
 
             double flux_l = mdot_l_in * (h_face_in - h_l_old[i])
                           - mdot_l_out * (h_face_out - h_l_old[i]);
@@ -472,20 +489,30 @@ void FiveEqModel::update_transport(
             // when the phase reappears via evaporation.
             state.h_v[i] = phasic_props_[i].h_sat_v;
         } else {
-            double h_LL = (i >= 2) ? h_v_old[i - 2] : ((i >= 1) ? h_v_old[i - 1] : bc.h_v_in);
-            double h_L  = (i >= 1) ? h_v_old[i - 1] : bc.h_v_in;
-            double h_R  = h_v_old[i];
-            double h_RR = (i < N - 1) ? h_v_old[i + 1] : h_v_old[i];
-            double h_face_in = recon.face_value(h_LL, h_L, h_R, h_RR, mdot_v_in);
+            double h_face_in_v;
+            if (i == 0 && mdot_v_in >= 0.0) {
+                h_face_in_v = bc.h_v_in;
+            } else {
+                double h_LL_v, h_L_v, h_R_v, h_RR_v;
+                build_stencil(h_v_old.data(), N, i,
+                              bc.h_v_in, h_v_old[N - 1], ng,
+                              h_LL_v, h_L_v, h_R_v, h_RR_v);
+                h_face_in_v = recon.face_value(h_LL_v, h_L_v, h_R_v, h_RR_v, mdot_v_in);
+            }
 
-            double h_LL2 = (i >= 1) ? h_v_old[i - 1] : bc.h_v_in;
-            double h_L2  = h_v_old[i];
-            double h_R2  = (i < N - 1) ? h_v_old[i + 1] : h_v_old[i];
-            double h_RR2 = (i < N - 2) ? h_v_old[i + 2] : h_R2;
-            double h_face_out = recon.face_value(h_LL2, h_L2, h_R2, h_RR2, mdot_v_out);
+            double h_face_out_v;
+            if (i == N - 1 && mdot_v_out >= 0.0) {
+                h_face_out_v = h_v_old[N - 1];
+            } else {
+                double h_LL2_v, h_L2_v, h_R2_v, h_RR2_v;
+                build_stencil(h_v_old.data(), N, i + 1,
+                              bc.h_v_in, h_v_old[N - 1], ng,
+                              h_LL2_v, h_L2_v, h_R2_v, h_RR2_v);
+                h_face_out_v = recon.face_value(h_LL2_v, h_L2_v, h_R2_v, h_RR2_v, mdot_v_out);
+            }
 
-            double flux_v = mdot_v_in * (h_face_in - h_v_old[i])
-                          - mdot_v_out * (h_face_out - h_v_old[i]);
+            double flux_v = mdot_v_in * (h_face_in_v - h_v_old[i])
+                          - mdot_v_out * (h_face_out_v - h_v_old[i]);
             double p_work_v = al * mesh.V * dp_dt;
             double phase_v = cr.Gamma * h_v_old[i] * mesh.V;
             double qi_v = cr.q_i_v * mesh.V;

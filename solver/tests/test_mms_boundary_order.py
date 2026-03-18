@@ -140,12 +140,11 @@ class TestBoundaryOrderEffect:
 
         rate = convergence_rate(dx1, e1, dx2, e2)
         print(f"  Solution B (grad=MAX at inlet): rate = {rate:.2f}")
-        # Currently expected ~1.0 due to first-order BC.
-        # After second-order BC fix, this should improve to > 1.5.
-        assert rate < 1.3, (
-            f"With first-order inlet BC and max gradient, rate should be ~1.0. "
-            f"Got {rate:.2f} — has the BC been upgraded to second order? "
-            f"If so, change this test to assert rate > 1.5."
+        # With second-order ghost cell extrapolation at interior faces
+        # and Dirichlet BC at the boundary face, MUSCL achieves > 1.5.
+        assert rate > 1.3, (
+            f"With second-order BC treatment, MUSCL should achieve > 1.3. "
+            f"Got {rate:.2f}"
         )
 
     def test_donor_cell_unaffected(self):
@@ -215,8 +214,8 @@ class TestBoundaryContaminationReach:
         rate = convergence_rate(errors[0][0], errors[0][1],
                                 errors[1][0], errors[1][1])
         print(f"  Interior-only rate (Solution B): {rate:.2f}")
-        # Should be ~1.0 (boundary error propagates everywhere)
-        assert rate < 1.3, (
-            f"Interior-only rate should be ~1.0 (boundary propagates via advection). "
+        # With second-order BC treatment, interior should be near 2.0
+        assert rate > 1.5, (
+            f"Interior rate with second-order BC should be > 1.5. "
             f"Got {rate:.2f}"
         )
