@@ -81,14 +81,30 @@ public:
               const std::vector<double>* q_wall = nullptr) const;
 
     /**
-     * New step — operates on SolverState directly.
-     *
-     * @param sources  Optional generic source terms for all equations.
-     *                 nullptr = no additional sources (default).
+     * Step with legacy BoundaryConditions struct.
      */
     void step(SolverState& state,
               const BoundaryConditions& bc,
               double dt,
+              const std::vector<double>* q_wall = nullptr,
+              const SourceTerms* sources = nullptr) const;
+
+    /**
+     * Step with BoundaryFace strategy objects — time-aware.
+     *
+     * Each boundary face is an independent strategy that produces
+     * mathematical contributions (pressure coupling, transport ghost
+     * cells, critical flow limiting). The solver evaluates them at
+     * time t and applies the results.
+     *
+     * @param bc_in    Inlet boundary face (left, face 0)
+     * @param bc_out   Outlet boundary face (right, face N)
+     * @param t        Current simulation time [s]
+     */
+    void step(SolverState& state,
+              const BoundaryFace& bc_in,
+              const BoundaryFace& bc_out,
+              double t, double dt,
               const std::vector<double>* q_wall = nullptr,
               const SourceTerms* sources = nullptr) const;
 

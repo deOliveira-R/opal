@@ -231,6 +231,55 @@ void TwoPhaseSolver::step(SolverState& state,
 }
 
 // ---------------------------------------------------------------------------
+// BoundaryFace step — time-aware, strategy-based BCs
+// ---------------------------------------------------------------------------
+
+void TwoPhaseSolver::step(SolverState& state,
+                          const BoundaryFace& bc_in,
+                          const BoundaryFace& bc_out,
+                          double t, double dt,
+                          const std::vector<double>* q_wall,
+                          const SourceTerms* sources) const
+{
+    // Evaluate boundary faces at current time → legacy struct
+    auto pbc_in  = bc_in.pressure(t);
+    auto pbc_out = bc_out.pressure(t);
+    auto tbc_in  = bc_in.transport(t);
+
+    BoundaryConditions bc;
+
+    // Pressure
+    bc.p_in  = pbc_in.p_boundary;
+    bc.p_out = pbc_out.p_boundary;
+
+    // BC types from strategy
+    bc.bc_type_in  = bc_in.is_wall()  ? BCType::WALL
+                   : BCType::PRESSURE;
+
+    // Break with C_d=0 (fully closed) acts as a wall
+    double C_d_out = bc_out.discharge_coefficient(t);
+    if (bc_out.is_wall() || (bc_out.has_critical_flow() && C_d_out <= 0.0)) {
+        bc.bc_type_out = BCType::WALL;
+    } else if (bc_out.has_critical_flow()) {
+        bc.bc_type_out = BCType::BREAK;
+    } else {
+        bc.bc_type_out = BCType::PRESSURE;
+    }
+
+    // Transport
+    bc.h_in    = tbc_in.h_mix;
+    bc.h_l_in  = tbc_in.h_l;
+    bc.h_v_in  = tbc_in.h_v;
+    bc.alpha_in = tbc_in.alpha;
+
+    // Critical flow: time-dependent discharge coefficient
+    bc.break_area_fraction = bc_out.discharge_coefficient(t);
+
+    // Delegate to struct-based step
+    step(state, bc, dt, q_wall, sources);
+}
+
+// ---------------------------------------------------------------------------
 // Legacy step — wraps new step
 // ---------------------------------------------------------------------------
 

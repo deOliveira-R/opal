@@ -308,6 +308,32 @@ PYBIND11_MODULE(opal_two_phase, m) {
         .def_readwrite("bc_type_out", &BoundaryConditions::bc_type_out)
         .def_readwrite("break_area_fraction", &BoundaryConditions::break_area_fraction);
 
+    // BoundaryFace hierarchy -----------------------------------------------
+    py::class_<BoundaryFace>(m, "BoundaryFace");
+
+    py::class_<PressureFace, BoundaryFace>(m, "PressureFace")
+        .def(py::init<double, double, double, double>(),
+             py::arg("p"), py::arg("h_l"),
+             py::arg("h_v") = 0.0, py::arg("alpha") = 0.0,
+             "Pressure BC: specified pressure + inflow enthalpy");
+
+    py::class_<WallFace, BoundaryFace>(m, "WallFace")
+        .def(py::init<double, double>(),
+             py::arg("h_l") = 0.0, py::arg("h_v") = 0.0,
+             "Wall BC: zero flux, no pressure coupling");
+
+    py::class_<BreakFace, BoundaryFace>(m, "BreakFace")
+        .def(py::init<double, double, double, double>(),
+             py::arg("p_back"), py::arg("C_d"),
+             py::arg("h_l") = 0.0, py::arg("h_v") = 0.0,
+             "Break BC: pressure BC with critical flow limiter");
+
+    py::class_<RampedBreak, BreakFace>(m, "RampedBreak")
+        .def(py::init<double, double, double, double, double>(),
+             py::arg("p_back"), py::arg("C_d_final"), py::arg("t_open"),
+             py::arg("h_l") = 0.0, py::arg("h_v") = 0.0,
+             "Time-ramped break: C_d ramps from 0 to C_d_final over t_open seconds");
+
     // MomentumModel hierarchy ----------------------------------------------
     py::class_<MomentumModel>(m, "MomentumModel")
         .def_property_readonly("name", &MomentumModel::name);
@@ -500,6 +526,55 @@ PYBIND11_MODULE(opal_two_phase, m) {
             py::arg("q_wall") = py::none(),
             py::arg("sources") = py::none(),
             "Advance one 5-eq timestep with full state and optional source terms.")
+
+        // BoundaryFace-based step: time-aware, strategy BCs
+        .def("step_bf",
+            [](TwoPhaseSolver& self,
+               py::array_t<double> p,
+               py::array_t<double> alpha,
+               py::array_t<double> h_l,
+               py::array_t<double> h_v,
+               py::array_t<double> mdot,
+               const BoundaryFace& bc_in,
+               const BoundaryFace& bc_out,
+               double t, double dt,
+               py::object q_wall_obj,
+               py::object sources_obj)
+            {
+                SolverState state;
+                state.p     = to_vec(p);
+                state.alpha = to_vec(alpha);
+                state.h_l   = to_vec(h_l);
+                state.h_v   = to_vec(h_v);
+                state.mdot  = to_vec(mdot);
+
+                const SourceTerms* src_ptr = nullptr;
+                SourceTerms src;
+                if (!sources_obj.is_none()) {
+                    src = sources_obj.cast<SourceTerms>();
+                    src_ptr = &src;
+                }
+
+                if (q_wall_obj.is_none()) {
+                    self.step(state, bc_in, bc_out, t, dt, nullptr, src_ptr);
+                } else {
+                    auto q_v = to_vec(q_wall_obj.cast<py::array_t<double>>());
+                    self.step(state, bc_in, bc_out, t, dt, &q_v, src_ptr);
+                }
+
+                copy_back(p,     state.p);
+                copy_back(alpha, state.alpha);
+                copy_back(h_l,   state.h_l);
+                copy_back(h_v,   state.h_v);
+                copy_back(mdot,  state.mdot);
+            },
+            py::arg("p"), py::arg("alpha"), py::arg("h_l"), py::arg("h_v"),
+            py::arg("mdot"),
+            py::arg("bc_in"), py::arg("bc_out"),
+            py::arg("t"), py::arg("dt"),
+            py::arg("q_wall") = py::none(),
+            py::arg("sources") = py::none(),
+            "Step with BoundaryFace strategy objects (time-aware BCs).")
 
         // Legacy solve
         .def("solve",
