@@ -276,11 +276,11 @@ PYBIND11_MODULE(opal_two_phase, m) {
         .def(py::init<>(), "No critical flow (never choked)");
 
     py::class_<RansomTrapp, CriticalFlowModel>(m, "RansomTrapp")
-        .def(py::init<double, double>(),
+        .def(py::init<const PhasicProperties&, double, double>(),
+             py::arg("phasic"),
              py::arg("x_trans") = 0.10, py::arg("c_floor") = 1200.0,
-             "Ransom-Trapp quality-blended critical flow model")
-        .def("set_saturation_props", &RansomTrapp::set_saturation_props,
-             py::arg("h_f"), py::arg("h_g"), py::arg("rho_f"));
+             py::keep_alive<1, 2>(),  // keeps phasic alive
+             "Ransom-Trapp critical flow with internal saturation lookup");
 
     // TwoPhaseBCs (legacy) -------------------------------------------------
     py::class_<TwoPhaseBCs>(m, "TwoPhaseBCs")

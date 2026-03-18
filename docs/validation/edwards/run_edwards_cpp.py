@@ -71,9 +71,8 @@ model    = tp.FiveEqModel(fluid, closures)
 recon    = tp.DonorCell()
 momentum = tp.InertialMomentum()
 
-# Ransom-Trapp critical flow — set saturation props from Python-side IAPWS
-# (the C++ RansomTrapp needs h_f, h_g, rho_f at break cell pressure)
-critical_flow = tp.RansomTrapp(x_trans=0.10, c_floor=1200.0)
+# Ransom-Trapp critical flow — uses C++ IAPWS phasic properties internally
+critical_flow = tp.RansomTrapp(fluid, x_trans=0.10, c_floor=1200.0)
 
 solver = tp.TwoPhaseSolver(N, dx, A_flow, D_h, f_D, fluid, recon, model,
                            momentum, critical_flow)
@@ -140,19 +139,7 @@ for step in range(n_steps):
         print(f"{step:8d} {t*1e3:8.2f} {p_gs1:10.3f} {p_gs7:10.3f} "
               f"{a_gs1:10.4f} {mdot[N]:12.3f}")
 
-    # Update saturation properties for critical flow model at break cell
-    p_break = max(p[N-1], 700.0)
-    try:
-        _pMPa = max(p_break / 1e6, 0.01)
-        if _pMPa > 22.0:
-            _pMPa = 22.0
-        _rf = iapws.IAPWS97(P=_pMPa, x=0)
-        _rg = iapws.IAPWS97(P=_pMPa, x=1)
-        critical_flow.set_saturation_props(_rf.h * 1e3, _rg.h * 1e3, _rf.rho)
-    except Exception:
-        pass  # keep previous saturation props
-
-    # ── THE ONE LINE ──
+    # ── THE ONE LINE — all physics in C++ ──
     solver.step_5eq(p, alpha, h_l, h_v, mdot, bc, dt)
 
     t += dt

@@ -14,6 +14,7 @@
  */
 
 #include "momentum.hpp"  // for CriticalFlowResult
+#include "phasic_properties.hpp"
 #include <cmath>
 #include <algorithm>
 
@@ -81,19 +82,17 @@ public:
 class RansomTrapp : public CriticalFlowModel {
 public:
     /**
+     * @param phasic   Phasic property evaluator for saturation lookup (caller owns)
      * @param x_trans  Quality transition for blend [-], default 0.10
      * @param c_floor  Minimum sound speed [m/s], default 1200 (prevents
      *                 collapse of c_hem in low-quality two-phase)
      */
-    explicit RansomTrapp(double x_trans = 0.10, double c_floor = 1200.0)
-        : x_trans_(x_trans), c_floor_(c_floor) {}
+    explicit RansomTrapp(const PhasicProperties& phasic,
+                         double x_trans = 0.10, double c_floor = 1200.0)
+        : phasic_(phasic), x_trans_(x_trans), c_floor_(c_floor) {}
 
     const char* name() const override { return "Ransom-Trapp"; }
 
-    /**
-     * Evaluate. Needs saturation properties — these must be set externally
-     * before each call via set_saturation_props().
-     */
     CriticalFlowResult evaluate(
         double p_cell, double h_mix, double rho, double drho_dp_h,
         double p_back, double A_flow, double C_d,
@@ -101,21 +100,28 @@ public:
     {
         CriticalFlowResult result{};
 
+        // Get saturation properties at break cell pressure (from C++ phasic)
+        double p_safe = std::clamp(p_cell, 700.0, 21.0e6);
+        auto pp = phasic_.evaluate_phasic(p_safe);
+        double h_f   = pp.h_sat_l;
+        double h_g   = pp.h_sat_v;
+        double rho_f = pp.rho_l;
+
         // Local quality
-        double h_fg = h_g_ - h_f_;
+        double h_fg = h_g - h_f;
         if (h_fg < 1e3) h_fg = 1e3;
         double x_local;
-        if (h_mix <= h_f_) {
+        if (h_mix <= h_f) {
             x_local = 0.0;
-        } else if (h_mix >= h_g_) {
+        } else if (h_mix >= h_g) {
             x_local = 1.0;
         } else {
-            x_local = (h_mix - h_f_) / h_fg;
+            x_local = (h_mix - h_f) / h_fg;
         }
 
         // Subcooled critical mass flux (Bernoulli)
         double dp = std::max(p_cell - p_back, 0.0);
-        double G_sub = std::sqrt(2.0 * rho_f_ * dp);
+        double G_sub = std::sqrt(2.0 * rho_f * dp);
 
         // HEM critical mass flux
         double c_hem;
@@ -145,23 +151,12 @@ public:
         return result;
     }
 
-    /// Set saturation properties at break cell pressure.
-    /// Must be called before evaluate() each timestep.
-    void set_saturation_props(double h_f, double h_g, double rho_f) {
-        h_f_ = h_f;
-        h_g_ = h_g;
-        rho_f_ = rho_f;
-    }
-
     double x_trans() const { return x_trans_; }
 
 private:
+    const PhasicProperties& phasic_;
     double x_trans_;
     double c_floor_;
-    // Saturation properties (set externally per timestep)
-    mutable double h_f_   = 800e3;
-    mutable double h_g_   = 2800e3;
-    mutable double rho_f_ = 750.0;
 };
 
 } // namespace opal
