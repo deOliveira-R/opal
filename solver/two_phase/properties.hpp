@@ -4,8 +4,8 @@
  *
  * The solver calls evaluate(p, h) once per cell per timestep.  The batch
  * method avoids redundant region detection (one region check gives all four
- * outputs).  Concrete implementations: SimpleFluidProperties, (future)
- * IAPWSIF97Properties.
+ * outputs).  Concrete implementations: SimpleFluidProperties,
+ * IAPWSIF97Properties (iapws97.hpp).
  */
 
 namespace opal {
