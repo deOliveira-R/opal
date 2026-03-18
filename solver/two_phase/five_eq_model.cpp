@@ -323,7 +323,8 @@ void FiveEqModel::update_transport(
     const std::vector<FluidProps>& /*props*/,
     const FaceReconstruction& recon,
     double dt,
-    const std::vector<double>* q_wall) const
+    const std::vector<double>* q_wall,
+    const SourceTerms* sources) const
 {
     int N = mesh.N;
 
@@ -389,8 +390,10 @@ void FiveEqModel::update_transport(
 
         // Vapor mass flux balance
         double flux_v_net = mdot_v_in - mdot_v_out;
+        double S_void = (sources && !sources->void_frac.empty())
+                       ? sources->void_frac[i] : 0.0;
         double alpha_rho_v_new = al * rv
-            + dt / mesh.V * (flux_v_net + mesh.V * cr.Gamma);
+            + dt / mesh.V * (flux_v_net + mesh.V * (cr.Gamma + S_void));
 
         // Get new vapor density at new pressure.
         // Floor at 1% of saturation density to avoid division by zero
@@ -449,9 +452,11 @@ void FiveEqModel::update_transport(
             double p_work_l = (1.0 - al) * mesh.V * dp_dt;
             double phase_l = -cr.Gamma * h_l_old[i] * mesh.V;
             double qi_l = cr.q_i_l * mesh.V;
+            double S_el = (sources && !sources->energy_l.empty())
+                         ? sources->energy_l[i] * mesh.V : 0.0;
 
             double h_l_new = h_l_old[i]
-                + dt / m_l * (flux_l + p_work_l + q_wall_l + qi_l + phase_l);
+                + dt / m_l * (flux_l + p_work_l + q_wall_l + qi_l + phase_l + S_el);
 
             // Enthalpy bounds: prevent non-physical values from explicit
             // overshoot during rapid transients. Liquid enthalpy should stay
@@ -484,9 +489,11 @@ void FiveEqModel::update_transport(
             double p_work_v = al * mesh.V * dp_dt;
             double phase_v = cr.Gamma * h_v_old[i] * mesh.V;
             double qi_v = cr.q_i_v * mesh.V;
+            double S_ev = (sources && !sources->energy_v.empty())
+                         ? sources->energy_v[i] * mesh.V : 0.0;
 
             double h_v_new = h_v_old[i]
-                + dt / m_v * (flux_v + p_work_v + q_wall_v + qi_v + phase_v);
+                + dt / m_v * (flux_v + p_work_v + q_wall_v + qi_v + phase_v + S_ev);
 
             // Enthalpy bounds: vapor enthalpy should stay between vapor
             // saturation and a reasonable maximum (~4 MJ/kg at 1 atm).

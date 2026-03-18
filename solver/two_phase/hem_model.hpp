@@ -67,7 +67,8 @@ public:
         const std::vector<FluidProps>& props,
         const FaceReconstruction& recon,
         double dt,
-        const std::vector<double>* q_wall) const override;
+        const std::vector<double>* q_wall,
+        const SourceTerms* sources = nullptr) const override;
 
     void pack_state(
         const SolverState& state,

@@ -154,7 +154,8 @@ void HEMModel::update_transport(
     const std::vector<FluidProps>& props,
     const FaceReconstruction& recon,
     double dt,
-    const std::vector<double>* q_wall) const
+    const std::vector<double>* q_wall,
+    const SourceTerms* sources) const
 {
     int N = mesh.N;
     auto& h = state.h_l;  // HEM: h_l is mixture enthalpy
@@ -185,8 +186,10 @@ void HEMModel::update_transport(
 
         double p_work = mesh.V * (state.p[i] - p_old[i]) / dt;
         double q = (q_wall != nullptr) ? (*q_wall)[i] : 0.0;
+        double S_e = (sources && !sources->energy_l.empty())
+                    ? sources->energy_l[i] * mesh.V : 0.0;
 
-        h[i] = h_old[i] + dt / (rho_i * mesh.V) * (flux + p_work + q);
+        h[i] = h_old[i] + dt / (rho_i * mesh.V) * (flux + p_work + q + S_e);
     }
 }
 

@@ -69,7 +69,8 @@ public:
         const FlowModel& model,
         const FluidPackage& fluid,
         TridiagCoeffs& tri,
-        const CriticalFlowResult* cf) const = 0;
+        const CriticalFlowResult* cf,
+        const SourceTerms* sources = nullptr) const = 0;
 
     /**
      * Update face mass flow rates after pressure solve.
@@ -81,7 +82,8 @@ public:
         const std::vector<double>& rho_face,
         double dt,
         const FlowModel& model,
-        const CriticalFlowResult* cf) const = 0;
+        const CriticalFlowResult* cf,
+        const SourceTerms* sources = nullptr) const = 0;
 };
 
 /**
@@ -102,9 +104,11 @@ public:
         const FlowModel& model,
         const FluidPackage& fluid,
         TridiagCoeffs& tri,
-        const CriticalFlowResult* /*cf*/) const override
+        const CriticalFlowResult* /*cf*/,
+        const SourceTerms* /*sources*/) const override
     {
         // Delegate entirely to FlowModel (which computes its own R_face)
+        // Note: algebraic momentum ignores source terms (no time derivative)
         int N = mesh.N;
         R_face_.resize(N + 1);
         model.compute_face_resistance(state, bc, fluid, mesh, props, R_face_);
@@ -118,7 +122,8 @@ public:
         const std::vector<double>& /*rho_face*/,
         double /*dt*/,
         const FlowModel& model,
-        const CriticalFlowResult* /*cf*/) const override
+        const CriticalFlowResult* /*cf*/,
+        const SourceTerms* /*sources*/) const override
     {
         // Use the SAME R_face computed in assemble_pressure_system.
         // The solver guarantees these are called in sequence.
@@ -157,7 +162,8 @@ public:
         const FlowModel& /*model*/,
         const FluidPackage& /*fluid*/,
         TridiagCoeffs& tri,
-        const CriticalFlowResult* cf) const override
+        const CriticalFlowResult* cf,
+        const SourceTerms* sources) const override
     {
         int N = mesh.N;
         tri.resize(N);
@@ -199,6 +205,13 @@ public:
             tri.d[i] += (state.mdot[i] - state.mdot[i + 1])
                        - dt * (fric[i] - fric[i + 1]);
 
+            // Generic source terms (mass source, momentum body force)
+            if (sources && !sources->mass.empty())
+                tri.d[i] += sources->mass[i] * mesh.V * dt;
+            if (sources && !sources->momentum.empty())
+                tri.d[i] += dt * (sources->momentum[i] - sources->momentum[i + 1])
+                           * mesh.A_flow;
+
             // Boundary pressure terms
             if (i == 0 && bc.bc_type_in == BCType::PRESSURE) {
                 tri.d[i] += beta_left * bc.p_in;
@@ -223,7 +236,8 @@ public:
         const std::vector<double>& rho_face,
         double dt,
         const FlowModel& /*model*/,
-        const CriticalFlowResult* cf) const override
+        const CriticalFlowResult* cf,
+        const SourceTerms* sources) const override
     {
         int N = mesh.N;
         double beta = dt * mesh.A_flow / mesh.dx;
@@ -235,18 +249,24 @@ public:
         // Save old mdot for inertial update
         std::vector<double> mdot_old = state.mdot;
 
+        // Momentum source (body force per unit volume at faces)
+        auto S_mom = [&](int i) -> double {
+            return (sources && !sources->momentum.empty())
+                   ? dt * sources->momentum[i] * mesh.A_flow : 0.0;
+        };
+
         // Inlet face
         if (bc.bc_type_in == BCType::WALL) {
             state.mdot[0] = 0.0;
         } else {
             state.mdot[0] = mdot_old[0]
-                + beta * (bc.p_in - state.p[0]) - dt * fric[0];
+                + beta * (bc.p_in - state.p[0]) - dt * fric[0] + S_mom(0);
         }
 
         // Interior faces
         for (int i = 1; i < N; ++i) {
             state.mdot[i] = mdot_old[i]
-                + beta * (state.p[i - 1] - state.p[i]) - dt * fric[i];
+                + beta * (state.p[i - 1] - state.p[i]) - dt * fric[i] + S_mom(i);
         }
 
         // Outlet face

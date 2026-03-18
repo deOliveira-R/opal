@@ -113,6 +113,9 @@ public:
     /**
      * Explicit transport update (enthalpy, void fraction, etc.).
      * Called after pressure solve and velocity update.
+     *
+     * @param sources  Optional generic source terms (MMS, gravity, heating).
+     *                 nullptr = no additional sources. Additive with q_wall.
      */
     virtual void update_transport(
         SolverState& state,
@@ -122,7 +125,8 @@ public:
         const std::vector<FluidProps>& props,
         const FaceReconstruction& recon,
         double dt,
-        const std::vector<double>* q_wall) const = 0;
+        const std::vector<double>* q_wall,
+        const SourceTerms* sources = nullptr) const = 0;
 
     /**
      * Pack state into flat vector for snapshot storage.

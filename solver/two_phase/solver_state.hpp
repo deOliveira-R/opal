@@ -26,4 +26,39 @@ struct SolverState {
     std::vector<double> v_v;     ///< Vapor velocity [N+1 faces] (6-eq only)
 };
 
+/**
+ * Generic source terms for all conservation equations.
+ *
+ * Every equation in the solver is fundamentally advection with sources.
+ * This struct allows injecting arbitrary volumetric sources into each
+ * equation, enabling:
+ *   - Method of Manufactured Solutions (MMS) verification
+ *   - Gravity body forces in momentum
+ *   - Neutron heating from point kinetics
+ *   - Any future volumetric source/sink
+ *
+ * All fields are optional (empty = no source). The solver checks .empty()
+ * before accessing. Units are volumetric so they are mesh-independent
+ * for h-refinement convergence studies.
+ *
+ * q_wall is preserved separately for backward compatibility — it handles
+ * wall heat transfer (physics). SourceTerms.energy_l/v handle additional
+ * forcing (MMS, nuclear heating, etc.). They add.
+ */
+struct SourceTerms {
+    // Per-cell volumetric sources [size N each, or empty]
+    std::vector<double> mass;       ///< Mass source [kg/(m³·s)] in continuity eq
+    std::vector<double> energy_l;   ///< Liquid energy source [W/m³]
+    std::vector<double> energy_v;   ///< Vapor energy source [W/m³]
+    std::vector<double> void_frac;  ///< Vapor mass source [kg/(m³·s)] (like Gamma)
+
+    // Per-face source [size N+1, or empty]
+    std::vector<double> momentum;   ///< Body force [N/m³] in momentum eq
+
+    bool empty() const {
+        return mass.empty() && energy_l.empty() && energy_v.empty()
+            && void_frac.empty() && momentum.empty();
+    }
+};
+
 } // namespace opal

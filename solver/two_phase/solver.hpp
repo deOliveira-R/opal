@@ -82,11 +82,15 @@ public:
 
     /**
      * New step — operates on SolverState directly.
+     *
+     * @param sources  Optional generic source terms for all equations.
+     *                 nullptr = no additional sources (default).
      */
     void step(SolverState& state,
               const BoundaryConditions& bc,
               double dt,
-              const std::vector<double>* q_wall = nullptr) const;
+              const std::vector<double>* q_wall = nullptr,
+              const SourceTerms* sources = nullptr) const;
 
     /**
      * Legacy solve — collects snapshots as flat array.

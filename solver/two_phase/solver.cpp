@@ -136,7 +136,8 @@ void TwoPhaseSolver::solve_tridiagonal(std::vector<double>& p) const {
 void TwoPhaseSolver::step(SolverState& state,
                           const BoundaryConditions& bc,
                           double dt,
-                          const std::vector<double>* q_wall) const
+                          const std::vector<double>* q_wall,
+                          const SourceTerms* sources) const
 {
     if (dt <= 0) throw std::invalid_argument("dt must be > 0");
 
@@ -185,7 +186,8 @@ void TwoPhaseSolver::step(SolverState& state,
     momentum_->assemble_pressure_system(
         state, bc, mesh, props_, rho_face_, dt,
         *model_, fluid_, tri_,
-        cf_result.is_choked ? &cf_result : nullptr);
+        cf_result.is_choked ? &cf_result : nullptr,
+        sources);
 
     // 5. Solve tridiagonal + pressure bounds
     solve_tridiagonal(state.p);
@@ -201,7 +203,8 @@ void TwoPhaseSolver::step(SolverState& state,
     // 6. Update velocities (momentum model handles algebraic vs inertial)
     momentum_->update_velocities(
         state, bc, mesh, rho_face_, dt, *model_,
-        cf_result.is_choked ? &cf_result : nullptr);
+        cf_result.is_choked ? &cf_result : nullptr,
+        sources);
 
     // CFL check
     if (!cfl_warned_ && !state.mdot.empty()) {
@@ -224,7 +227,7 @@ void TwoPhaseSolver::step(SolverState& state,
     }
 
     // 7. Transport update (FlowModel handles equation-set-specific transport)
-    model_->update_transport(state, p_old, bc, mesh, props_, *recon_, dt, q_wall);
+    model_->update_transport(state, p_old, bc, mesh, props_, *recon_, dt, q_wall, sources);
 }
 
 // ---------------------------------------------------------------------------
