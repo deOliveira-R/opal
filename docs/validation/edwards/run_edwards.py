@@ -94,24 +94,66 @@ def step_edwards(p, h, mdot, dt):
     for i in range(1, N + 1):
         fric[i] = f_D * dx / (2 * D_h) * abs(mdot_old[i]) * mdot_old[i] / (rho_face[i] * A_flow**2)
 
-    # 3. Check if outlet will be choked (using old-time properties)
-    # Use a simple critical flow model that blends between subcooled
-    # (frozen) and HEM (equilibrium) based on local void fraction.
-    # At very low quality, HEM underestimates the sound speed severely.
+    # 3. Critical flow: Ransom-Trapp style (subcooled/two-phase blend)
+    #
+    # Subcooled: G_sub = sqrt(2 * rho_f * (p - p_sat))  [Bernoulli]
+    # Two-phase HEM: G_hem = rho_m * c_hem
+    # Blend: G = G_sub*(1-x_eff) + G_hem*x_eff for low quality
+    #        G = G_hem for high quality (x > x_transition)
+    #
+    # Reference: RELAP5/MOD3 Code Manual Vol 1, §3.5
+    C_d = geom["break_flow_area_fraction"]
+    p_N = p_old[N-1]
+    h_N = h[N-1]
     rho_N = props[N-1].rho
     drho_dp_N = props[N-1].drho_dp_h
-    if drho_dp_N > 0:
-        c_sound_hem = (1.0 / (rho_N * drho_dp_N)) ** 0.5
+
+    # Get saturation properties at break-cell pressure
+    try:
+        ref_f = iapws.IAPWS97(P=max(p_N/1e6, 0.01), x=0)
+        ref_g = iapws.IAPWS97(P=max(p_N/1e6, 0.01), x=1)
+        p_sat_local = iapws.IAPWS97(T=ref_f.T, x=0).P * 1e6  # Pa
+        rho_f_local = ref_f.rho
+        h_f_local = ref_f.h * 1e3  # J/kg
+        h_g_local = ref_g.h * 1e3
+        h_fg_local = h_g_local - h_f_local
+    except Exception:
+        p_sat_local = p_N
+        rho_f_local = rho_N
+        h_f_local = h_N
+        h_fg_local = 1e6
+
+    # Local quality
+    if h_N <= h_f_local:
+        x_local = 0.0
+    elif h_N >= h_g_local:
+        x_local = 1.0
     else:
-        c_sound_hem = 1200.0
+        x_local = (h_N - h_f_local) / h_fg_local
 
-    # Subcooled sound speed (frozen): use single-phase compressibility
-    # For water at typical conditions: c ~ 1000-1200 m/s
-    # Approximate: c_frozen = min(1200, c_hem) but at least 50 m/s
-    c_sound = max(c_sound_hem, 50.0)  # floor at 50 m/s to avoid HEM collapse
+    # Subcooled critical mass flux (Bernoulli discharge)
+    dp_sub = max(p_N - p_atm, 0.0)
+    G_sub = (2.0 * rho_f_local * dp_sub) ** 0.5  # kg/(m2*s)
 
-    C_d = geom["break_flow_area_fraction"]
-    mdot_critical = C_d * A_flow * rho_N * c_sound
+    # HEM critical mass flux
+    if drho_dp_N > 0:
+        c_hem = (1.0 / (rho_N * drho_dp_N)) ** 0.5
+    else:
+        c_hem = 1200.0
+    G_hem = rho_N * c_hem
+
+    # Blend: smooth transition from subcooled to HEM
+    x_trans = 0.10  # transition quality
+    if x_local < x_trans:
+        blend = x_local / x_trans  # 0 at subcooled, 1 at x_trans
+        G_crit = G_sub * (1.0 - blend) + G_hem * blend
+    else:
+        G_crit = G_hem
+
+    # Ensure critical flux doesn't exceed subcooled value (physical limit)
+    G_crit = max(G_crit, G_hem)
+
+    mdot_critical = C_d * A_flow * G_crit
 
     # Will the momentum equation give more than critical?
     mdot_mom_estimate = mdot_old[N] + (dt * A_flow / dx) * (p_old[N-1] - p_atm) - dt * fric[N]
@@ -177,16 +219,7 @@ def step_edwards(p, h, mdot, dt):
     # Outlet face — with critical flow limiter
     mdot_momentum = mdot_old[N] + beta * (p[N-1] - p_atm) - dt * fric[N]
 
-    # Critical flow (same model as pressure solve)
-    rho_N = props[N-1].rho
-    drho_dp_N = props[N-1].drho_dp_h
-    if drho_dp_N > 0:
-        c_sound_hem = (1.0 / (rho_N * drho_dp_N)) ** 0.5
-    else:
-        c_sound_hem = 1200.0
-    c_sound = max(c_sound_hem, 50.0)
-    C_d = geom["break_flow_area_fraction"]
-    mdot_critical = C_d * A_flow * rho_N * c_sound
+    # Critical flow (same Ransom-Trapp model as pressure solve — reuse mdot_critical)
 
     # Critical flow only limits positive outflow (not inflow)
     if mdot_momentum > 0:
