@@ -30,6 +30,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "two_phase"))
 import opal_two_phase as tp
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from bc_helpers import step_5eq_migrated, reset_time
 
 
 # ============================================================================
@@ -311,7 +313,7 @@ class TestVoidFractionUpdateExact:
         # With zero flow: alpha_rho_v_new = alpha_old * rv_old + dt * Gamma
         alpha_rho_v_predicted = alpha_init * rv_old + dt * Gamma
 
-        solver.step_5eq(p, alpha, h_l, h_v, mdot, bc, dt)
+        step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, dt)
 
         # The predicted value should be close, accounting for:
         # - rv_new may differ from rv_old due to pressure change
@@ -348,7 +350,7 @@ class TestVoidFractionUpdateExact:
         h_v = np.array([pp.h_sat_v])
         mdot = np.zeros(2)
 
-        solver.step_5eq(p, alpha, h_l, h_v, mdot, bc, 1e-4)
+        step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, 1e-4)
         assert alpha[0] < alpha_init, "Subcooled liquid: alpha should decrease"
 
 
@@ -385,7 +387,7 @@ class TestPhaseChangeEnthalpyTerms:
 
         # Run multiple steps to accumulate the effect
         for _ in range(100):
-            solver.step_5eq(p, alpha, h_l, h_v, mdot, bc, 1e-4)
+            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, 1e-4)
 
         assert h_l[0] < h_l_init, (
             f"Evaporation should cool liquid: h_l={h_l[0]/1e3:.1f} >= "
@@ -413,7 +415,7 @@ class TestPhaseChangeEnthalpyTerms:
         mdot = np.zeros(2)
 
         for _ in range(100):
-            solver.step_5eq(p, alpha, h_l, h_v, mdot, bc, 1e-4)
+            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, 1e-4)
 
         assert h_l[0] > h_l_init, (
             f"Condensation should heat liquid toward T_sat: h_l={h_l[0]/1e3:.1f} <= "
@@ -442,7 +444,7 @@ class TestPhaseChangeEnthalpyTerms:
         mdot = np.zeros(2)
 
         for _ in range(100):
-            solver.step_5eq(p, alpha, h_l, h_v, mdot, bc, 1e-4)
+            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, 1e-4)
 
         # h_v should be at or above h_sat_v (the floor prevents going below)
         pp_new = fluid.evaluate_phasic(p[0])
@@ -483,7 +485,7 @@ class TestAdvectiveFluxSign:
         mdot = np.zeros(N + 1)
 
         for _ in range(500):
-            solver.step_5eq(p, alpha, h_l, h_v, mdot, bc, 1e-4)
+            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, 1e-4)
 
         # Cell 0 (nearest inlet) should be warmest, monotonically decreasing
         assert h_l[0] > h_cold, "Inlet cell should be heated by hot inlet"
@@ -525,7 +527,7 @@ class TestWallHeatSplit:
         q_wall = np.array([1e7])  # 10 MW/m³
 
         h_l_before = h_l[0]
-        solver.step_5eq(p, alpha, h_l, h_v, mdot, bc, 1e-4, q_wall)
+        step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, 1e-4, q_wall)
 
         # Liquid should gain most of the heat
         assert h_l[0] > h_l_before, "Liquid should be heated by wall"
@@ -553,7 +555,7 @@ class TestWallHeatSplit:
         q_wall = np.array([1e7])
 
         h_v_before = h_v[0]
-        solver.step_5eq(p, alpha, h_l, h_v, mdot, bc, 1e-4, q_wall)
+        step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, 1e-4, q_wall)
 
         # Vapor should gain most of the heat
         assert h_v[0] > h_v_before, "Vapor should be heated when alpha=0.9"
@@ -591,7 +593,7 @@ class TestMomentumPressureDirection:
         mdot = np.zeros(N + 1)
 
         for _ in range(200):
-            solver.step_5eq(p, alpha, h_l, h_v, mdot, bc, 1e-4)
+            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, 1e-4)
 
         # All interior flows should be positive (left to right)
         for i in range(1, N):
@@ -620,7 +622,7 @@ class TestMomentumPressureDirection:
         mdot = np.zeros(N + 1)
 
         for _ in range(200):
-            solver.step_5eq(p, alpha, h_l, h_v, mdot, bc, 1e-4)
+            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, 1e-4)
 
         for i in range(1, N):
             assert mdot[i] < 0, f"mdot[{i}]={mdot[i]} should be negative"
@@ -717,7 +719,7 @@ class TestFaceDensityBoundaries:
         mdot = np.zeros(N + 1)
 
         for _ in range(100):
-            solver.step_5eq(p, alpha, h_l, h_v, mdot, bc, 1e-4)
+            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, 1e-4)
 
         # Wall BC: mdot[0] = 0 always
         assert mdot[0] == pytest.approx(0.0, abs=1e-15)
@@ -809,7 +811,7 @@ class TestMUSCLNegativeFlow:
             mdot = np.zeros(N + 1)
 
             for _ in range(500):
-                solver.step_5eq(p, alpha, h_l, h_v, mdot, bc, 1e-4)
+                step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, 1e-4)
 
             assert np.all(np.isfinite(p)), "MUSCL with negative flow: NaN in p"
             assert np.all(np.isfinite(h_l)), "MUSCL with negative flow: NaN in h_l"
@@ -854,7 +856,7 @@ class TestInletBoundaryEnthalpy:
         mdot = np.zeros(N + 1)
 
         for _ in range(1000):
-            solver.step_5eq(p, alpha, h_l, h_v, mdot, bc, 1e-4)
+            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, 1e-4)
 
         # Cell 0 should be heated toward h_l_in (hot), not h_in (cold)
         assert h_l[0] > h_l_cold + 50e3, (

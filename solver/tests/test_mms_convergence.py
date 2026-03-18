@@ -26,6 +26,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "two_phase"))
 import opal_two_phase as tp
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from bc_helpers import step_5eq_migrated, reset_time
 
 
 # ============================================================================
@@ -217,7 +219,7 @@ def run_mms_5eq_subcooled(N, n_steps=5000, dt=1e-4, recon=None):
 
     # First, let pressure/flow reach steady state WITHOUT energy source
     for _ in range(2000):
-        solver.step_5eq(p, alpha, h_l, h_v, mdot, bc, dt)
+        step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, dt)
 
     # Get the steady-state flow at each cell center for the energy source.
     # The flow varies slightly along the pipe because density depends on
@@ -233,7 +235,7 @@ def run_mms_5eq_subcooled(N, n_steps=5000, dt=1e-4, recon=None):
     # Re-initialize enthalpy and run with energy source to steady state
     h_l[:] = h_exact(x_c)
     for _ in range(n_steps):
-        solver.step_5eq(p, alpha, h_l, h_v, mdot, bc, dt, None, src)
+        step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, dt, None, src)
 
     # Compute L2 error for enthalpy only
     h_ref = h_exact(x_c)
@@ -341,7 +343,7 @@ class TestMMSSourceTermInjection:
         h_l1 = np.full(N, 700e3); h_v1 = np.full(N, pp.h_sat_v)
         mdot1 = np.zeros(N + 1)
         for _ in range(500):
-            solver.step_5eq(p1, a1, h_l1, h_v1, mdot1, bc, 1e-4)
+            step_5eq_migrated(solver, p1, a1, h_l1, h_v1, mdot1, bc, 1e-4)
 
         # With mass source (should pressurize)
         p2 = np.full(N, 10e6); a2 = np.full(N, 1e-10)
@@ -350,7 +352,7 @@ class TestMMSSourceTermInjection:
         src = tp.SourceTerms()
         src.mass = [10.0] * N  # 10 kg/(m³·s) mass injection
         for _ in range(500):
-            solver.step_5eq(p2, a2, h_l2, h_v2, mdot2, bc, 1e-4, None, src)
+            step_5eq_migrated(solver, p2, a2, h_l2, h_v2, mdot2, bc, 1e-4, None, src)
 
         # With algebraic momentum and equal-p BCs, mass source creates outflow
         # through boundaries. The steady-state pressure interior should differ
@@ -384,7 +386,7 @@ class TestMMSSourceTermInjection:
         src.momentum = [1e5] * (N + 1)  # 100 kPa/m body force (like gravity)
 
         for _ in range(500):
-            solver.step_5eq(p, alpha, h_l, h_v, mdot, bc, 1e-4, None, src)
+            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, 1e-4, None, src)
 
         # With equal pressures + positive momentum source, flow should be positive
         assert np.mean(mdot[1:-1]) > 0.1, (
@@ -414,7 +416,7 @@ class TestMMSSourceTermInjection:
         src.energy_l = [1e6] * N  # 1 MW/m³
 
         for _ in range(100):
-            solver.step_5eq(p, alpha, h_l, h_v, mdot, bc, 1e-4, None, src)
+            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, 1e-4, None, src)
 
         # S_energy_l = 1e6 W/m³, 100 steps at dt=1e-4:
         # Δh = dt * S_e * n_steps / ρ = 1e-4 * 1e6 * 100 / 750 ≈ 13 J/kg

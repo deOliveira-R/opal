@@ -36,9 +36,18 @@ def make_5eq_solver(N=10, dx=1.0, A=0.01, D_h=0.1, f_D=0.02,
     return solver, fluid, closures, model
 
 
+_step_time = 0.0  # module-level time tracker for step_bf migration
+
 def step_5eq(solver, p, alpha, h_l, h_v, mdot, bc, dt, q_wall=None):
-    """Run one 5-eq step via the step_5eq binding."""
-    solver.step_5eq(p, alpha, h_l, h_v, mdot, bc, dt, q_wall)
+    """Run one 5-eq step via the BoundaryFace path (migrated from step_5eq)."""
+    global _step_time
+    import sys as _sys
+    _sys.path.insert(0, str(__import__('pathlib').Path(__file__).resolve().parent))
+    from bc_helpers import bc_from_legacy
+    bc_in, bc_out = bc_from_legacy(bc)
+    solver.step_bf(p, alpha, h_l, h_v, mdot, bc_in, bc_out,
+                   _step_time, dt, q_wall)
+    _step_time += dt
 
 
 # ---------------------------------------------------------------------------

@@ -19,6 +19,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "two_phase"))
 import opal_two_phase as tp
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from bc_helpers import step_5eq_migrated, reset_time
 
 
 # ============================================================================
@@ -239,7 +241,7 @@ class TestVaporEnthalpyFloor:
         dt = 1e-4
 
         for step in range(200):
-            solver.step_5eq(p, alpha, h_l, h_v, mdot, bc, dt)
+            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, dt)
             for i in range(N):
                 pp_i = fluid.evaluate_phasic(p[i])
                 assert h_v[i] >= pp_i.h_sat_v - 1.0, (
@@ -265,7 +267,7 @@ class TestVaporEnthalpyFloor:
         h_v = np.full(N, pp.h_sat_v - 200e3)  # 200 kJ/kg below floor
         mdot = np.zeros(N + 1)
 
-        solver.step_5eq(p, alpha, h_l, h_v, mdot, bc, 1e-4)
+        step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, 1e-4)
 
         for i in range(N):
             pp_i = fluid.evaluate_phasic(p[i])
@@ -301,7 +303,7 @@ class TestVaporDensityPositivity:
         mdot = np.zeros(N + 1)
 
         for step in range(500):
-            solver.step_5eq(p, alpha, h_l, h_v, mdot, bc, 1e-4)
+            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, 1e-4)
             for i in range(N):
                 if alpha[i] > 1e-8:
                     rho_v = fluid.rho_vapor(p[i], h_v[i])
@@ -330,7 +332,7 @@ class TestVaporDensityPositivity:
         mdot = np.zeros(N + 1)
 
         for step in range(500):
-            solver.step_5eq(p, alpha, h_l, h_v, mdot, bc, 1e-4)
+            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, 1e-4)
             for i in range(N):
                 if alpha[i] > 1e-8:
                     rho_v = fluid.rho_vapor(p[i], h_v[i])
@@ -370,7 +372,7 @@ class TestLiquidEnthalpyBounds:
         q_wall = np.full(N, 1e8)  # 100 MW/m3
 
         for step in range(100):
-            solver.step_5eq(p, alpha, h_l, h_v, mdot, bc, 1e-4, q_wall)
+            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, 1e-4, q_wall)
             for i in range(N):
                 pp_i = fluid.evaluate_phasic(p[i])
                 assert h_l[i] <= pp_i.h_sat_v + 1.0, (
@@ -401,7 +403,7 @@ class TestLiquidEnthalpyBounds:
         q_wall = np.full(N, -1e8)
 
         for step in range(100):
-            solver.step_5eq(p, alpha, h_l, h_v, mdot, bc, 1e-4, q_wall)
+            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, 1e-4, q_wall)
             for i in range(N):
                 assert h_l[i] >= 1e4 - 1.0, (
                     f"step={step}, cell={i}: h_l={h_l[i]:.1f} < h_min=1e4"
@@ -442,7 +444,7 @@ class TestSuperheatedEnthalpyDirection:
         mdot = np.zeros(N + 1)
 
         for step in range(500):
-            solver.step_5eq(p, alpha, h_l, h_v, mdot, bc, 1e-4)
+            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, 1e-4)
 
         # Interior cells (avoid boundary effects at cells 0 and N-1)
         for i in range(1, N - 1):
@@ -477,7 +479,7 @@ class TestSuperheatedEnthalpyDirection:
         mdot = np.zeros(N + 1)
 
         for step in range(2000):
-            solver.step_5eq(p, alpha, h_l, h_v, mdot, bc, 1e-4)
+            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, 1e-4)
 
         # h_l should be closer to h_sat_l than to initial value
         mid = N // 2

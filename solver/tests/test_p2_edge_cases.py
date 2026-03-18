@@ -22,6 +22,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "two_phase"))
 import opal_two_phase as tp
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from bc_helpers import step_5eq_migrated, reset_time
 
 
 # ============================================================================
@@ -80,7 +82,7 @@ class TestTightenedEnergyConservation:
 
         # Run to approximate steady state
         for _ in range(2000):
-            solver.step_5eq(p, alpha, h_l, h_v, mdot, bc, dt)
+            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, dt)
 
         # At steady state with uniform subcooled flow:
         # dE/dt ≈ 0, boundary flux ≈ 0 (same h at inlet and outlet)
@@ -94,7 +96,7 @@ class TestTightenedEnergyConservation:
 
         E1 = total_energy()
         for _ in range(100):
-            solver.step_5eq(p, alpha, h_l, h_v, mdot, bc, dt)
+            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, dt)
         E2 = total_energy()
 
         # Energy should not drift at steady state (< 0.1% of total)
@@ -130,7 +132,7 @@ class TestTightenedEnergyConservation:
         q_wall = np.full(N, 1e5)
 
         for _ in range(200):
-            solver.step_5eq(p, alpha, h_l, h_v, mdot, bc, 1e-4, q_wall)
+            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, 1e-4, q_wall)
 
         # h_l should increase from heating
         for i in range(N):
@@ -186,7 +188,7 @@ class TestQuantitativeVoidGrowth:
         # beyond initial transient from pressure adjustment.
         n_steps = 500
         for _ in range(n_steps):
-            solver.step_5eq(p, alpha, h_l, h_v, mdot, bc, dt)
+            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, dt)
 
         # Gamma is positive (evaporation), so void must grow over time
         assert Gamma_predicted > 0, "Prediction: superheated should give Gamma > 0"
@@ -220,7 +222,7 @@ class TestQuantitativeVoidGrowth:
         mdot = np.zeros(N + 1)
 
         for _ in range(5000):
-            solver.step_5eq(p, alpha, h_l, h_v, mdot, bc, 1e-4)
+            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, 1e-4)
 
         # With advective washout, void growth is limited. Verify it's
         # substantially above the initial 1% seed.
@@ -397,7 +399,7 @@ class TestZeroFlowRate:
         mdot = np.zeros(N + 1)
 
         for _ in range(500):
-            solver.step_5eq(p, alpha, h_l, h_v, mdot, bc, 1e-4)
+            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, 1e-4)
 
         assert np.all(np.abs(mdot) < 1e-6), (
             f"Zero dp should give zero flow, got max |mdot|={np.max(np.abs(mdot)):.2e}"
@@ -436,7 +438,7 @@ class TestVerySmallAlpha:
         mdot = np.zeros(N + 1)
 
         for step in range(200):
-            solver.step_5eq(p, alpha, h_l, h_v, mdot, bc, 1e-4)
+            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, 1e-4)
             assert np.all(np.isfinite(p)), f"NaN in p at step {step}"
             assert np.all(np.isfinite(alpha)), f"NaN in alpha at step {step}"
             assert np.all(np.isfinite(h_l)), f"NaN in h_l at step {step}"
@@ -477,7 +479,7 @@ class TestPressureWorkSign:
 
         h_l_before = h_l[0]
         for _ in range(50):
-            solver.step_5eq(p, alpha, h_l, h_v, mdot, bc, 1e-4)
+            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, 1e-4)
 
         # Pressure should have risen toward 10.5 MPa
         assert p[0] > 10e6, "Pressure should rise"
@@ -511,7 +513,7 @@ class TestPressureWorkSign:
 
         h_l_before = h_l[0]
         for _ in range(50):
-            solver.step_5eq(p, alpha, h_l, h_v, mdot, bc, 1e-4)
+            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, 1e-4)
 
         assert p[0] < 10e6, "Pressure should drop"
         assert h_l[0] < h_l_before, (

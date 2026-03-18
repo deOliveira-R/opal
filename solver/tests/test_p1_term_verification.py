@@ -25,6 +25,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "two_phase"))
 import opal_two_phase as tp
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from bc_helpers import step_5eq_migrated, reset_time
 
 
 # ============================================================================
@@ -309,7 +311,7 @@ class TestPostStepInvariants:
                        dt, n_steps, desc=""):
         """Run n_steps, checking ALL invariants after EACH step."""
         for step in range(n_steps):
-            solver.step_5eq(p, alpha, h_l, h_v, mdot, bc, dt)
+            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, dt)
 
             ctx = f"[{desc} step={step}]"
 
@@ -516,7 +518,7 @@ class TestMixtureConservation:
 
         # Run to approximate steady state
         for step in range(2000):
-            solver.step_5eq(p, alpha, h_l, h_v, mdot, bc, 1e-4)
+            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, 1e-4)
 
         # All face flows should be nearly equal at steady state
         mdot_avg = np.mean(mdot)
@@ -549,7 +551,7 @@ class TestMixtureConservation:
         mdot = np.zeros(N + 1)
 
         for step in range(100):
-            solver.step_5eq(p, alpha, h_l, h_v, mdot, bc, 1e-4)
+            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, 1e-4)
             assert mdot[0] == pytest.approx(0.0, abs=1e-15), (
                 f"step {step}: mdot[0]={mdot[0]}, should be 0 with WALL BC"
             )
@@ -585,7 +587,7 @@ class TestPhaseAbsentReset:
         h_v = np.full(N, pp.h_sat_v + 500e3)  # intentionally wrong
         mdot = np.zeros(N + 1)
 
-        solver.step_5eq(p, alpha, h_l, h_v, mdot, bc, 1e-4)
+        step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, 1e-4)
 
         for i in range(N):
             pp_i = fluid.evaluate_phasic(p[i])
@@ -615,7 +617,7 @@ class TestPhaseAbsentReset:
         h_v = np.full(N, pp.h_sat_v)
         mdot = np.zeros(N + 1)
 
-        solver.step_5eq(p, alpha, h_l, h_v, mdot, bc, 1e-4)
+        step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, 1e-4)
 
         for i in range(N):
             pp_i = fluid.evaluate_phasic(p[i])
@@ -658,7 +660,7 @@ class TestPressureSweep:
         mdot = np.zeros(N + 1)
 
         for step in range(200):
-            solver.step_5eq(p, alpha, h_l, h_v, mdot, bc, 1e-4)
+            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, 1e-4)
 
         assert np.all(np.isfinite(p)), f"NaN in p at {p_MPa} MPa"
         assert np.all(np.isfinite(alpha)), f"NaN in alpha at {p_MPa} MPa"
@@ -698,7 +700,7 @@ class TestIAPWSAtSolverStates:
         mdot = np.zeros(N + 1)
 
         for step in range(200):
-            solver.step_5eq(p, alpha, h_l, h_v, mdot, bc, 5e-5)
+            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, 5e-5)
 
             assert np.all(np.isfinite(p)), f"NaN in p at step {step}"
             assert np.all(np.isfinite(alpha)), f"NaN in alpha at step {step}"
@@ -747,7 +749,7 @@ class TestIAPWSAtSolverStates:
         mdot = np.zeros(N + 1)
 
         for step in range(2000):
-            solver.step_5eq(p, alpha, h_l, h_v, mdot, bc, 5e-5)
+            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, 5e-5)
 
             if step % 100 == 0:
                 assert np.all(np.isfinite(p)), f"NaN in p at step {step}"

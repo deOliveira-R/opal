@@ -26,6 +26,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "two_phase"))
 import opal_two_phase as tp
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from bc_helpers import step_5eq_migrated, reset_time
 
 
 # ============================================================================
@@ -88,7 +90,7 @@ def run_mms(N, recon, h_func, dh_func, n_steps=10000, dt=1e-4):
 
     # Converge pressure/flow
     for _ in range(2000):
-        solver.step_5eq(p, alpha, h_l, h_v, mdot, bc, dt)
+        step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, dt)
 
     # Energy source from actual per-cell flow
     mdot_cell = np.array([0.5 * (mdot[i] + mdot[i + 1]) for i in range(N)])
@@ -98,7 +100,7 @@ def run_mms(N, recon, h_func, dh_func, n_steps=10000, dt=1e-4):
     # Run enthalpy to steady state
     h_l[:] = h_func(x_c)
     for _ in range(n_steps):
-        solver.step_5eq(p, alpha, h_l, h_v, mdot, bc, dt, None, src)
+        step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, dt, None, src)
 
     err = np.abs(h_l - h_func(x_c))
     err_L2 = np.sqrt(np.mean(err**2)) / np.sqrt(np.mean(h_func(x_c)**2))
@@ -195,14 +197,14 @@ class TestBoundaryContaminationReach:
             mdot = np.zeros(N + 1)
 
             for _ in range(2000):
-                solver.step_5eq(p, alpha, h_l, h_v, mdot, bc, dt)
+                step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, dt)
             mdot_cell = np.array([0.5 * (mdot[i] + mdot[i + 1]) for i in range(N)])
             src = tp.SourceTerms()
             src.energy_l = ((mdot_cell / A_flow) * dh_B(x_c)).tolist()
 
             h_l[:] = h_B(x_c)
             for _ in range(10000):
-                solver.step_5eq(p, alpha, h_l, h_v, mdot, bc, dt, None, src)
+                step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, dt, None, src)
 
             # Interior only: middle 50%
             q = N // 4
