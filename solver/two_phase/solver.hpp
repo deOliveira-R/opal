@@ -29,6 +29,7 @@
  */
 
 #include "properties.hpp"
+#include "reconstruction.hpp"
 
 #include <vector>
 #include <stdexcept>
@@ -53,6 +54,10 @@ public:
      */
     TwoPhaseSolver(int N, double dx, double A_flow, double D_h,
                    double f_D, const FluidProperties& fluid);
+
+    TwoPhaseSolver(int N, double dx, double A_flow, double D_h,
+                   double f_D, const FluidProperties& fluid,
+                   const FaceReconstruction& recon);
 
     /**
      * Advance one timestep.
@@ -97,6 +102,8 @@ private:
     double dx_, A_, D_h_, f_D_;
     double V_;   // = dx * A (cell volume)
     const FluidProperties& fluid_;
+    const FaceReconstruction* recon_;  // non-owning; default = &default_donor_cell_
+    static const DonorCell default_donor_cell_;
 
     // Per-cell scratch (mutable: logical const, computational scratch)
     mutable std::vector<FluidProps> props_;      // property cache

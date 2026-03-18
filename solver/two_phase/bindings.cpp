@@ -16,6 +16,7 @@
 #include "solver.hpp"
 #include "simple_fluid.hpp"
 #include "iapws97.hpp"
+#include "reconstruction.hpp"
 
 namespace py = pybind11;
 using namespace opal;
@@ -68,6 +69,18 @@ PYBIND11_MODULE(opal_two_phase, m) {
         .def_readonly("drho_dh_p", &FluidProps::drho_dh_p)
         .def_readonly("T",         &FluidProps::T);
 
+    // FaceReconstruction hierarchy -----------------------------------------
+    py::class_<FaceReconstruction>(m, "FaceReconstruction");
+
+    py::class_<DonorCell, FaceReconstruction>(m, "DonorCell")
+        .def(py::init<>(), "First-order upwind (donor cell)");
+
+    py::class_<MUSCL_Minmod, FaceReconstruction>(m, "MUSCL_Minmod")
+        .def(py::init<>(), "Second-order TVD with minmod limiter");
+
+    py::class_<MUSCL_VanLeer, FaceReconstruction>(m, "MUSCL_VanLeer")
+        .def(py::init<>(), "Second-order TVD with van Leer limiter");
+
     // TwoPhaseBCs -----------------------------------------------------------
     py::class_<TwoPhaseBCs>(m, "TwoPhaseBCs")
         .def(py::init<double, double, double>(),
@@ -88,15 +101,17 @@ PYBIND11_MODULE(opal_two_phase, m) {
                       const FluidProperties&>(),
              py::arg("N"), py::arg("dx"), py::arg("A_flow"),
              py::arg("D_h"), py::arg("f_D"), py::arg("fluid"),
-             py::keep_alive<1, 7>(),  // solver (1) keeps fluid (7) alive
-             "Construct solver for an N-cell two-phase staggered-mesh pipe.\n\n"
-             "Parameters\n----------\n"
-             "N      : number of cells\n"
-             "dx     : cell length [m]\n"
-             "A_flow : flow area [m^2]\n"
-             "D_h    : hydraulic diameter [m]\n"
-             "f_D    : Darcy friction factor [-]\n"
-             "fluid  : FluidProperties instance")
+             py::keep_alive<1, 7>(),
+             "Construct solver with first-order donor-cell (default).")
+
+        .def(py::init<int, double, double, double, double,
+                      const FluidProperties&, const FaceReconstruction&>(),
+             py::arg("N"), py::arg("dx"), py::arg("A_flow"),
+             py::arg("D_h"), py::arg("f_D"), py::arg("fluid"),
+             py::arg("recon"),
+             py::keep_alive<1, 7>(),  // solver keeps fluid alive
+             py::keep_alive<1, 8>(),  // solver keeps recon alive
+             "Construct solver with selectable spatial reconstruction.")
 
         .def_property_readonly("N",      &TwoPhaseSolver::N)
         .def_property_readonly("dx",     &TwoPhaseSolver::dx)

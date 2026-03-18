@@ -44,10 +44,19 @@ namespace opal {
 // Constructor
 // ---------------------------------------------------------------------------
 
+const DonorCell TwoPhaseSolver::default_donor_cell_{};
+
 TwoPhaseSolver::TwoPhaseSolver(int N, double dx, double A_flow, double D_h,
                                double f_D, const FluidProperties& fluid)
+    : TwoPhaseSolver(N, dx, A_flow, D_h, f_D, fluid, default_donor_cell_)
+{
+}
+
+TwoPhaseSolver::TwoPhaseSolver(int N, double dx, double A_flow, double D_h,
+                               double f_D, const FluidProperties& fluid,
+                               const FaceReconstruction& recon)
     : n_(N), dx_(dx), A_(A_flow), D_h_(D_h), f_D_(f_D),
-      V_(dx * A_flow), fluid_(fluid),
+      V_(dx * A_flow), fluid_(fluid), recon_(&recon),
       props_(N), R_face_(N + 1),
       a_(N), b_(N), c_(N), d_(N),
       c_prime_(N), d_prime_(N)
@@ -259,25 +268,23 @@ void TwoPhaseSolver::update_enthalpy(std::vector<double>& h,
         double rho_i = props_[i].rho;
         double h_old = h[i];
 
-        // Inlet face enthalpy (face i)
-        double h_face_in;
-        if (mdot[i] >= 0.0) {
-            // Flow enters cell from left
-            h_face_in = (i == 0) ? bc.h_in : h[i - 1];
-        } else {
-            // Reverse flow: fluid leaves cell to the left
-            h_face_in = h_old;
-        }
+        // Face enthalpies via reconstruction (MUSCL or donor-cell)
+        // face_value(cell_LL, cell_L, cell_R, cell_RR, mdot)
+        // At boundaries, use BC or repeat nearest cell (first-order fallback)
 
-        // Outlet face enthalpy (face i+1)
-        double h_face_out;
-        if (mdot[i + 1] >= 0.0) {
-            // Flow leaves cell to the right
-            h_face_out = h_old;
-        } else {
-            // Reverse flow: fluid enters from right
-            h_face_out = (i == n_ - 1) ? h_old : h[i + 1];
-        }
+        // Inlet face (face i): between cell i-1 and cell i
+        double h_LL_in = (i >= 2) ? h[i - 2] : ((i >= 1) ? h[i - 1] : bc.h_in);
+        double h_L_in  = (i >= 1) ? h[i - 1] : bc.h_in;
+        double h_R_in  = h[i];
+        double h_RR_in = (i < n_ - 1) ? h[i + 1] : h[i];
+        double h_face_in = recon_->face_value(h_LL_in, h_L_in, h_R_in, h_RR_in, mdot[i]);
+
+        // Outlet face (face i+1): between cell i and cell i+1
+        double h_LL_out = (i >= 1) ? h[i - 1] : bc.h_in;
+        double h_L_out  = h[i];
+        double h_R_out  = (i < n_ - 1) ? h[i + 1] : h[i];
+        double h_RR_out = (i < n_ - 2) ? h[i + 2] : h_R_out;
+        double h_face_out = recon_->face_value(h_LL_out, h_L_out, h_R_out, h_RR_out, mdot[i + 1]);
 
         // Enthalpy fluxes (relative to cell enthalpy)
         double flux = mdot[i] * (h_face_in - h_old)
