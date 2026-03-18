@@ -144,6 +144,17 @@ private:
 
     MeshParams mesh_params() const;
 
+    /// Core implementation — no legacy types. Both public step() overloads
+    /// decompose their BCs and delegate here.
+    void step_internal(SolverState& state,
+                       const FacePressureBC& pbc_in,
+                       const FacePressureBC& pbc_out,
+                       const FaceTransportBC& tbc_in,
+                       bool has_critical_flow, double C_d,
+                       double dt,
+                       const std::vector<double>* q_wall,
+                       const SourceTerms* sources) const;
+
     // Scratch arrays
     mutable std::vector<FluidProps> props_;
     mutable std::vector<double>     rho_face_;
@@ -152,8 +163,8 @@ private:
     mutable std::vector<double>     c_prime_, d_prime_;
     mutable bool cfl_warned_ = false;
 
-    void compute_face_densities(const SolverState& state,
-                                const BoundaryConditions& bc) const;
+    void compute_face_densities(const FacePressureBC& pbc_in,
+                                const FaceTransportBC& tbc_in) const;
     void solve_tridiagonal(std::vector<double>& p) const;
 };
 

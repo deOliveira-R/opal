@@ -38,7 +38,8 @@ public:
 
     void compute_face_resistance(
         const SolverState& state,
-        const BoundaryConditions& bc,
+        double p_in,
+        const FaceTransportBC& tbc_in,
         const FluidPackage& fluid,
         const MeshParams& mesh,
         const std::vector<FluidProps>& props,
@@ -46,7 +47,7 @@ public:
 
     void assemble_pressure_system(
         const SolverState& state,
-        const BoundaryConditions& bc,
+        double p_in, double p_out,
         const MeshParams& mesh,
         const std::vector<FluidProps>& props,
         const std::vector<double>& R_face,
@@ -55,14 +56,14 @@ public:
 
     void update_velocities(
         SolverState& state,
-        const BoundaryConditions& bc,
+        double p_in, double p_out,
         const MeshParams& mesh,
         const std::vector<double>& R_face) const override;
 
     void update_transport(
         SolverState& state,
         const std::vector<double>& p_old,
-        const BoundaryConditions& bc,
+        const FaceTransportBC& tbc_in,
         const MeshParams& mesh,
         const std::vector<FluidProps>& props,
         const FaceReconstruction& recon,

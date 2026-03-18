@@ -61,7 +61,9 @@ public:
      */
     virtual void assemble_pressure_system(
         const SolverState& state,
-        const BoundaryConditions& bc,
+        const FacePressureBC& pbc_in,
+        const FacePressureBC& pbc_out,
+        const FaceTransportBC& tbc_in,
         const MeshParams& mesh,
         const std::vector<FluidProps>& props,
         const std::vector<double>& rho_face,
@@ -77,7 +79,8 @@ public:
      */
     virtual void update_velocities(
         SolverState& state,
-        const BoundaryConditions& bc,
+        const FacePressureBC& pbc_in,
+        const FacePressureBC& pbc_out,
         const MeshParams& mesh,
         const std::vector<double>& rho_face,
         double dt,
@@ -96,7 +99,9 @@ public:
 
     void assemble_pressure_system(
         const SolverState& state,
-        const BoundaryConditions& bc,
+        const FacePressureBC& pbc_in,
+        const FacePressureBC& pbc_out,
+        const FaceTransportBC& tbc_in,
         const MeshParams& mesh,
         const std::vector<FluidProps>& props,
         const std::vector<double>& /*rho_face*/,
@@ -107,17 +112,18 @@ public:
         const CriticalFlowResult* /*cf*/,
         const SourceTerms* /*sources*/) const override
     {
-        // Delegate entirely to FlowModel (which computes its own R_face)
-        // Note: algebraic momentum ignores source terms (no time derivative)
         int N = mesh.N;
         R_face_.resize(N + 1);
-        model.compute_face_resistance(state, bc, fluid, mesh, props, R_face_);
-        model.assemble_pressure_system(state, bc, mesh, props, R_face_, dt, tri);
+        model.compute_face_resistance(state, pbc_in.p_boundary, tbc_in,
+                                       fluid, mesh, props, R_face_);
+        model.assemble_pressure_system(state, pbc_in.p_boundary, pbc_out.p_boundary,
+                                        mesh, props, R_face_, dt, tri);
     }
 
     void update_velocities(
         SolverState& state,
-        const BoundaryConditions& bc,
+        const FacePressureBC& pbc_in,
+        const FacePressureBC& pbc_out,
         const MeshParams& mesh,
         const std::vector<double>& /*rho_face*/,
         double /*dt*/,
@@ -125,9 +131,8 @@ public:
         const CriticalFlowResult* /*cf*/,
         const SourceTerms* /*sources*/) const override
     {
-        // Use the SAME R_face computed in assemble_pressure_system.
-        // The solver guarantees these are called in sequence.
-        model.update_velocities(state, bc, mesh, R_face_);
+        model.update_velocities(state, pbc_in.p_boundary, pbc_out.p_boundary,
+                                mesh, R_face_);
     }
 
 private:
@@ -154,7 +159,9 @@ public:
 
     void assemble_pressure_system(
         const SolverState& state,
-        const BoundaryConditions& bc,
+        const FacePressureBC& pbc_in,
+        const FacePressureBC& pbc_out,
+        const FaceTransportBC& /*tbc_in*/,
         const MeshParams& mesh,
         const std::vector<FluidProps>& props,
         const std::vector<double>& rho_face,
@@ -169,29 +176,22 @@ public:
         tri.resize(N);
 
         double beta = dt * mesh.A_flow / mesh.dx;
+        bool inlet_wall  = (pbc_in.type  == FacePressureBC::ZERO_FLUX);
+        bool outlet_wall = (pbc_out.type == FacePressureBC::ZERO_FLUX);
+        bool outlet_choked = cf && cf->is_choked;
 
-        // Compute old-time friction per face
         std::vector<double> fric(N + 1, 0.0);
         compute_friction(state, mesh, rho_face, fric);
-
-        // Determine if outlet is choked
-        bool outlet_choked = cf && cf->is_choked;
 
         for (int i = 0; i < N; ++i) {
             double alpha_coeff = mesh.V * props[i].drho_dp_h / dt;
 
-            // Wall BC at inlet: no left coupling
-            double beta_left = (bc.bc_type_in == BCType::WALL && i == 0)
+            double beta_left = (inlet_wall && i == 0)
                              ? 0.0 : (i == 0 ? 0.0 : beta);
 
-            // Choked/wall at outlet: no right coupling
             double beta_right;
             if (i == N - 1) {
-                if (bc.bc_type_out == BCType::WALL || outlet_choked) {
-                    beta_right = 0.0;
-                } else {
-                    beta_right = beta;
-                }
+                beta_right = (outlet_wall || outlet_choked) ? 0.0 : beta;
             } else {
                 beta_right = beta;
             }
@@ -201,39 +201,33 @@ public:
             tri.b[i] = alpha_coeff + beta_left + beta_right;
             tri.d[i] = alpha_coeff * state.p[i];
 
-            // RHS: old-time mass flux imbalance + friction correction
             tri.d[i] += (state.mdot[i] - state.mdot[i + 1])
                        - dt * (fric[i] - fric[i + 1]);
 
-            // Generic source terms (mass source, momentum body force)
-            // Mass source: S_mass * V enters the continuity equation as
-            // an additional flux [kg/s], consistent with the mdot terms.
             if (sources && !sources->mass.empty())
                 tri.d[i] += sources->mass[i] * mesh.V;
             if (sources && !sources->momentum.empty())
                 tri.d[i] += dt * (sources->momentum[i] - sources->momentum[i + 1])
                            * mesh.A_flow;
 
-            // Boundary pressure terms
-            if (i == 0 && bc.bc_type_in == BCType::PRESSURE) {
-                tri.d[i] += beta_left * bc.p_in;
+            // Boundary pressure coupling
+            if (i == 0 && !inlet_wall) {
+                tri.d[i] += beta_left * pbc_in.p_boundary;
             }
             if (i == N - 1) {
                 if (outlet_choked) {
-                    // Choked: outlet flow is fixed at mdot_critical
                     tri.d[i] += (state.mdot[N] - cf->mdot_crit);
-                } else if (bc.bc_type_out == BCType::PRESSURE
-                        || bc.bc_type_out == BCType::BREAK) {
-                    tri.d[i] += beta_right * bc.p_out;
+                } else if (!outlet_wall) {
+                    tri.d[i] += beta_right * pbc_out.p_boundary;
                 }
-                // WALL: no boundary term (beta_right = 0)
             }
         }
     }
 
     void update_velocities(
         SolverState& state,
-        const BoundaryConditions& bc,
+        const FacePressureBC& pbc_in,
+        const FacePressureBC& pbc_out,
         const MeshParams& mesh,
         const std::vector<double>& rho_face,
         double dt,
@@ -243,26 +237,25 @@ public:
     {
         int N = mesh.N;
         double beta = dt * mesh.A_flow / mesh.dx;
+        bool inlet_wall  = (pbc_in.type  == FacePressureBC::ZERO_FLUX);
+        bool outlet_wall = (pbc_out.type == FacePressureBC::ZERO_FLUX);
 
-        // Friction (same as pressure assembly)
         std::vector<double> fric(N + 1, 0.0);
         compute_friction(state, mesh, rho_face, fric);
 
-        // Save old mdot for inertial update
         std::vector<double> mdot_old = state.mdot;
 
-        // Momentum source (body force per unit volume at faces)
         auto S_mom = [&](int i) -> double {
             return (sources && !sources->momentum.empty())
                    ? dt * sources->momentum[i] * mesh.A_flow : 0.0;
         };
 
         // Inlet face
-        if (bc.bc_type_in == BCType::WALL) {
+        if (inlet_wall) {
             state.mdot[0] = 0.0;
         } else {
             state.mdot[0] = mdot_old[0]
-                + beta * (bc.p_in - state.p[0]) - dt * fric[0] + S_mom(0);
+                + beta * (pbc_in.p_boundary - state.p[0]) - dt * fric[0] + S_mom(0);
         }
 
         // Interior faces
@@ -272,13 +265,12 @@ public:
         }
 
         // Outlet face
-        if (bc.bc_type_out == BCType::WALL) {
+        if (outlet_wall) {
             state.mdot[N] = 0.0;
         } else {
             double mdot_momentum = mdot_old[N]
-                + beta * (state.p[N - 1] - bc.p_out) - dt * fric[N];
+                + beta * (state.p[N - 1] - pbc_out.p_boundary) - dt * fric[N];
 
-            // Critical flow limiter
             if (cf && cf->is_choked && mdot_momentum > 0) {
                 state.mdot[N] = std::min(mdot_momentum, cf->mdot_crit);
             } else {

@@ -221,19 +221,23 @@ PYBIND11_MODULE(opal_two_phase, m) {
 
                 auto p_old_vec = to_vec(p_old_arr);
                 MeshParams mesh{N, dx, A_flow, D_h, f_D, dx * A_flow};
-
-                // Dummy props (not used by 5-eq transport — it computes its own)
                 std::vector<FluidProps> props(N);
-
                 static const DonorCell default_recon;
+
+                // Convert legacy BC → FaceTransportBC
+                FaceTransportBC tbc_in;
+                tbc_in.h_l   = (bc.h_l_in != 0.0) ? bc.h_l_in : bc.h_in;
+                tbc_in.h_v   = bc.h_v_in;
+                tbc_in.h_mix = bc.h_in;
+                tbc_in.alpha = bc.alpha_in;
 
                 if (q_wall_obj.is_none()) {
                     self.update_transport(
-                        state, p_old_vec, bc, mesh, props, default_recon, dt, nullptr);
+                        state, p_old_vec, tbc_in, mesh, props, default_recon, dt, nullptr);
                 } else {
                     auto q_v = to_vec(q_wall_obj.cast<py::array_t<double>>());
                     self.update_transport(
-                        state, p_old_vec, bc, mesh, props, default_recon, dt, &q_v);
+                        state, p_old_vec, tbc_in, mesh, props, default_recon, dt, &q_v);
                 }
 
                 copy_back(alpha, state.alpha);

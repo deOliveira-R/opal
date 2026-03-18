@@ -69,7 +69,8 @@ void HEMModel::evaluate_properties(
 
 void HEMModel::compute_face_resistance(
     const SolverState& /*state*/,
-    const BoundaryConditions& bc,
+    double p_in,
+    const FaceTransportBC& tbc_in,
     const FluidPackage& fluid,
     const MeshParams& mesh,
     const std::vector<FluidProps>& props,
@@ -80,26 +81,20 @@ void HEMModel::compute_face_resistance(
 
     double geom = mesh.f_D * mesh.dx / (2.0 * mesh.D_h * mesh.A_flow * mesh.A_flow);
 
-    // Face 0 (inlet)
-    double rho_in = fluid.evaluate(bc.p_in, bc.h_in).rho;
+    double h_in = (tbc_in.h_mix != 0.0) ? tbc_in.h_mix : tbc_in.h_l;
+    double rho_in = fluid.evaluate(p_in, h_in).rho;
     R_face[0] = geom / (0.5 * (rho_in + props[0].rho));
 
-    // Interior faces
     for (int i = 1; i < N; ++i) {
         R_face[i] = geom / (0.5 * (props[i - 1].rho + props[i].rho));
     }
 
-    // Face N (outlet)
     R_face[N] = geom / props[N - 1].rho;
 }
 
-// ---------------------------------------------------------------------------
-// Pressure system assembly (tridiagonal)
-// ---------------------------------------------------------------------------
-
 void HEMModel::assemble_pressure_system(
     const SolverState& state,
-    const BoundaryConditions& bc,
+    double p_in, double p_out,
     const MeshParams& mesh,
     const std::vector<FluidProps>& props,
     const std::vector<double>& R_face,
@@ -119,27 +114,23 @@ void HEMModel::assemble_pressure_system(
         tri.b[i] = alpha_coeff + inv_R_left + inv_R_right;
         tri.d[i] = alpha_coeff * state.p[i];
 
-        if (i == 0)     tri.d[i] += bc.p_in  * inv_R_left;
-        if (i == N - 1) tri.d[i] += bc.p_out * inv_R_right;
+        if (i == 0)     tri.d[i] += p_in  * inv_R_left;
+        if (i == N - 1) tri.d[i] += p_out * inv_R_right;
     }
 }
 
-// ---------------------------------------------------------------------------
-// Algebraic flow update: mdot = dp / R
-// ---------------------------------------------------------------------------
-
 void HEMModel::update_velocities(
     SolverState& state,
-    const BoundaryConditions& bc,
+    double p_in, double p_out,
     const MeshParams& mesh,
     const std::vector<double>& R_face) const
 {
     int N = mesh.N;
-    state.mdot[0] = (bc.p_in - state.p[0]) / R_face[0];
+    state.mdot[0] = (p_in - state.p[0]) / R_face[0];
     for (int i = 1; i < N; ++i) {
         state.mdot[i] = (state.p[i - 1] - state.p[i]) / R_face[i];
     }
-    state.mdot[N] = (state.p[N - 1] - bc.p_out) / R_face[N];
+    state.mdot[N] = (state.p[N - 1] - p_out) / R_face[N];
 }
 
 // ---------------------------------------------------------------------------
@@ -149,7 +140,7 @@ void HEMModel::update_velocities(
 void HEMModel::update_transport(
     SolverState& state,
     const std::vector<double>& p_old,
-    const BoundaryConditions& bc,
+    const FaceTransportBC& tbc_in,
     const MeshParams& mesh,
     const std::vector<FluidProps>& props,
     const FaceReconstruction& recon,
@@ -171,11 +162,11 @@ void HEMModel::update_transport(
         int ng = recon.ghost_cells();
         double h_face_in;
         if (i == 0 && mdot[i] >= 0.0) {
-            h_face_in = bc.h_in;
+            h_face_in = tbc_in.h_l;
         } else {
             double h_LL_in, h_L_in, h_R_in, h_RR_in;
             build_stencil(h_old.data(), N, i,
-                          bc.h_in, h_old[N - 1], ng,
+                          tbc_in.h_l, h_old[N - 1], ng,
                           h_LL_in, h_L_in, h_R_in, h_RR_in);
             h_face_in = recon.face_value(h_LL_in, h_L_in, h_R_in, h_RR_in, mdot[i]);
         }
@@ -187,7 +178,7 @@ void HEMModel::update_transport(
         } else {
             double h_LL_out, h_L_out, h_R_out, h_RR_out;
             build_stencil(h_old.data(), N, i + 1,
-                          bc.h_in, h_old[N - 1], ng,
+                          tbc_in.h_l, h_old[N - 1], ng,
                           h_LL_out, h_L_out, h_R_out, h_RR_out);
             h_face_out = recon.face_value(h_LL_out, h_L_out, h_R_out, h_RR_out, mdot[i + 1]);
         }

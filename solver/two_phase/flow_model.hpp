@@ -79,10 +79,14 @@ public:
     /**
      * Compute face resistances from properties and mesh.
      * R_face[i] = f_D * dx / (2 * D_h * A^2 * rho_face[i])
+     *
+     * @param p_in       Inlet pressure [Pa] (for boundary density)
+     * @param tbc_in     Transport BC at inlet (enthalpy for density eval)
      */
     virtual void compute_face_resistance(
         const SolverState& state,
-        const BoundaryConditions& bc,
+        double p_in,
+        const FaceTransportBC& tbc_in,
         const FluidPackage& fluid,
         const MeshParams& mesh,
         const std::vector<FluidProps>& props,
@@ -91,10 +95,12 @@ public:
     /**
      * Assemble the semi-implicit pressure system (tridiagonal).
      * Output: coefficients a, b, c, d for Thomas algorithm.
+     *
+     * @param p_in, p_out  Boundary pressures for inlet/outlet coupling
      */
     virtual void assemble_pressure_system(
         const SolverState& state,
-        const BoundaryConditions& bc,
+        double p_in, double p_out,
         const MeshParams& mesh,
         const std::vector<FluidProps>& props,
         const std::vector<double>& R_face,
@@ -106,21 +112,19 @@ public:
      */
     virtual void update_velocities(
         SolverState& state,
-        const BoundaryConditions& bc,
+        double p_in, double p_out,
         const MeshParams& mesh,
         const std::vector<double>& R_face) const = 0;
 
     /**
      * Explicit transport update (enthalpy, void fraction, etc.).
-     * Called after pressure solve and velocity update.
      *
-     * @param sources  Optional generic source terms (MMS, gravity, heating).
-     *                 nullptr = no additional sources. Additive with q_wall.
+     * @param tbc_in  Transport BC at inlet (enthalpy, void fraction for ghost cells)
      */
     virtual void update_transport(
         SolverState& state,
         const std::vector<double>& p_old,
-        const BoundaryConditions& bc,
+        const FaceTransportBC& tbc_in,
         const MeshParams& mesh,
         const std::vector<FluidProps>& props,
         const FaceReconstruction& recon,

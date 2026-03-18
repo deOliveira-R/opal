@@ -89,14 +89,15 @@ MeshParams TwoPhaseSolver::mesh_params() const {
 }
 
 void TwoPhaseSolver::compute_face_densities(
-    const SolverState& /*state*/,
-    const BoundaryConditions& bc) const
+    const FacePressureBC& pbc_in,
+    const FaceTransportBC& tbc_in) const
 {
     // Face 0 (inlet)
-    if (bc.bc_type_in == BCType::WALL) {
+    if (pbc_in.type == FacePressureBC::ZERO_FLUX) {
         rho_face_[0] = props_[0].rho;
     } else {
-        double rho_in = fluid_.evaluate(bc.p_in, bc.h_in).rho;
+        double h_in = (tbc_in.h_mix != 0.0) ? tbc_in.h_mix : tbc_in.h_l;
+        double rho_in = fluid_.evaluate(pbc_in.p_boundary, h_in).rho;
         rho_face_[0] = 0.5 * (rho_in + props_[0].rho);
     }
 
@@ -139,22 +140,91 @@ void TwoPhaseSolver::step(SolverState& state,
                           const std::vector<double>* q_wall,
                           const SourceTerms* sources) const
 {
+    // Legacy adapter: convert struct to decomposed BC data and delegate.
+    FacePressureBC pbc_in, pbc_out;
+    FaceTransportBC tbc_in;
+
+    // Pressure BCs
+    if (bc.bc_type_in == BCType::WALL) {
+        pbc_in = {FacePressureBC::ZERO_FLUX, 0.0};
+    } else {
+        pbc_in = {FacePressureBC::DIRICHLET, bc.p_in};
+    }
+    if (bc.bc_type_out == BCType::WALL) {
+        pbc_out = {FacePressureBC::ZERO_FLUX, 0.0};
+    } else {
+        pbc_out = {FacePressureBC::DIRICHLET, bc.p_out};
+    }
+
+    // Transport BC
+    tbc_in.h_l    = (bc.h_l_in != 0.0) ? bc.h_l_in : bc.h_in;
+    tbc_in.h_v    = bc.h_v_in;
+    tbc_in.h_mix  = bc.h_in;
+    tbc_in.alpha  = bc.alpha_in;
+
+    // Critical flow
+    bool has_cf = (bc.bc_type_out == BCType::BREAK) && critical_flow_;
+    double C_d = bc.break_area_fraction;
+
+    step_internal(state, pbc_in, pbc_out, tbc_in, has_cf, C_d,
+                  dt, q_wall, sources);
+}
+
+// ---------------------------------------------------------------------------
+// BoundaryFace step — time-aware, strategy-based BCs
+// ---------------------------------------------------------------------------
+
+void TwoPhaseSolver::step(SolverState& state,
+                          const BoundaryFace& bc_in,
+                          const BoundaryFace& bc_out,
+                          double t, double dt,
+                          const std::vector<double>* q_wall,
+                          const SourceTerms* sources) const
+{
+    auto pbc_in  = bc_in.pressure(t);
+    auto pbc_out = bc_out.pressure(t);
+    auto tbc_in  = bc_in.transport(t);
+
+    // Handle break with C_d=0 (fully closed) as wall
+    double C_d = bc_out.discharge_coefficient(t);
+    bool has_cf = bc_out.has_critical_flow() && critical_flow_ && C_d > 0.0;
+
+    if (bc_out.is_wall() || (bc_out.has_critical_flow() && C_d <= 0.0)) {
+        pbc_out = {FacePressureBC::ZERO_FLUX, 0.0};
+    }
+
+    step_internal(state, pbc_in, pbc_out, tbc_in, has_cf, C_d,
+                  dt, q_wall, sources);
+}
+
+// ---------------------------------------------------------------------------
+// Core implementation — no legacy types
+// ---------------------------------------------------------------------------
+
+void TwoPhaseSolver::step_internal(
+    SolverState& state,
+    const FacePressureBC& pbc_in,
+    const FacePressureBC& pbc_out,
+    const FaceTransportBC& tbc_in,
+    bool has_critical_flow, double C_d,
+    double dt,
+    const std::vector<double>* q_wall,
+    const SourceTerms* sources) const
+{
     if (dt <= 0) throw std::invalid_argument("dt must be > 0");
 
     auto mesh = mesh_params();
-
-    // Save old pressures for pressure-work term
     std::vector<double> p_old(state.p);
 
     // 1. Evaluate properties at old state
     model_->evaluate_properties(state, fluid_, props_);
 
     // 2. Compute face densities
-    compute_face_densities(state, bc);
+    compute_face_densities(pbc_in, tbc_in);
 
-    // 3. Critical flow check (if break BC at outlet)
+    // 3. Critical flow check
     CriticalFlowResult cf_result{};
-    if (bc.bc_type_out == BCType::BREAK && critical_flow_) {
+    if (has_critical_flow && critical_flow_) {
         int last = n_ - 1;
         double h_mix = state.h_l.empty() ? 0.0 :
             (state.alpha.empty()
@@ -163,8 +233,6 @@ void TwoPhaseSolver::step(SolverState& state,
                   + state.alpha[last] * (state.h_v.empty()
                       ? state.h_l[last] : state.h_v[last]));
 
-        // Pre-compute momentum estimate at outlet (what mdot would be
-        // without critical flow limit) for the choke check.
         double beta = dt * mesh.A_flow / mesh.dx;
         double fric_out = 0.0;
         if (rho_face_[n_] > 0.01) {
@@ -173,40 +241,43 @@ void TwoPhaseSolver::step(SolverState& state,
                      / (rho_face_[n_] * mesh.A_flow * mesh.A_flow);
         }
         double mdot_mom_est = state.mdot[n_]
-            + beta * (state.p[last] - bc.p_out) - dt * fric_out;
+            + beta * (state.p[last] - pbc_out.p_boundary) - dt * fric_out;
 
         cf_result = critical_flow_->evaluate(
             state.p[last], h_mix,
             props_[last].rho, props_[last].drho_dp_h,
-            bc.p_out, mesh.A_flow, bc.break_area_fraction,
+            pbc_out.p_boundary, mesh.A_flow, C_d,
             mdot_mom_est);
     }
 
-    // 4. Assemble pressure system (momentum model handles algebraic vs inertial)
+    // 4. Assemble pressure system
+    // If choked, force outlet to ZERO_FLUX in the pressure matrix
+    FacePressureBC pbc_out_eff = pbc_out;
+    if (cf_result.is_choked) {
+        pbc_out_eff = {FacePressureBC::ZERO_FLUX, pbc_out.p_boundary};
+    }
+
     momentum_->assemble_pressure_system(
-        state, bc, mesh, props_, rho_face_, dt,
+        state, pbc_in, pbc_out_eff, tbc_in, mesh, props_, rho_face_, dt,
         *model_, fluid_, tri_,
         cf_result.is_choked ? &cf_result : nullptr,
         sources);
 
     // 5. Solve tridiagonal + pressure bounds
     solve_tridiagonal(state.p);
-    // Water-specific pressure bounds (IAPWS-IF97 validity range).
-    // p_floor > triple point (611 Pa), p_ceiling < critical point (22.064 MPa).
-    // Must be updated if OPAL ever supports other fluids (CO2, sodium, etc.).
     constexpr double p_floor   = 700.0;
     constexpr double p_ceiling = 21.0e6;
     for (int i = 0; i < n_; ++i) {
         state.p[i] = std::clamp(state.p[i], p_floor, p_ceiling);
     }
 
-    // 6. Update velocities (momentum model handles algebraic vs inertial)
+    // 6. Update velocities
     momentum_->update_velocities(
-        state, bc, mesh, rho_face_, dt, *model_,
+        state, pbc_in, pbc_out, mesh, rho_face_, dt, *model_,
         cf_result.is_choked ? &cf_result : nullptr,
         sources);
 
-    // CFL check
+    // 7. CFL check
     if (!cfl_warned_ && !state.mdot.empty()) {
         double dt_cfl = 1e30;
         for (int i = 0; i < n_; ++i) {
@@ -226,57 +297,8 @@ void TwoPhaseSolver::step(SolverState& state,
         }
     }
 
-    // 7. Transport update (FlowModel handles equation-set-specific transport)
-    model_->update_transport(state, p_old, bc, mesh, props_, *recon_, dt, q_wall, sources);
-}
-
-// ---------------------------------------------------------------------------
-// BoundaryFace step — time-aware, strategy-based BCs
-// ---------------------------------------------------------------------------
-
-void TwoPhaseSolver::step(SolverState& state,
-                          const BoundaryFace& bc_in,
-                          const BoundaryFace& bc_out,
-                          double t, double dt,
-                          const std::vector<double>* q_wall,
-                          const SourceTerms* sources) const
-{
-    // Evaluate boundary faces at current time → legacy struct
-    auto pbc_in  = bc_in.pressure(t);
-    auto pbc_out = bc_out.pressure(t);
-    auto tbc_in  = bc_in.transport(t);
-
-    BoundaryConditions bc;
-
-    // Pressure
-    bc.p_in  = pbc_in.p_boundary;
-    bc.p_out = pbc_out.p_boundary;
-
-    // BC types from strategy
-    bc.bc_type_in  = bc_in.is_wall()  ? BCType::WALL
-                   : BCType::PRESSURE;
-
-    // Break with C_d=0 (fully closed) acts as a wall
-    double C_d_out = bc_out.discharge_coefficient(t);
-    if (bc_out.is_wall() || (bc_out.has_critical_flow() && C_d_out <= 0.0)) {
-        bc.bc_type_out = BCType::WALL;
-    } else if (bc_out.has_critical_flow()) {
-        bc.bc_type_out = BCType::BREAK;
-    } else {
-        bc.bc_type_out = BCType::PRESSURE;
-    }
-
-    // Transport
-    bc.h_in    = tbc_in.h_mix;
-    bc.h_l_in  = tbc_in.h_l;
-    bc.h_v_in  = tbc_in.h_v;
-    bc.alpha_in = tbc_in.alpha;
-
-    // Critical flow: time-dependent discharge coefficient
-    bc.break_area_fraction = bc_out.discharge_coefficient(t);
-
-    // Delegate to struct-based step
-    step(state, bc, dt, q_wall, sources);
+    // 8. Transport update
+    model_->update_transport(state, p_old, tbc_in, mesh, props_, *recon_, dt, q_wall, sources);
 }
 
 // ---------------------------------------------------------------------------

@@ -181,7 +181,8 @@ void FiveEqModel::evaluate_properties(
 
 void FiveEqModel::compute_face_resistance(
     const SolverState& /*state*/,
-    const BoundaryConditions& bc,
+    double p_in,
+    const FaceTransportBC& tbc_in,
     const FluidPackage& /*fluid*/,
     const MeshParams& mesh,
     const std::vector<FluidProps>& props,
@@ -193,9 +194,9 @@ void FiveEqModel::compute_face_resistance(
     double geom = mesh.f_D * mesh.dx / (2.0 * mesh.D_h * mesh.A_flow * mesh.A_flow);
 
     // Inlet face: compute mixture density from phasic properties at BC
-    double rho_l_in = phasic_.rho_liquid(bc.p_in, bc.h_l_in > 0 ? bc.h_l_in : bc.h_in);
-    double rho_v_in = phasic_.rho_vapor(bc.p_in, bc.h_v_in > 0 ? bc.h_v_in : bc.h_in);
-    double rho_in = (1.0 - bc.alpha_in) * rho_l_in + bc.alpha_in * rho_v_in;
+    double rho_l_in = phasic_.rho_liquid(p_in, tbc_in.h_l);
+    double rho_v_in = phasic_.rho_vapor(p_in, tbc_in.h_v);
+    double rho_in = (1.0 - tbc_in.alpha) * rho_l_in + tbc_in.alpha * rho_v_in;
     R_face[0] = geom / (0.5 * (rho_in + props[0].rho));
 
     for (int i = 1; i < N; ++i) {
@@ -212,7 +213,7 @@ void FiveEqModel::compute_face_resistance(
 
 void FiveEqModel::assemble_pressure_system(
     const SolverState& state,
-    const BoundaryConditions& bc,
+    double p_in, double p_out,
     const MeshParams& mesh,
     const std::vector<FluidProps>& props,
     const std::vector<double>& R_face,
@@ -233,8 +234,8 @@ void FiveEqModel::assemble_pressure_system(
         tri.b[i] = alpha_coeff + inv_R_left + inv_R_right;
         tri.d[i] = alpha_coeff * state.p[i];
 
-        if (i == 0)     tri.d[i] += bc.p_in  * inv_R_left;
-        if (i == N - 1) tri.d[i] += bc.p_out * inv_R_right;
+        if (i == 0)     tri.d[i] += p_in  * inv_R_left;
+        if (i == N - 1) tri.d[i] += p_out * inv_R_right;
     }
 }
 
@@ -244,16 +245,16 @@ void FiveEqModel::assemble_pressure_system(
 
 void FiveEqModel::update_velocities(
     SolverState& state,
-    const BoundaryConditions& bc,
+    double p_in, double p_out,
     const MeshParams& mesh,
     const std::vector<double>& R_face) const
 {
     int N = mesh.N;
-    state.mdot[0] = (bc.p_in - state.p[0]) / R_face[0];
+    state.mdot[0] = (p_in - state.p[0]) / R_face[0];
     for (int i = 1; i < N; ++i) {
         state.mdot[i] = (state.p[i - 1] - state.p[i]) / R_face[i];
     }
-    state.mdot[N] = (state.p[N - 1] - bc.p_out) / R_face[N];
+    state.mdot[N] = (state.p[N - 1] - p_out) / R_face[N];
 }
 
 // ---------------------------------------------------------------------------
@@ -318,7 +319,7 @@ std::pair<double, double> FiveEqModel::split_phasic_flux(
 void FiveEqModel::update_transport(
     SolverState& state,
     const std::vector<double>& p_old,
-    const BoundaryConditions& bc,
+    const FaceTransportBC& tbc_in,
     const MeshParams& mesh,
     const std::vector<FluidProps>& /*props*/,
     const FaceReconstruction& recon,
@@ -358,7 +359,7 @@ void FiveEqModel::update_transport(
 
         // Inlet face (between cell i-1 and cell i)
         double alpha_in_face = (i > 0) ? 0.5 * (alpha_old[i - 1] + al)
-                                       : bc.alpha_in;
+                                       : tbc_in.alpha;
         double rho_l_in = (i > 0) ? 0.5 * (iface_states_[i - 1].rho_l + rl)
                                   : rl;
         double rho_v_in = (i > 0) ? 0.5 * (iface_states_[i - 1].rho_v + rv)
@@ -443,11 +444,11 @@ void FiveEqModel::update_transport(
             double h_face_in;
             if (i == 0 && mdot_l_in >= 0.0) {
                 // Inlet face, positive inflow: fluid entering has BC enthalpy
-                h_face_in = bc.h_l_in;
+                h_face_in = tbc_in.h_l;
             } else {
                 double h_LL, h_L, h_R, h_RR;
                 build_stencil(h_l_old.data(), N, i,
-                              bc.h_l_in, h_l_old[N - 1], ng,
+                              tbc_in.h_l, h_l_old[N - 1], ng,
                               h_LL, h_L, h_R, h_RR);
                 h_face_in = recon.face_value(h_LL, h_L, h_R, h_RR, mdot_l_in);
             }
@@ -459,7 +460,7 @@ void FiveEqModel::update_transport(
             } else {
                 double h_LL2, h_L2, h_R2, h_RR2;
                 build_stencil(h_l_old.data(), N, i + 1,
-                              bc.h_l_in, h_l_old[N - 1], ng,
+                              tbc_in.h_l, h_l_old[N - 1], ng,
                               h_LL2, h_L2, h_R2, h_RR2);
                 h_face_out = recon.face_value(h_LL2, h_L2, h_R2, h_RR2, mdot_l_out);
             }
@@ -491,11 +492,11 @@ void FiveEqModel::update_transport(
         } else {
             double h_face_in_v;
             if (i == 0 && mdot_v_in >= 0.0) {
-                h_face_in_v = bc.h_v_in;
+                h_face_in_v = tbc_in.h_v;
             } else {
                 double h_LL_v, h_L_v, h_R_v, h_RR_v;
                 build_stencil(h_v_old.data(), N, i,
-                              bc.h_v_in, h_v_old[N - 1], ng,
+                              tbc_in.h_v, h_v_old[N - 1], ng,
                               h_LL_v, h_L_v, h_R_v, h_RR_v);
                 h_face_in_v = recon.face_value(h_LL_v, h_L_v, h_R_v, h_RR_v, mdot_v_in);
             }
@@ -506,7 +507,7 @@ void FiveEqModel::update_transport(
             } else {
                 double h_LL2_v, h_L2_v, h_R2_v, h_RR2_v;
                 build_stencil(h_v_old.data(), N, i + 1,
-                              bc.h_v_in, h_v_old[N - 1], ng,
+                              tbc_in.h_v, h_v_old[N - 1], ng,
                               h_LL2_v, h_L2_v, h_R2_v, h_RR2_v);
                 h_face_out_v = recon.face_value(h_LL2_v, h_L2_v, h_R2_v, h_RR2_v, mdot_v_out);
             }
