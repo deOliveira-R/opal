@@ -1,10 +1,16 @@
 /**
  * bindings.cpp — pybind11 bindings for the two-phase solver.
  *
+ * Phase 3 update: exposes FlowModel selection alongside legacy API.
+ * All original bindings are preserved for backward compatibility.
+ *
  * Exposes:
  *   opal_two_phase.SimpleFluidProperties()
+ *   opal_two_phase.IAPWSIF97Properties()
  *   opal_two_phase.TwoPhaseBCs(p_in, p_out, h_in)
- *   opal_two_phase.TwoPhaseSolver(N, dx, A_flow, D_h, f_D, fluid)
+ *   opal_two_phase.BoundaryConditions()
+ *   opal_two_phase.HEMModel()
+ *   opal_two_phase.TwoPhaseSolver(N, dx, A_flow, D_h, f_D, fluid, [recon], [model])
  *     .step(p, h, mdot, bc, dt, q_wall=None)
  *     .solve(p, h, mdot, bc, dt, n_steps, stride=1, q_wall=None)
  */
@@ -17,6 +23,11 @@
 #include "simple_fluid.hpp"
 #include "iapws97.hpp"
 #include "reconstruction.hpp"
+#include "flow_model.hpp"
+#include "hem_model.hpp"
+#include "five_eq_model.hpp"
+#include "phasic_properties.hpp"
+#include "closures.hpp"
 
 namespace py = pybind11;
 using namespace opal;
@@ -43,17 +54,31 @@ static void copy_back(py::array_t<double>& arr, const std::vector<double>& vec) 
 // ---------------------------------------------------------------------------
 
 PYBIND11_MODULE(opal_two_phase, m) {
-    m.doc() = "OPAL Phase 2 two-phase semi-implicit staggered-mesh solver";
+    m.doc() = "OPAL two-phase semi-implicit staggered-mesh solver";
 
     // FluidProperties base (abstract, not directly constructible) -----------
     py::class_<FluidProperties>(m, "FluidProperties");
 
+    // PhasicProperties (abstract, must be registered before derived classes)
+    py::class_<PhasicProperties>(m, "PhasicProperties");
+
     // SimpleFluidProperties -------------------------------------------------
-    py::class_<SimpleFluidProperties, FluidProperties>(m, "SimpleFluidProperties")
+    py::class_<SimpleFluidProperties, FluidProperties, PhasicProperties>(m, "SimpleFluidProperties")
         .def(py::init<>(), "Synthetic linear test fluid matching SimpleFluid.mo")
         .def("evaluate", &SimpleFluidProperties::evaluate,
              py::arg("p"), py::arg("h"),
-             "Evaluate all properties at (p, h)");
+             "Evaluate all properties at (p, h)")
+        .def("evaluate_phasic", &SimpleFluidProperties::evaluate_phasic,
+             py::arg("p"),
+             "Evaluate phasic (saturation) properties at pressure p")
+        .def("rho_liquid", &SimpleFluidProperties::rho_liquid,
+             py::arg("p"), py::arg("h_l"))
+        .def("rho_vapor", &SimpleFluidProperties::rho_vapor,
+             py::arg("p"), py::arg("h_v"))
+        .def("T_liquid", &SimpleFluidProperties::T_liquid,
+             py::arg("p"), py::arg("h_l"))
+        .def("T_vapor", &SimpleFluidProperties::T_vapor,
+             py::arg("p"), py::arg("h_v"));
 
     // IAPWSIF97Properties ---------------------------------------------------
     py::class_<IAPWSIF97Properties, FluidProperties>(m, "IAPWSIF97Properties")
@@ -81,7 +106,138 @@ PYBIND11_MODULE(opal_two_phase, m) {
     py::class_<MUSCL_VanLeer, FaceReconstruction>(m, "MUSCL_VanLeer")
         .def(py::init<>(), "Second-order TVD with van Leer limiter");
 
-    // TwoPhaseBCs -----------------------------------------------------------
+    // FlowModel hierarchy --------------------------------------------------
+    py::class_<FlowModel>(m, "FlowModel")
+        .def_property_readonly("name", &FlowModel::name)
+        .def_property_readonly("vars_per_cell", &FlowModel::vars_per_cell);
+
+    py::class_<HEMModel, FlowModel>(m, "HEMModel")
+        .def(py::init<>(), "3-equation Homogeneous Equilibrium Model");
+
+    // PhasicProps struct ---------------------------------------------------
+    py::class_<PhasicProps>(m, "PhasicProps")
+        .def_readonly("rho_l",       &PhasicProps::rho_l)
+        .def_readonly("rho_v",       &PhasicProps::rho_v)
+        .def_readonly("h_sat_l",     &PhasicProps::h_sat_l)
+        .def_readonly("h_sat_v",     &PhasicProps::h_sat_v)
+        .def_readonly("T_sat",       &PhasicProps::T_sat)
+        .def_readonly("drho_l_dp",   &PhasicProps::drho_l_dp)
+        .def_readonly("drho_v_dp",   &PhasicProps::drho_v_dp)
+        .def_readonly("cp_l",        &PhasicProps::cp_l)
+        .def_readonly("cp_v",        &PhasicProps::cp_v)
+        .def_readonly("sigma",       &PhasicProps::sigma);
+
+    // InterfacialClosures hierarchy ----------------------------------------
+    py::class_<InterfacialClosures>(m, "InterfacialClosures");
+
+    py::class_<NoClosures, InterfacialClosures>(m, "NoClosures")
+        .def(py::init<>(), "No closures (for HEM)");
+
+    py::class_<DriftFluxClosures, InterfacialClosures>(m, "DriftFluxClosures")
+        .def(py::init<double, double, double>(),
+             py::arg("H_i") = 1e5, py::arg("C_0") = 1.13,
+             py::arg("alpha_nucleation") = 1e-3,
+             "Drift-flux closures: Zuber-Findlay + interfacial heat transfer "
+             "with nucleation onset model")
+        .def_property_readonly("H_i", &DriftFluxClosures::H_i)
+        .def_property_readonly("C_0_param", &DriftFluxClosures::C_0_param)
+        .def_property_readonly("alpha_nucleation", &DriftFluxClosures::alpha_nucleation);
+
+    // FiveEqModel ----------------------------------------------------------
+    py::class_<FiveEqModel, FlowModel>(m, "FiveEqModel")
+        .def(py::init<const PhasicProperties&, const InterfacialClosures&>(),
+             py::arg("phasic"), py::arg("closures"),
+             py::keep_alive<1, 2>(),  // model keeps phasic alive
+             py::keep_alive<1, 3>(),  // model keeps closures alive
+             "5-equation drift-flux model")
+
+        // Transport-only update: given already-solved p and mdot from a
+        // Python-level pressure/momentum solve, update alpha/h_l/h_v using
+        // the C++ closures (nucleation, interfacial HT, enthalpy bounds).
+        .def("update_transport",
+            [](const FiveEqModel& self,
+               py::array_t<double> p,
+               py::array_t<double> p_old_arr,
+               py::array_t<double> alpha,
+               py::array_t<double> h_l,
+               py::array_t<double> h_v,
+               py::array_t<double> mdot,
+               const BoundaryConditions& bc,
+               int N, double dx, double A_flow, double D_h, double f_D,
+               double dt,
+               py::object q_wall_obj)
+            {
+                SolverState state;
+                state.p     = to_vec(p);
+                state.alpha = to_vec(alpha);
+                state.h_l   = to_vec(h_l);
+                state.h_v   = to_vec(h_v);
+                state.mdot  = to_vec(mdot);
+
+                auto p_old_vec = to_vec(p_old_arr);
+                MeshParams mesh{N, dx, A_flow, D_h, f_D, dx * A_flow};
+
+                // Dummy props (not used by 5-eq transport — it computes its own)
+                std::vector<FluidProps> props(N);
+
+                static const DonorCell default_recon;
+
+                if (q_wall_obj.is_none()) {
+                    self.update_transport(
+                        state, p_old_vec, bc, mesh, props, default_recon, dt, nullptr);
+                } else {
+                    auto q_v = to_vec(q_wall_obj.cast<py::array_t<double>>());
+                    self.update_transport(
+                        state, p_old_vec, bc, mesh, props, default_recon, dt, &q_v);
+                }
+
+                copy_back(alpha, state.alpha);
+                copy_back(h_l,   state.h_l);
+                copy_back(h_v,   state.h_v);
+            },
+            py::arg("p"), py::arg("p_old"),
+            py::arg("alpha"), py::arg("h_l"), py::arg("h_v"),
+            py::arg("mdot"), py::arg("bc"),
+            py::arg("N"), py::arg("dx"), py::arg("A_flow"),
+            py::arg("D_h"), py::arg("f_D"),
+            py::arg("dt"),
+            py::arg("q_wall") = py::none(),
+            "Transport-only: update alpha/h_l/h_v using C++ closures.")
+
+        // Direct 5-eq step: operates on (p, alpha, h_l, h_v, mdot) arrays
+        .def("make_state_5eq",
+            [](const FiveEqModel& self,
+               py::array_t<double> p,
+               py::array_t<double> alpha,
+               py::array_t<double> h_l,
+               py::array_t<double> h_v,
+               py::array_t<double> mdot) -> py::dict
+            {
+                auto s = self.make_state_5eq(
+                    to_vec(p), to_vec(alpha), to_vec(h_l),
+                    to_vec(h_v), to_vec(mdot));
+                py::dict d;
+                d["p"] = py::array_t<double>(s.p.size(), s.p.data());
+                d["alpha"] = py::array_t<double>(s.alpha.size(), s.alpha.data());
+                d["h_l"] = py::array_t<double>(s.h_l.size(), s.h_l.data());
+                d["h_v"] = py::array_t<double>(s.h_v.size(), s.h_v.data());
+                d["mdot"] = py::array_t<double>(s.mdot.size(), s.mdot.data());
+                return d;
+            });
+
+    // BoundaryConditions ---------------------------------------------------
+    py::class_<BoundaryConditions>(m, "BoundaryConditions")
+        .def(py::init<>())
+        .def_readwrite("p_in",     &BoundaryConditions::p_in)
+        .def_readwrite("p_out",    &BoundaryConditions::p_out)
+        .def_readwrite("h_in",     &BoundaryConditions::h_in)
+        .def_readwrite("h_l_in",   &BoundaryConditions::h_l_in)
+        .def_readwrite("h_v_in",   &BoundaryConditions::h_v_in)
+        .def_readwrite("alpha_in", &BoundaryConditions::alpha_in)
+        .def_readwrite("v_l_in",   &BoundaryConditions::v_l_in)
+        .def_readwrite("v_v_in",   &BoundaryConditions::v_v_in);
+
+    // TwoPhaseBCs (legacy) -------------------------------------------------
     py::class_<TwoPhaseBCs>(m, "TwoPhaseBCs")
         .def(py::init<double, double, double>(),
              py::arg("p_in"), py::arg("p_out"), py::arg("h_in"),
@@ -97,13 +253,15 @@ PYBIND11_MODULE(opal_two_phase, m) {
 
     // TwoPhaseSolver --------------------------------------------------------
     py::class_<TwoPhaseSolver>(m, "TwoPhaseSolver")
+        // Legacy constructor (no recon, no model — uses DonorCell + HEM)
         .def(py::init<int, double, double, double, double,
                       const FluidProperties&>(),
              py::arg("N"), py::arg("dx"), py::arg("A_flow"),
              py::arg("D_h"), py::arg("f_D"), py::arg("fluid"),
              py::keep_alive<1, 7>(),
-             "Construct solver with first-order donor-cell (default).")
+             "Construct solver with first-order donor-cell and HEM model.")
 
+        // Legacy constructor with reconstruction (no model — uses HEM)
         .def(py::init<int, double, double, double, double,
                       const FluidProperties&, const FaceReconstruction&>(),
              py::arg("N"), py::arg("dx"), py::arg("A_flow"),
@@ -111,7 +269,19 @@ PYBIND11_MODULE(opal_two_phase, m) {
              py::arg("recon"),
              py::keep_alive<1, 7>(),  // solver keeps fluid alive
              py::keep_alive<1, 8>(),  // solver keeps recon alive
-             "Construct solver with selectable spatial reconstruction.")
+             "Construct solver with selectable reconstruction and HEM model.")
+
+        // New constructor with model selection
+        .def(py::init<int, double, double, double, double,
+                      const FluidProperties&, const FaceReconstruction&,
+                      const FlowModel&>(),
+             py::arg("N"), py::arg("dx"), py::arg("A_flow"),
+             py::arg("D_h"), py::arg("f_D"), py::arg("fluid"),
+             py::arg("recon"), py::arg("model"),
+             py::keep_alive<1, 7>(),  // solver keeps fluid alive
+             py::keep_alive<1, 8>(),  // solver keeps recon alive
+             py::keep_alive<1, 9>(),  // solver keeps model alive
+             "Construct solver with selectable reconstruction and flow model.")
 
         .def_property_readonly("N",      &TwoPhaseSolver::N)
         .def_property_readonly("dx",     &TwoPhaseSolver::dx)
@@ -120,6 +290,7 @@ PYBIND11_MODULE(opal_two_phase, m) {
         .def_property_readonly("f_D",    &TwoPhaseSolver::f_D)
         .def_property_readonly("V",      &TwoPhaseSolver::V)
 
+        // Legacy step (p, h, mdot arrays + TwoPhaseBCs)
         .def("step",
             [](TwoPhaseSolver& self,
                py::array_t<double> p,
@@ -149,6 +320,45 @@ PYBIND11_MODULE(opal_two_phase, m) {
             py::arg("q_wall") = py::none(),
             "Advance one timestep, modifying p, h, mdot arrays in-place.")
 
+        // 5-equation step: operates on (p, alpha, h_l, h_v, mdot) arrays
+        .def("step_5eq",
+            [](TwoPhaseSolver& self,
+               py::array_t<double> p,
+               py::array_t<double> alpha,
+               py::array_t<double> h_l,
+               py::array_t<double> h_v,
+               py::array_t<double> mdot,
+               const BoundaryConditions& bc,
+               double dt,
+               py::object q_wall_obj)
+            {
+                // Build SolverState
+                SolverState state;
+                state.p     = to_vec(p);
+                state.alpha = to_vec(alpha);
+                state.h_l   = to_vec(h_l);
+                state.h_v   = to_vec(h_v);
+                state.mdot  = to_vec(mdot);
+
+                if (q_wall_obj.is_none()) {
+                    self.step(state, bc, dt);
+                } else {
+                    auto q_v = to_vec(q_wall_obj.cast<py::array_t<double>>());
+                    self.step(state, bc, dt, &q_v);
+                }
+
+                copy_back(p,     state.p);
+                copy_back(alpha, state.alpha);
+                copy_back(h_l,   state.h_l);
+                copy_back(h_v,   state.h_v);
+                copy_back(mdot,  state.mdot);
+            },
+            py::arg("p"), py::arg("alpha"), py::arg("h_l"), py::arg("h_v"),
+            py::arg("mdot"), py::arg("bc"), py::arg("dt"),
+            py::arg("q_wall") = py::none(),
+            "Advance one 5-eq timestep with full state (p, alpha, h_l, h_v, mdot).")
+
+        // Legacy solve
         .def("solve",
             [](const TwoPhaseSolver& self,
                py::array_t<double> p0,
@@ -171,7 +381,7 @@ PYBIND11_MODULE(opal_two_phase, m) {
                     flat = self.solve(p_v, h_v, mdot_v, bc, dt, n_steps, stride, &q_v);
                 }
 
-                int state_size = 3 * self.N() + 1;
+                int state_size = self.model().state_size(self.N());
                 int n_snap     = static_cast<int>(flat.size()) / state_size;
 
                 py::array_t<double> result({n_snap, state_size});
@@ -184,7 +394,7 @@ PYBIND11_MODULE(opal_two_phase, m) {
             py::arg("stride") = 1,
             py::arg("q_wall") = py::none(),
             "Run n_steps timesteps.\n\n"
-            "Returns array of shape (n_snapshots, 3*N+1).\n"
-            "Each row: [ p[0..N-1], h[0..N-1], mdot[0..N] ]\n"
+            "Returns array of shape (n_snapshots, state_size).\n"
+            "For HEM: each row is [ p[0..N-1], h[0..N-1], mdot[0..N] ]\n"
             "Snapshots taken every `stride` steps.");
 }

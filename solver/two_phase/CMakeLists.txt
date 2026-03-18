@@ -27,6 +27,8 @@ find_package(pybind11 CONFIG REQUIRED)
 # --------------------------------------------------------------------------
 pybind11_add_module(opal_two_phase
     solver.cpp
+    hem_model.cpp
+    five_eq_model.cpp
     bindings.cpp
 )
 

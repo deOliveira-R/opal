@@ -58,3 +58,25 @@ For rapid depressurization (blowdowns, LOCAs), the solver needs:
 
 This is consistent with RELAP5's architecture (two-fluid) and is the
 expected model boundary for an HEM code.
+
+## 5-Equation Model Results (Phase 3)
+
+| Parameter | HEM (v4) | 5-eq (v1) | Experiment |
+|-----------|----------|-----------|------------|
+| Early (2-10 ms) | 1.5-2.1 MPa | 1.5-2.1 MPa | 2.4-2.5 MPa |
+| Mid (100-200 ms) | 1.2-1.3 MPa | 1.2-1.3 MPa | 1.9-2.1 MPa |
+| Late (500-600 ms) | **1.0 MPa (stuck)** | **0.3-0.6 MPa** | 0.15-0.3 MPa |
+| α at 600 ms | 0 (HEM) | 0.6 | ~0.8 (est.) |
+
+**Key improvement:** The 5-equation model drives late-time depressurization
+through non-equilibrium flashing (T_l > T_sat → Γ > 0 → void grows → density
+drops → pressure drops). HEM cannot do this because T=T_sat in two-phase.
+
+**Remaining gaps (mid-time):** The pressure plateau (100-400 ms) is still
+~40% below experiment. This is a shared issue with HEM and is related to
+the critical flow model (Ransom-Trapp blend) and inertial momentum coupling,
+not the thermal non-equilibrium model. The 5-eq model adds no benefit in
+mid-time because flashing hasn't significantly started yet.
+
+**Closure parameters:** H_i=1e7 W/(m³·K), nucleation onset at T_l > T_sat,
+α_nucleation=1e-3, interfacial area = max(4α(1-α), α).

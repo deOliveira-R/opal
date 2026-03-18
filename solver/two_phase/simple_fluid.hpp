@@ -8,11 +8,12 @@
  */
 
 #include "properties.hpp"
+#include "phasic_properties.hpp"
 #include <cmath>
 
 namespace opal {
 
-class SimpleFluidProperties : public FluidProperties {
+class SimpleFluidProperties : public FluidProperties, public PhasicProperties {
 public:
     // ---- Constants (match SimpleFluid.mo lines 8-32) ----
     static constexpr double p_ref   = 10.0e6;
@@ -130,6 +131,43 @@ public:
         }
 
         return fp;
+    }
+
+    // ---- PhasicProperties interface ----
+
+    PhasicProps evaluate_phasic(double p) const override {
+        PhasicProps pp{};
+        pp.rho_l       = rho_f(p);
+        pp.rho_v       = rho_g(p);
+        pp.h_sat_l     = h_f(p);
+        pp.h_sat_v     = h_g(p);
+        pp.T_sat       = T_sat(p);
+        pp.drho_l_dp   = rho_f_1 / p_ref;
+        pp.drho_v_dp   = rho_g_1 / p_ref;
+        pp.dh_sat_l_dp = h_f_1 / p_ref;
+        pp.dh_sat_v_dp = h_g_1 / p_ref;
+        pp.cp_l        = cp_L;
+        pp.cp_v        = cp_G;
+        pp.sigma       = 0.05;  // constant surface tension [N/m]
+        return pp;
+    }
+
+    double rho_liquid(double p, double h_l) const override {
+        double hf = h_f(p);
+        return rho_f(p) + A_L * (hf - h_l);
+    }
+
+    double rho_vapor(double p, double h_v) const override {
+        double hg = h_g(p);
+        return rho_g(p) - A_G * (h_v - hg);
+    }
+
+    double T_liquid(double p, double h_l) const override {
+        return T_sat(p) - (h_f(p) - h_l) / cp_L;
+    }
+
+    double T_vapor(double p, double h_v) const override {
+        return T_sat(p) + (h_v - h_g(p)) / cp_G;
     }
 };
 
