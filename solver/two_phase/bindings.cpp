@@ -451,6 +451,18 @@ PYBIND11_MODULE(opal_two_phase, m) {
                 state.h_v   = to_vec(h_v);
                 state.mdot  = to_vec(mdot);
 
+                // Validate array sizes
+                if (static_cast<int>(state.p.size()) != self.N())
+                    throw std::invalid_argument("p size mismatch: expected " + std::to_string(self.N()));
+                if (static_cast<int>(state.alpha.size()) != self.N())
+                    throw std::invalid_argument("alpha size mismatch: expected " + std::to_string(self.N()));
+                if (static_cast<int>(state.h_l.size()) != self.N())
+                    throw std::invalid_argument("h_l size mismatch: expected " + std::to_string(self.N()));
+                if (static_cast<int>(state.h_v.size()) != self.N())
+                    throw std::invalid_argument("h_v size mismatch: expected " + std::to_string(self.N()));
+                if (static_cast<int>(state.mdot.size()) != self.N() + 1)
+                    throw std::invalid_argument("mdot size mismatch: expected " + std::to_string(self.N() + 1));
+
                 if (q_wall_obj.is_none()) {
                     self.step(state, bc, dt);
                 } else {

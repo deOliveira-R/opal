@@ -160,31 +160,33 @@ void HEMModel::update_transport(
     auto& h = state.h_l;  // HEM: h_l is mixture enthalpy
     auto& mdot = state.mdot;
 
+    // Freeze enthalpy so MUSCL reconstruction reads consistent old values
+    std::vector<double> h_old(h);
+
     for (int i = 0; i < N; ++i) {
         double rho_i = props[i].rho;
-        double h_old = h[i];
 
         // Inlet face (face i): between cell i-1 and cell i
-        double h_LL_in = (i >= 2) ? h[i - 2] : ((i >= 1) ? h[i - 1] : bc.h_in);
-        double h_L_in  = (i >= 1) ? h[i - 1] : bc.h_in;
-        double h_R_in  = h[i];
-        double h_RR_in = (i < N - 1) ? h[i + 1] : h[i];
+        double h_LL_in = (i >= 2) ? h_old[i - 2] : ((i >= 1) ? h_old[i - 1] : bc.h_in);
+        double h_L_in  = (i >= 1) ? h_old[i - 1] : bc.h_in;
+        double h_R_in  = h_old[i];
+        double h_RR_in = (i < N - 1) ? h_old[i + 1] : h_old[i];
         double h_face_in = recon.face_value(h_LL_in, h_L_in, h_R_in, h_RR_in, mdot[i]);
 
         // Outlet face (face i+1): between cell i and cell i+1
-        double h_LL_out = (i >= 1) ? h[i - 1] : bc.h_in;
-        double h_L_out  = h[i];
-        double h_R_out  = (i < N - 1) ? h[i + 1] : h[i];
-        double h_RR_out = (i < N - 2) ? h[i + 2] : h_R_out;
+        double h_LL_out = (i >= 1) ? h_old[i - 1] : bc.h_in;
+        double h_L_out  = h_old[i];
+        double h_R_out  = (i < N - 1) ? h_old[i + 1] : h_old[i];
+        double h_RR_out = (i < N - 2) ? h_old[i + 2] : h_R_out;
         double h_face_out = recon.face_value(h_LL_out, h_L_out, h_R_out, h_RR_out, mdot[i + 1]);
 
-        double flux = mdot[i] * (h_face_in - h_old)
-                    - mdot[i + 1] * (h_face_out - h_old);
+        double flux = mdot[i] * (h_face_in - h_old[i])
+                    - mdot[i + 1] * (h_face_out - h_old[i]);
 
         double p_work = mesh.V * (state.p[i] - p_old[i]) / dt;
         double q = (q_wall != nullptr) ? (*q_wall)[i] : 0.0;
 
-        h[i] = h_old + dt / (rho_i * mesh.V) * (flux + p_work + q);
+        h[i] = h_old[i] + dt / (rho_i * mesh.V) * (flux + p_work + q);
     }
 }
 

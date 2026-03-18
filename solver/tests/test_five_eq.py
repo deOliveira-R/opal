@@ -136,6 +136,7 @@ class TestSinglePhaseLimit:
         bc.p_in = p_in
         bc.p_out = p_out
         bc.h_in = h_in
+        bc.h_l_in = h_in
         bc.h_v_in = 2800e3
         bc.alpha_in = 0.0
 
@@ -328,6 +329,7 @@ class TestHEMLimit:
         bc_5eq.p_in = p_in
         bc_5eq.p_out = p_out
         bc_5eq.h_in = h_in
+        bc_5eq.h_l_in = h_in
         bc_5eq.h_v_in = 2800e3
 
         p_5eq = np.linspace(p_in, p_out, N)

@@ -424,13 +424,13 @@ void FiveEqModel::update_transport(
             state.h_l[i] = phasic_props_[i].h_sat_l;
         } else {
             // Advective flux with reconstruction
-            double h_LL = (i >= 2) ? h_l_old[i - 2] : ((i >= 1) ? h_l_old[i - 1] : bc.h_in);
-            double h_L  = (i >= 1) ? h_l_old[i - 1] : bc.h_in;
+            double h_LL = (i >= 2) ? h_l_old[i - 2] : ((i >= 1) ? h_l_old[i - 1] : bc.h_l_in);
+            double h_L  = (i >= 1) ? h_l_old[i - 1] : bc.h_l_in;
             double h_R  = h_l_old[i];
             double h_RR = (i < N - 1) ? h_l_old[i + 1] : h_l_old[i];
             double h_face_in = recon.face_value(h_LL, h_L, h_R, h_RR, mdot_l_in);
 
-            double h_LL2 = (i >= 1) ? h_l_old[i - 1] : bc.h_in;
+            double h_LL2 = (i >= 1) ? h_l_old[i - 1] : bc.h_l_in;
             double h_L2  = h_l_old[i];
             double h_R2  = (i < N - 1) ? h_l_old[i + 1] : h_l_old[i];
             double h_RR2 = (i < N - 2) ? h_l_old[i + 2] : h_R2;
