@@ -283,6 +283,16 @@ PYBIND11_MODULE(opal_two_phase, m) {
         .value("WALL",     BCType::WALL)
         .value("BREAK",    BCType::BREAK);
 
+    // SourceTerms -----------------------------------------------------------
+    py::class_<SourceTerms>(m, "SourceTerms")
+        .def(py::init<>())
+        .def_readwrite("mass",      &SourceTerms::mass)
+        .def_readwrite("energy_l",  &SourceTerms::energy_l)
+        .def_readwrite("energy_v",  &SourceTerms::energy_v)
+        .def_readwrite("void_frac", &SourceTerms::void_frac)
+        .def_readwrite("momentum",  &SourceTerms::momentum)
+        .def("empty", &SourceTerms::empty);
+
     // BoundaryConditions ---------------------------------------------------
     py::class_<BoundaryConditions>(m, "BoundaryConditions")
         .def(py::init<>())
@@ -441,7 +451,8 @@ PYBIND11_MODULE(opal_two_phase, m) {
                py::array_t<double> mdot,
                const BoundaryConditions& bc,
                double dt,
-               py::object q_wall_obj)
+               py::object q_wall_obj,
+               py::object sources_obj)
             {
                 // Build SolverState
                 SolverState state;
@@ -463,11 +474,19 @@ PYBIND11_MODULE(opal_two_phase, m) {
                 if (static_cast<int>(state.mdot.size()) != self.N() + 1)
                     throw std::invalid_argument("mdot size mismatch: expected " + std::to_string(self.N() + 1));
 
+                // Optional source terms
+                const SourceTerms* src_ptr = nullptr;
+                SourceTerms src;
+                if (!sources_obj.is_none()) {
+                    src = sources_obj.cast<SourceTerms>();
+                    src_ptr = &src;
+                }
+
                 if (q_wall_obj.is_none()) {
-                    self.step(state, bc, dt);
+                    self.step(state, bc, dt, nullptr, src_ptr);
                 } else {
                     auto q_v = to_vec(q_wall_obj.cast<py::array_t<double>>());
-                    self.step(state, bc, dt, &q_v);
+                    self.step(state, bc, dt, &q_v, src_ptr);
                 }
 
                 copy_back(p,     state.p);
@@ -479,7 +498,8 @@ PYBIND11_MODULE(opal_two_phase, m) {
             py::arg("p"), py::arg("alpha"), py::arg("h_l"), py::arg("h_v"),
             py::arg("mdot"), py::arg("bc"), py::arg("dt"),
             py::arg("q_wall") = py::none(),
-            "Advance one 5-eq timestep with full state (p, alpha, h_l, h_v, mdot).")
+            py::arg("sources") = py::none(),
+            "Advance one 5-eq timestep with full state and optional source terms.")
 
         // Legacy solve
         .def("solve",
