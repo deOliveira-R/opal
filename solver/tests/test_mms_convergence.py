@@ -167,7 +167,7 @@ def run_mms_hem(N, n_steps=5000, dt=1e-4):
     return run_mms_5eq_subcooled(N, n_steps, dt)
 
 
-def run_mms_5eq_subcooled(N, n_steps=5000, dt=1e-4):
+def run_mms_5eq_subcooled(N, n_steps=5000, dt=1e-4, recon=None):
     """Run 5-eq solver in subcooled regime with MMS energy source.
 
     Strategy: Use a pressure-driven flow (p_in > p_out) with the algebraic
@@ -175,11 +175,14 @@ def run_mms_5eq_subcooled(N, n_steps=5000, dt=1e-4):
     The MMS test then verifies the ENTHALPY transport — the manufactured
     h(x) profile is sustained by an energy source S_energy = (mdot/A)*dh/dx.
     The convergence rate of h towards h_exact measures the spatial accuracy
-    of the donor-cell advection scheme.
+    of the advection scheme (donor-cell or MUSCL).
 
     Pressure and flow are NOT manufactured — they come from the solver's own
     resistance-based model. Only the enthalpy is manufactured.
     """
+    if recon is None:
+        recon = tp.DonorCell()
+
     dx = L_pipe / N
     f_D = 0.02  # small friction for stable resistance-based flow
 
@@ -188,7 +191,7 @@ def run_mms_5eq_subcooled(N, n_steps=5000, dt=1e-4):
     closures = tp.DriftFluxClosures(H_i=0.0, C_0=1.0)
     model = tp.FiveEqModel(fluid, closures)
     solver = tp.TwoPhaseSolver(N, dx, A_flow, D_h, f_D, fluid,
-                                tp.DonorCell(), model, tp.AlgebraicMomentum())
+                                recon, model, tp.AlgebraicMomentum())
 
     x_c = np.array([(i + 0.5) * dx for i in range(N)])
 
@@ -414,4 +417,57 @@ class TestMMSSourceTermInjection:
         assert h_l[1] > h_l_init + 5, (
             f"Energy source should heat liquid: h_l={h_l[1]:.1f}, "
             f"initial={h_l_init:.1f} (expected Δh ≈ 13 J/kg)"
+        )
+
+
+# ============================================================================
+# MUSCL convergence: should be higher order than donor-cell
+# ============================================================================
+
+class TestMMSConvergenceMUSCL:
+    """MMS convergence for MUSCL reconstruction schemes.
+    Second-order TVD should give convergence rate > 1.5 (between 1st and 2nd
+    order due to limiter activation at the sinusoidal extrema)."""
+
+    @pytest.mark.parametrize("recon_name,recon", [
+        ("minmod", tp.MUSCL_Minmod()),
+        ("vanLeer", tp.MUSCL_VanLeer()),
+    ])
+    def test_muscl_convergence_rate(self, recon_name, recon):
+        """MUSCL enthalpy convergence rate should exceed donor-cell (> 1.3)."""
+        mesh_sizes = [10, 20, 40, 80]
+        errors = []
+
+        for N in mesh_sizes:
+            result = run_mms_5eq_subcooled(N, n_steps=10000, dt=1e-4, recon=recon)
+            errors.append((result['dx'], result['err_h']))
+            print(f"  {recon_name} N={N:3d}, dx={result['dx']:.4f}, "
+                  f"err_h={result['err_h']:.2e}")
+
+        rate = convergence_rate(errors)
+        print(f"  {recon_name} convergence rate: {rate:.2f}")
+        # TVD limiters reduce the effective order below 2.0 at extrema.
+        # Expect > 1.2 (well above donor-cell's 1.0).
+        assert rate > 1.2, (
+            f"MUSCL {recon_name} convergence rate {rate:.2f} < 1.2 "
+            f"(expected > 1.2 for second-order TVD with limiter)"
+        )
+
+    @pytest.mark.parametrize("recon_name,recon", [
+        ("minmod", tp.MUSCL_Minmod()),
+        ("vanLeer", tp.MUSCL_VanLeer()),
+    ])
+    def test_muscl_beats_donor_cell(self, recon_name, recon):
+        """At the same mesh, MUSCL should have smaller error than donor-cell."""
+        N = 20
+        result_dc = run_mms_5eq_subcooled(N, n_steps=10000, dt=1e-4,
+                                           recon=tp.DonorCell())
+        result_muscl = run_mms_5eq_subcooled(N, n_steps=10000, dt=1e-4,
+                                              recon=recon)
+
+        print(f"  N={N}: donor-cell err_h={result_dc['err_h']:.2e}, "
+              f"{recon_name} err_h={result_muscl['err_h']:.2e}")
+        assert result_muscl['err_h'] < result_dc['err_h'], (
+            f"MUSCL {recon_name} ({result_muscl['err_h']:.2e}) should be "
+            f"more accurate than donor-cell ({result_dc['err_h']:.2e})"
         )
