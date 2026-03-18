@@ -17,7 +17,11 @@ Tests verify:
 
 import numpy as np
 import pytest
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 import opal_two_phase as tp
+from bc_helpers import step_5eq_migrated, step_hem_migrated, solve_migrated
 
 
 # ---------------------------------------------------------------------------
@@ -330,7 +334,7 @@ class TestHEMLimit:
         h_hem = np.full(N, h_in)
         mdot_hem = np.zeros(N + 1)
         for _ in range(5000):
-            solver_hem.step(p_hem, h_hem, mdot_hem, bc_legacy, dt)
+            step_hem_migrated(solver_hem, p_hem, h_hem, mdot_hem, bc_legacy, dt)
 
         # 5-eq solver with large H_i (fast equilibrium), no slip
         solver_5eq, _, _, _ = make_5eq_solver(N=N, H_i=1e8, C_0=1.0)
@@ -716,7 +720,7 @@ class TestMUSCL5Eq:
 
         dt = 1e-4
         for _ in range(2000):
-            solver.step_5eq(p, alpha, h_l, h_v, mdot, bc, dt)
+            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, dt)
 
         assert np.all(np.isfinite(p))
         assert np.all(np.isfinite(h_l))
@@ -746,7 +750,7 @@ class TestMUSCL5Eq:
 
         dt = 1e-4
         for _ in range(2000):
-            solver.step_5eq(p, alpha, h_l, h_v, mdot, bc, dt)
+            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, dt)
 
         assert np.all(np.isfinite(p))
         assert np.all(np.isfinite(h_l))
@@ -773,7 +777,7 @@ class TestMakeStateCompat:
         mdot = np.zeros(N + 1)
 
         # Legacy step converts h → (alpha, h_l, h_v) via make_state
-        solver.step(p, h, mdot, bc, 1e-4)
+        step_hem_migrated(solver, p, h, mdot, bc, 1e-4)
         assert np.all(np.isfinite(p))
         assert np.all(np.isfinite(h))
 
@@ -791,7 +795,7 @@ class TestMakeStateCompat:
         h = np.full(N, 1800e3)  # between h_f=800e3 and h_g=2800e3
         mdot = np.zeros(N + 1)
 
-        solver.step(p, h, mdot, bc, 1e-4)
+        step_hem_migrated(solver, p, h, mdot, bc, 1e-4)
         assert np.all(np.isfinite(p))
         assert np.all(np.isfinite(h))
 
@@ -845,7 +849,7 @@ class TestPackUnpackRoundtrip:
         h = np.full(N, 700e3)
         mdot = np.zeros(N + 1)
 
-        hist = solver.solve(p, h, mdot, bc, 1e-4, 10, stride=5)
+        hist = solve_migrated(solver, p, h, mdot, bc, 1e-4, 10, stride=5)
         assert hist.shape[1] == 3 * N + 1
         assert hist.shape[0] == 2  # 10 steps / stride 5 = 2 snapshots
 

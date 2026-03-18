@@ -15,6 +15,9 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "two_phase"))
 import opal_two_phase as tp
+import sys as _sys
+_sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent))
+from bc_helpers import step_hem_migrated, solve_migrated
 
 # The iapws package is the oracle
 iapws = pytest.importorskip("iapws")
@@ -272,8 +275,6 @@ class TestIAPWSSimpleFluidCrossCheck:
 
     def test_steady_state_flow_direction(self):
         """Both fluids: positive dp → positive flow at steady state."""
-        import opal_two_phase as tp
-
         N = 5
         dx, A, Dh, fD = 1.0, 0.01, 0.1, 0.02
         p_in, p_out = 10.1e6, 10.0e6
@@ -289,7 +290,7 @@ class TestIAPWSSimpleFluidCrossCheck:
             h = np.full(N, h_in)
             mdot = np.zeros(N + 1)
 
-            hist = solver.solve(p, h, mdot, bc, 5e-4, 20000, 20000)
+            hist = solve_migrated(solver, p, h, mdot, bc, 5e-4, 20000, 20000)
             mdot_ss = hist[-1, 2*N:]
 
             # All flows should be positive and uniform at steady state

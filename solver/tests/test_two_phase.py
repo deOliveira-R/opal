@@ -29,6 +29,8 @@ import pytest
 # Ensure the built .so is on the path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "two_phase"))
 import opal_two_phase as tp
+sys.path.insert(0, os.path.dirname(__file__))
+from bc_helpers import step_hem_migrated, solve_migrated, reset_time
 
 
 # ============================================================================
@@ -110,7 +112,7 @@ class TestHagenPoiseuille:
         n_steps = max(20000, int(20.0 / dt))  # at least 20 s of simulation
 
         # Run to steady state
-        hist = solver.solve(p, h, mdot, bc, dt, n_steps, n_steps)
+        hist = solve_migrated(solver, p, h, mdot, bc, dt, n_steps, n_steps)
         p_ss    = hist[-1, :N]
         mdot_ss = hist[-1, 2*N:]
 
@@ -135,7 +137,7 @@ class TestHagenPoiseuille:
         N = 10
         solver, fluid, bc = make_solver(N)
         p, h, mdot = initial_state(N)
-        hist = solver.solve(p, h, mdot, bc, 1e-3, 20000, 20000)
+        hist = solve_migrated(solver, p, h, mdot, bc, 1e-3, 20000, 20000)
         p_ss = hist[-1, :N]
 
         # Linear interpolation between inlet and outlet
@@ -165,7 +167,7 @@ class TestMassConservation:
         max_residual = 0.0
         for _ in range(1000):
             p_old = p.copy()
-            solver.step(p, h, mdot, bc, dt)
+            step_hem_migrated(solver, p, h, mdot, bc, dt)
 
             # Mass stored: sum_i V * rho_new_i
             # d(mass)/dt = mdot_in - mdot_out
@@ -199,7 +201,7 @@ class TestEnergyConservation:
         p, h, mdot = initial_state(N)
 
         # Run to steady state (no wall heat → h should remain at h_in)
-        hist = solver.solve(p, h, mdot, bc, 1e-3, 20000, 20000)
+        hist = solve_migrated(solver, p, h, mdot, bc, 1e-3, 20000, 20000)
         h_ss = hist[-1, N:2*N]
         mdot_ss = hist[-1, 2*N:]
 
@@ -220,7 +222,7 @@ class TestEnergyConservation:
         # Apply 50 kW per cell (total 500 kW) — stay subcooled
         q_wall = np.full(N, 50.0e3)  # W per cell
 
-        hist = solver.solve(p, h, mdot, bc, 1e-3, 30000, 30000, q_wall)
+        hist = solve_migrated(solver, p, h, mdot, bc, 1e-3, 30000, 30000, q_wall)
         h_ss    = hist[-1, N:2*N]
         mdot_ss = hist[-1, 2*N:]
 
@@ -260,14 +262,14 @@ class TestConvergenceRate:
         dt_ref = 1e-7
         n_ref = int(T_end / dt_ref)
         p0, h0, mdot0 = initial_state(N)
-        hist_ref = solver.solve(p0, h0, mdot0, bc, dt_ref, n_ref, n_ref, q_wall)
+        hist_ref = solve_migrated(solver, p0, h0, mdot0, bc, dt_ref, n_ref, n_ref, q_wall)
         h_fine = hist_ref[-1, N]  # enthalpy of cell 0
 
         errors = []
         for dt in [1e-4, 5e-5, 2.5e-5]:
             n_steps = int(T_end / dt)
             p0, h0, mdot0 = initial_state(N)
-            hist = solver.solve(p0, h0, mdot0, bc, dt, n_steps, n_steps, q_wall)
+            hist = solve_migrated(solver, p0, h0, mdot0, bc, dt, n_steps, n_steps, q_wall)
             err = abs(hist[-1, N] - h_fine)
             errors.append(err)
 
@@ -309,7 +311,7 @@ class TestHeatedChannelBoiling:
         dt = 1e-3
         n_steps = 300000
         for chunk in range(3):
-            hist = solver.solve(p, h, mdot, bc, dt, n_steps // 3,
+            hist = solve_migrated(solver, p, h, mdot, bc, dt, n_steps // 3,
                                 n_steps // 3, q_wall)
             p    = hist[-1, :N].copy()
             h    = hist[-1, N:2*N].copy()
@@ -486,7 +488,7 @@ class TestLinearizedMassConservation:
                 R[i] = geom / (0.5 * (props[i - 1].rho + props[i].rho))
             R[N] = geom / props[N - 1].rho
 
-            solver.step(p, h, mdot, bc, dt)
+            step_hem_migrated(solver, p, h, mdot, bc, dt)
 
             # Track the global flow scale for normalization
             flow_scale = max(flow_scale, abs(mdot[0]))
@@ -525,7 +527,7 @@ class TestReverseFlow:
         bc = tp.TwoPhaseBCs(P_OUT, P_IN, H_IN)
         p, h, mdot = initial_state(N)
 
-        hist = solver.solve(p, h, mdot, bc, 1e-3, 20000, 20000)
+        hist = solve_migrated(solver, p, h, mdot, bc, 1e-3, 20000, 20000)
         mdot_ss = hist[-1, 2 * N:]
 
         # Flow should be negative (right to left)
@@ -551,7 +553,7 @@ class TestReverseFlow:
         q_wall = np.full(N, 10.0e3)
         # Run to approach steady state
         for _ in range(3):
-            hist = solver_hf.solve(p, h, mdot, bc, 1e-3, 100000, 100000, q_wall)
+            hist = solve_migrated(solver_hf, p, h, mdot, bc, 1e-3, 100000, 100000, q_wall)
             p = hist[-1, :N].copy()
             h = hist[-1, N:2 * N].copy()
             mdot = hist[-1, 2 * N:].copy()
@@ -603,7 +605,7 @@ class TestSpatialConvergence:
             dt = min(1e-3, 0.3 * dt_cfl)
             n_steps = max(30000, int(30.0 / dt))
 
-            hist = solver.solve(p, h, mdot, bc, dt, n_steps, n_steps, q_wall)
+            hist = solve_migrated(solver, p, h, mdot, bc, dt, n_steps, n_steps, q_wall)
             h_ss = hist[-1, N:2 * N]
             mdot_ss = hist[-1, 2 * N:]
 
@@ -634,7 +636,7 @@ class TestSingleCell:
         dt = 1e-3
 
         for _ in range(1000):
-            solver.step(p, h, mdot, bc, dt)
+            step_hem_migrated(solver, p, h, mdot, bc, dt)
 
         # At steady state: mdot[0] == mdot[1]
         assert abs(mdot[0] - mdot[1]) / abs(mdot[0]) < 1e-10, \
@@ -664,7 +666,7 @@ class TestSingleCell:
         dt = 0.3 * dt_cfl
         n_steps = int(30.0 / dt)
 
-        hist = solver.solve(p, h, mdot, bc, dt, n_steps, n_steps, q_wall)
+        hist = solve_migrated(solver, p, h, mdot, bc, dt, n_steps, n_steps, q_wall)
         h_ss = hist[-1, N:2 * N]
         mdot_ss = hist[-1, 2 * N:]
 
@@ -699,7 +701,7 @@ class TestSaturationCrossing:
 
         # Run and verify no NaN/Inf
         for chunk in range(3):
-            hist = solver.solve(p, h, mdot, bc, 1e-3, 100000, 100000, q_wall)
+            hist = solve_migrated(solver, p, h, mdot, bc, 1e-3, 100000, 100000, q_wall)
             p = hist[-1, :N].copy()
             h = hist[-1, N:2 * N].copy()
             mdot = hist[-1, 2 * N:].copy()
@@ -743,7 +745,7 @@ class TestInputValidation:
         bc = tp.TwoPhaseBCs(P_IN, P_OUT, H_IN)
         # Wrong-sized arrays
         with pytest.raises(Exception):
-            solver.step(np.zeros(3), np.zeros(5), np.zeros(6), bc, 1e-3)
+            step_hem_migrated(solver, np.zeros(3), np.zeros(5), np.zeros(6), bc, 1e-3)
 
     def test_negative_dt(self):
         fluid = tp.SimpleFluidProperties()
@@ -751,4 +753,4 @@ class TestInputValidation:
         bc = tp.TwoPhaseBCs(P_IN, P_OUT, H_IN)
         p, h, mdot = initial_state(5)
         with pytest.raises(Exception):
-            solver.step(p, h, mdot, bc, -1e-3)
+            step_hem_migrated(solver, p, h, mdot, bc, -1e-3)

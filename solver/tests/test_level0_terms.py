@@ -31,7 +31,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "two_phase"))
 import opal_two_phase as tp
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from bc_helpers import step_5eq_migrated, reset_time
+from bc_helpers import step_5eq_migrated, step_hem_migrated, solve_migrated, reset_time
 
 
 # ============================================================================
@@ -656,7 +656,7 @@ class TestMomentumSteadyStateEquivalence:
                                         tp.AlgebraicMomentum(), None)
         p = np.full(N, 10e6); h = np.full(N, h_sub); mdot = np.zeros(N + 1)
         for _ in range(2000):
-            solver_alg.step(p, h, mdot, legacy_bc, 1e-4)
+            step_hem_migrated(solver_alg, p, h, mdot, legacy_bc, 1e-4)
         mdot_alg = mdot[N // 2]
         assert mdot_alg > 0, "Algebraic should give positive flow"
 
@@ -668,11 +668,11 @@ class TestMomentumSteadyStateEquivalence:
                                         tp.InertialMomentum(), None)
         p = np.full(N, 10e6); h = np.full(N, h_sub); mdot = np.zeros(N + 1)
         for _ in range(1000):
-            solver_inr.step(p, h, mdot, legacy_bc, 1e-4)
+            step_hem_migrated(solver_inr, p, h, mdot, legacy_bc, 1e-4)
         mdot_early = mdot[N // 2]
 
         for _ in range(4000):
-            solver_inr.step(p, h, mdot, legacy_bc, 1e-4)
+            step_hem_migrated(solver_inr, p, h, mdot, legacy_bc, 1e-4)
         mdot_late = mdot[N // 2]
 
         # Flow should be positive and increasing (approaching algebraic)

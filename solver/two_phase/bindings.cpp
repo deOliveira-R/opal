@@ -437,95 +437,7 @@ PYBIND11_MODULE(opal_two_phase, m) {
         .def_property_readonly("f_D",    &TwoPhaseSolver::f_D)
         .def_property_readonly("V",      &TwoPhaseSolver::V)
 
-        // Legacy step (p, h, mdot arrays + TwoPhaseBCs)
-        .def("step",
-            [](TwoPhaseSolver& self,
-               py::array_t<double> p,
-               py::array_t<double> h,
-               py::array_t<double> mdot,
-               const TwoPhaseBCs& bc,
-               double dt,
-               py::object q_wall_obj)
-            {
-                auto p_v    = to_vec(p);
-                auto h_v    = to_vec(h);
-                auto mdot_v = to_vec(mdot);
-
-                if (q_wall_obj.is_none()) {
-                    self.step(p_v, h_v, mdot_v, bc, dt);
-                } else {
-                    auto q_v = to_vec(q_wall_obj.cast<py::array_t<double>>());
-                    self.step(p_v, h_v, mdot_v, bc, dt, &q_v);
-                }
-
-                copy_back(p,    p_v);
-                copy_back(h,    h_v);
-                copy_back(mdot, mdot_v);
-            },
-            py::arg("p"), py::arg("h"), py::arg("mdot"),
-            py::arg("bc"), py::arg("dt"),
-            py::arg("q_wall") = py::none(),
-            "Advance one timestep, modifying p, h, mdot arrays in-place.")
-
-        // 5-equation step: operates on (p, alpha, h_l, h_v, mdot) arrays
-        .def("step_5eq",
-            [](TwoPhaseSolver& self,
-               py::array_t<double> p,
-               py::array_t<double> alpha,
-               py::array_t<double> h_l,
-               py::array_t<double> h_v,
-               py::array_t<double> mdot,
-               const BoundaryConditions& bc,
-               double dt,
-               py::object q_wall_obj,
-               py::object sources_obj)
-            {
-                // Build SolverState
-                SolverState state;
-                state.p     = to_vec(p);
-                state.alpha = to_vec(alpha);
-                state.h_l   = to_vec(h_l);
-                state.h_v   = to_vec(h_v);
-                state.mdot  = to_vec(mdot);
-
-                // Validate array sizes
-                if (static_cast<int>(state.p.size()) != self.N())
-                    throw std::invalid_argument("p size mismatch: expected " + std::to_string(self.N()));
-                if (static_cast<int>(state.alpha.size()) != self.N())
-                    throw std::invalid_argument("alpha size mismatch: expected " + std::to_string(self.N()));
-                if (static_cast<int>(state.h_l.size()) != self.N())
-                    throw std::invalid_argument("h_l size mismatch: expected " + std::to_string(self.N()));
-                if (static_cast<int>(state.h_v.size()) != self.N())
-                    throw std::invalid_argument("h_v size mismatch: expected " + std::to_string(self.N()));
-                if (static_cast<int>(state.mdot.size()) != self.N() + 1)
-                    throw std::invalid_argument("mdot size mismatch: expected " + std::to_string(self.N() + 1));
-
-                // Optional source terms
-                const SourceTerms* src_ptr = nullptr;
-                SourceTerms src;
-                if (!sources_obj.is_none()) {
-                    src = sources_obj.cast<SourceTerms>();
-                    src_ptr = &src;
-                }
-
-                if (q_wall_obj.is_none()) {
-                    self.step(state, bc, dt, nullptr, src_ptr);
-                } else {
-                    auto q_v = to_vec(q_wall_obj.cast<py::array_t<double>>());
-                    self.step(state, bc, dt, &q_v, src_ptr);
-                }
-
-                copy_back(p,     state.p);
-                copy_back(alpha, state.alpha);
-                copy_back(h_l,   state.h_l);
-                copy_back(h_v,   state.h_v);
-                copy_back(mdot,  state.mdot);
-            },
-            py::arg("p"), py::arg("alpha"), py::arg("h_l"), py::arg("h_v"),
-            py::arg("mdot"), py::arg("bc"), py::arg("dt"),
-            py::arg("q_wall") = py::none(),
-            py::arg("sources") = py::none(),
-            "Advance one 5-eq timestep with full state and optional source terms.")
+        // step_5eq REMOVED — all callers migrated to step_bf
 
         // BoundaryFace-based step: time-aware, strategy BCs
         .def("step_bf",
@@ -576,43 +488,45 @@ PYBIND11_MODULE(opal_two_phase, m) {
             py::arg("sources") = py::none(),
             "Step with BoundaryFace strategy objects (time-aware BCs).")
 
-        // Legacy solve
-        .def("solve",
-            [](const TwoPhaseSolver& self,
-               py::array_t<double> p0,
-               py::array_t<double> h0,
-               py::array_t<double> mdot0,
-               const TwoPhaseBCs& bc,
-               double dt, int n_steps, int stride,
+        // HEM step via BoundaryFace: 3-variable (p, h, mdot) interface
+        .def("step_hem_bf",
+            [](TwoPhaseSolver& self,
+               py::array_t<double> p,
+               py::array_t<double> h,
+               py::array_t<double> mdot,
+               const BoundaryFace& bc_in,
+               const BoundaryFace& bc_out,
+               double t, double dt,
                py::object q_wall_obj)
-            -> py::array_t<double>
             {
-                auto p_v    = to_vec(p0);
-                auto h_v    = to_vec(h0);
-                auto mdot_v = to_vec(mdot0);
+                int N = self.N();
+                auto p_v = to_vec(p); auto h_v = to_vec(h); auto m_v = to_vec(mdot);
+                if (static_cast<int>(p_v.size()) != N)
+                    throw std::invalid_argument("p size mismatch");
+                if (static_cast<int>(h_v.size()) != N)
+                    throw std::invalid_argument("h size mismatch");
+                if (static_cast<int>(m_v.size()) != N + 1)
+                    throw std::invalid_argument("mdot size mismatch");
+                SolverState state = self.model().make_state(p_v, h_v, m_v);
 
-                std::vector<double> flat;
                 if (q_wall_obj.is_none()) {
-                    flat = self.solve(p_v, h_v, mdot_v, bc, dt, n_steps, stride);
+                    self.step(state, bc_in, bc_out, t, dt);
                 } else {
                     auto q_v = to_vec(q_wall_obj.cast<py::array_t<double>>());
-                    flat = self.solve(p_v, h_v, mdot_v, bc, dt, n_steps, stride, &q_v);
+                    self.step(state, bc_in, bc_out, t, dt, &q_v);
                 }
 
-                int state_size = self.model().state_size(self.N());
-                int n_snap     = static_cast<int>(flat.size()) / state_size;
-
-                py::array_t<double> result({n_snap, state_size});
-                std::memcpy(result.mutable_data(), flat.data(),
-                            flat.size() * sizeof(double));
-                return result;
+                copy_back(p,    state.p);
+                copy_back(h,    state.h_l);
+                copy_back(mdot, state.mdot);
             },
             py::arg("p"), py::arg("h"), py::arg("mdot"),
-            py::arg("bc"), py::arg("dt"), py::arg("n_steps"),
-            py::arg("stride") = 1,
+            py::arg("bc_in"), py::arg("bc_out"),
+            py::arg("t"), py::arg("dt"),
             py::arg("q_wall") = py::none(),
-            "Run n_steps timesteps.\n\n"
-            "Returns array of shape (n_snapshots, state_size).\n"
-            "For HEM: each row is [ p[0..N-1], h[0..N-1], mdot[0..N] ]\n"
-            "Snapshots taken every `stride` steps.");
+            "HEM step with BoundaryFace BCs (3-variable: p, h, mdot).")
+
+        // Legacy solve
+        // solve() REMOVED — all callers migrated to step_bf/step_hem_bf loops
+        ;
 }

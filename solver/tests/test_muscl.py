@@ -19,6 +19,9 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "two_phase"))
 import opal_two_phase as tp
+import sys as _sys
+_sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent))
+from bc_helpers import step_hem_migrated, solve_migrated
 
 # ============================================================================
 # Shared setup
@@ -47,7 +50,7 @@ def run_to_steady(solver, bc, N, dt, n_steps, q_wall=None):
     p = np.full(N, 0.5 * (P_IN + P_OUT))
     h = np.full(N, H_IN)
     mdot = np.zeros(N + 1)
-    hist = solver.solve(p, h, mdot, bc, dt, n_steps, n_steps,
+    hist = solve_migrated(solver, p, h, mdot, bc, dt, n_steps, n_steps,
                         q_wall if q_wall is not None else None)
     return hist
 
@@ -74,9 +77,9 @@ class TestBackwardsCompatibility:
         h0 = np.full(N, H_IN)
         mdot0 = np.zeros(N + 1)
 
-        hist_default = solver_default.solve(
+        hist_default = solve_migrated(solver_default, 
             p0.copy(), h0.copy(), mdot0.copy(), bc, dt, n_steps, n_steps)
-        hist_dc = solver_dc.solve(
+        hist_dc = solve_migrated(solver_dc, 
             p0.copy(), h0.copy(), mdot0.copy(), bc, dt, n_steps, n_steps)
 
         np.testing.assert_array_equal(hist_default, hist_dc,
@@ -99,9 +102,9 @@ class TestBackwardsCompatibility:
         h0 = np.full(N, H_IN)
         mdot0 = np.zeros(N + 1)
 
-        hist_default = solver_default.solve(
+        hist_default = solve_migrated(solver_default, 
             p0.copy(), h0.copy(), mdot0.copy(), bc, dt, n_steps, n_steps, q_wall)
-        hist_dc = solver_dc.solve(
+        hist_dc = solve_migrated(solver_dc, 
             p0.copy(), h0.copy(), mdot0.copy(), bc, dt, n_steps, n_steps, q_wall)
 
         np.testing.assert_array_equal(hist_default, hist_dc)
@@ -144,7 +147,7 @@ class TestMUSCLSharperProfiles:
         h = np.full(N, H_IN)
         mdot = np.zeros(N + 1)
 
-        hist = solver.solve(p, h, mdot, bc, dt, n_steps, n_steps, q_wall)
+        hist = solve_migrated(solver, p, h, mdot, bc, dt, n_steps, n_steps, q_wall)
         h_ss = hist[-1, N:2*N]
         mdot_ss = hist[-1, 2*N:]
 
@@ -199,7 +202,7 @@ class TestTVD:
         # Run a few thousand steps with CFL-safe dt
         dt = 3e-4
         for _ in range(2000):
-            solver.step(p, h, mdot, bc, dt)
+            step_hem_migrated(solver, p, h, mdot, bc, dt)
 
             # Check TVD: no value outside [h_low, h_high]
             h_min = np.min(h)
@@ -239,7 +242,7 @@ class TestBoundaryStencil:
         dt_cfl = rho_approx * DX * A / abs(mdot_approx)
         dt = 0.3 * dt_cfl
 
-        hist = solver.solve(p, h, mdot, bc, dt, 10000, 10000)
+        hist = solve_migrated(solver, p, h, mdot, bc, dt, 10000, 10000)
 
         assert np.all(np.isfinite(hist[-1])), \
             f"N={N}: non-finite values in final state"
@@ -290,7 +293,7 @@ class TestMassConservationMUSCL:
                 R[i] = geom / (0.5 * (props[i-1].rho + props[i].rho))
             R[N] = geom / props[N-1].rho
 
-            solver.step(p, h, mdot, bc, dt)
+            step_hem_migrated(solver, p, h, mdot, bc, dt)
             flow_scale = max(flow_scale, abs(mdot[0]))
 
             for i in range(N):

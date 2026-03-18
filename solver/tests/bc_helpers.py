@@ -84,3 +84,40 @@ def reset_time(solver=None):
         _t_accum.clear()
     else:
         _t_accum.pop(id(solver), None)
+
+
+def step_hem_migrated(solver, p, h, mdot, bc_legacy, dt, q_wall=None):
+    """Drop-in for solver.step(p, h, mdot, TwoPhaseBCs, dt, q_wall)
+    that routes through step_hem_bf."""
+    solver_id = id(solver)
+    t = _t_accum.get(solver_id, 0.0)
+
+    # TwoPhaseBCs → BoundaryFace
+    bc_in = tp.PressureFace(bc_legacy.p_in, bc_legacy.h_in, 0.0, 0.0)
+    bc_out = tp.PressureFace(bc_legacy.p_out, bc_legacy.h_in, 0.0, 0.0)
+
+    solver.step_hem_bf(p, h, mdot, bc_in, bc_out, t, dt, q_wall)
+    _t_accum[solver_id] = t + dt
+
+
+def solve_migrated(solver, p, h, mdot, bc_legacy, dt, n_steps, stride=1,
+                   q_wall=None):
+    """Drop-in for solver.solve() that routes through step_hem_bf."""
+    import numpy as np
+    p = p.copy(); h = h.copy(); mdot = mdot.copy()
+
+    bc_in = tp.PressureFace(bc_legacy.p_in, bc_legacy.h_in, 0.0, 0.0)
+    bc_out = tp.PressureFace(bc_legacy.p_out, bc_legacy.h_in, 0.0, 0.0)
+
+    state_size = len(p) + len(h) + len(mdot)  # HEM: p + h + mdot
+    snapshots = []
+    t = 0.0
+
+    for s in range(n_steps):
+        solver.step_hem_bf(p, h, mdot, bc_in, bc_out, t, dt, q_wall)
+        t += dt
+        if (s + 1) % stride == 0 or s == n_steps - 1:
+            snap = np.concatenate([p, h, mdot])
+            snapshots.append(snap)
+
+    return np.array(snapshots)

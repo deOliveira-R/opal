@@ -78,17 +78,11 @@ solver = tp.TwoPhaseSolver(N, dx, A_flow, D_h, f_D, fluid, recon, model,
                            momentum, critical_flow)
 
 # ============================================================================
-# Boundary conditions
+# Boundary conditions (BoundaryFace strategy objects)
 # ============================================================================
 
-bc = tp.BoundaryConditions()
-bc.bc_type_in  = tp.BCType.WALL     # closed end
-bc.bc_type_out = tp.BCType.BREAK    # glass disk rupture
-bc.p_out = p_atm
-bc.break_area_fraction = C_d
-bc.h_in   = h_init
-bc.h_l_in = h_init
-bc.h_v_in = h_g_init
+bc_in  = tp.WallFace(h_init, h_g_init)
+bc_out = tp.BreakFace(p_atm, C_d, h_init, h_g_init)
 
 # ============================================================================
 # State arrays
@@ -140,7 +134,7 @@ for step in range(n_steps):
               f"{a_gs1:10.4f} {mdot[N]:12.3f}")
 
     # ── THE ONE LINE — all physics in C++ ──
-    solver.step_5eq(p, alpha, h_l, h_v, mdot, bc, dt)
+    solver.step_bf(p, alpha, h_l, h_v, mdot, bc_in, bc_out, t, dt)
 
     t += dt
 
