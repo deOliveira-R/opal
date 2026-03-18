@@ -1,0 +1,714 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<dae xmlns:p1="http://www.w3.org/1998/Math/MathML"
+                                                xmlns:xlink="http://www.w3.org/1999/xlink"
+                                                xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                                                xsi:noNamespaceSchemaLocation="http://home.dei.polimi.it/donida/Projects/AutoEdit/Images/DAE.xsd">
+<variables dimension="77">
+<orderedVariables dimension="45">
+<variablesList>
+<variable id="1" name="pipe.h_face[6]" variability="continuous" direction="none" type="Real" fixed="false" flow="NonConnector" stream="NonStreamConnector" comment="Face enthalpy for energy advection [J/kg]">
+</variable>
+<variable id="2" name="pipe.h_face[5]" variability="continuous" direction="none" type="Real" fixed="false" flow="NonConnector" stream="NonStreamConnector" comment="Face enthalpy for energy advection [J/kg]">
+</variable>
+<variable id="3" name="pipe.h_face[4]" variability="continuous" direction="none" type="Real" fixed="false" flow="NonConnector" stream="NonStreamConnector" comment="Face enthalpy for energy advection [J/kg]">
+</variable>
+<variable id="4" name="pipe.h_face[3]" variability="continuous" direction="none" type="Real" fixed="false" flow="NonConnector" stream="NonStreamConnector" comment="Face enthalpy for energy advection [J/kg]">
+</variable>
+<variable id="5" name="pipe.h_face[2]" variability="continuous" direction="none" type="Real" fixed="false" flow="NonConnector" stream="NonStreamConnector" comment="Face enthalpy for energy advection [J/kg]">
+</variable>
+<variable id="6" name="pipe.rho_face[6]" variability="continuous" direction="none" type="Real" fixed="false" flow="NonConnector" stream="NonStreamConnector" comment="Face density for momentum equation [kg/m^3]">
+</variable>
+<variable id="7" name="pipe.rho_face[5]" variability="continuous" direction="none" type="Real" fixed="false" flow="NonConnector" stream="NonStreamConnector" comment="Face density for momentum equation [kg/m^3]">
+</variable>
+<variable id="8" name="pipe.rho_face[4]" variability="continuous" direction="none" type="Real" fixed="false" flow="NonConnector" stream="NonStreamConnector" comment="Face density for momentum equation [kg/m^3]">
+</variable>
+<variable id="9" name="pipe.rho_face[3]" variability="continuous" direction="none" type="Real" fixed="false" flow="NonConnector" stream="NonStreamConnector" comment="Face density for momentum equation [kg/m^3]">
+</variable>
+<variable id="10" name="pipe.rho_face[2]" variability="continuous" direction="none" type="Real" fixed="false" flow="NonConnector" stream="NonStreamConnector" comment="Face density for momentum equation [kg/m^3]">
+</variable>
+<variable id="11" name="pipe.rho_face[1]" variability="continuous" direction="none" type="Real" fixed="false" flow="NonConnector" stream="NonStreamConnector" comment="Face density for momentum equation [kg/m^3]">
+</variable>
+<variable id="12" name="pipe.T_cell[5]" variability="continuous" direction="none" type="Real" fixed="false" flow="NonConnector" stream="NonStreamConnector" comment="Cell temperature [K] (diagnostic)">
+</variable>
+<variable id="13" name="pipe.T_cell[4]" variability="continuous" direction="none" type="Real" fixed="false" flow="NonConnector" stream="NonStreamConnector" comment="Cell temperature [K] (diagnostic)">
+</variable>
+<variable id="14" name="pipe.T_cell[3]" variability="continuous" direction="none" type="Real" fixed="false" flow="NonConnector" stream="NonStreamConnector" comment="Cell temperature [K] (diagnostic)">
+</variable>
+<variable id="15" name="pipe.T_cell[2]" variability="continuous" direction="none" type="Real" fixed="false" flow="NonConnector" stream="NonStreamConnector" comment="Cell temperature [K] (diagnostic)">
+</variable>
+<variable id="16" name="pipe.T_cell[1]" variability="continuous" direction="none" type="Real" fixed="false" flow="NonConnector" stream="NonStreamConnector" comment="Cell temperature [K] (diagnostic)">
+</variable>
+<variable id="17" name="pipe.drho_dh[5]" variability="continuous" direction="none" type="Real" fixed="false" flow="NonConnector" stream="NonStreamConnector" comment="drho/dh at constant p [kg/(m^3*J/kg)]">
+</variable>
+<variable id="18" name="pipe.drho_dh[4]" variability="continuous" direction="none" type="Real" fixed="false" flow="NonConnector" stream="NonStreamConnector" comment="drho/dh at constant p [kg/(m^3*J/kg)]">
+</variable>
+<variable id="19" name="pipe.drho_dh[3]" variability="continuous" direction="none" type="Real" fixed="false" flow="NonConnector" stream="NonStreamConnector" comment="drho/dh at constant p [kg/(m^3*J/kg)]">
+</variable>
+<variable id="20" name="pipe.drho_dh[2]" variability="continuous" direction="none" type="Real" fixed="false" flow="NonConnector" stream="NonStreamConnector" comment="drho/dh at constant p [kg/(m^3*J/kg)]">
+</variable>
+<variable id="21" name="pipe.drho_dh[1]" variability="continuous" direction="none" type="Real" fixed="false" flow="NonConnector" stream="NonStreamConnector" comment="drho/dh at constant p [kg/(m^3*J/kg)]">
+</variable>
+<variable id="22" name="pipe.drho_dp[5]" variability="continuous" direction="none" type="Real" fixed="false" flow="NonConnector" stream="NonStreamConnector" comment="drho/dp at constant h [kg/(m^3*Pa)]">
+</variable>
+<variable id="23" name="pipe.drho_dp[4]" variability="continuous" direction="none" type="Real" fixed="false" flow="NonConnector" stream="NonStreamConnector" comment="drho/dp at constant h [kg/(m^3*Pa)]">
+</variable>
+<variable id="24" name="pipe.drho_dp[3]" variability="continuous" direction="none" type="Real" fixed="false" flow="NonConnector" stream="NonStreamConnector" comment="drho/dp at constant h [kg/(m^3*Pa)]">
+</variable>
+<variable id="25" name="pipe.drho_dp[2]" variability="continuous" direction="none" type="Real" fixed="false" flow="NonConnector" stream="NonStreamConnector" comment="drho/dp at constant h [kg/(m^3*Pa)]">
+</variable>
+<variable id="26" name="pipe.drho_dp[1]" variability="continuous" direction="none" type="Real" fixed="false" flow="NonConnector" stream="NonStreamConnector" comment="drho/dp at constant h [kg/(m^3*Pa)]">
+</variable>
+<variable id="27" name="pipe.rho[4]" variability="continuous" direction="none" type="Real" fixed="false" flow="NonConnector" stream="NonStreamConnector" comment="Cell density [kg/m^3]">
+</variable>
+<variable id="28" name="pipe.rho[3]" variability="continuous" direction="none" type="Real" fixed="false" flow="NonConnector" stream="NonStreamConnector" comment="Cell density [kg/m^3]">
+</variable>
+<variable id="29" name="pipe.rho[2]" variability="continuous" direction="none" type="Real" fixed="false" flow="NonConnector" stream="NonStreamConnector" comment="Cell density [kg/m^3]">
+</variable>
+<variable id="30" name="pipe.mdot[6]" variability="continuousState" direction="none" type="Real" differentiatedIndex="1" fixed="true" flow="NonConnector" stream="NonStreamConnector" comment="Face mass flow [kg/s]">
+<attributesValues>
+<initialValue string="0.0">
+</initialValue>
+<fixed string="true">
+</fixed>
+</attributesValues>
+</variable>
+<variable id="31" name="pipe.mdot[5]" variability="continuousState" direction="none" type="Real" differentiatedIndex="1" fixed="true" flow="NonConnector" stream="NonStreamConnector" comment="Face mass flow [kg/s]">
+<attributesValues>
+<initialValue string="0.0">
+</initialValue>
+<fixed string="true">
+</fixed>
+</attributesValues>
+</variable>
+<variable id="32" name="pipe.mdot[4]" variability="continuousState" direction="none" type="Real" differentiatedIndex="1" fixed="true" flow="NonConnector" stream="NonStreamConnector" comment="Face mass flow [kg/s]">
+<attributesValues>
+<initialValue string="0.0">
+</initialValue>
+<fixed string="true">
+</fixed>
+</attributesValues>
+</variable>
+<variable id="33" name="pipe.mdot[3]" variability="continuousState" direction="none" type="Real" differentiatedIndex="1" fixed="true" flow="NonConnector" stream="NonStreamConnector" comment="Face mass flow [kg/s]">
+<attributesValues>
+<initialValue string="0.0">
+</initialValue>
+<fixed string="true">
+</fixed>
+</attributesValues>
+</variable>
+<variable id="34" name="pipe.mdot[2]" variability="continuousState" direction="none" type="Real" differentiatedIndex="1" fixed="true" flow="NonConnector" stream="NonStreamConnector" comment="Face mass flow [kg/s]">
+<attributesValues>
+<initialValue string="0.0">
+</initialValue>
+<fixed string="true">
+</fixed>
+</attributesValues>
+</variable>
+<variable id="35" name="pipe.h[5]" variability="continuousState" direction="none" type="Real" differentiatedIndex="1" fixed="true" flow="NonConnector" stream="NonStreamConnector" comment="Cell enthalpy [J/kg]">
+<attributesValues>
+<initialValue string="pipe.h_init">
+</initialValue>
+<fixed string="true">
+</fixed>
+</attributesValues>
+</variable>
+<variable id="36" name="pipe.h[4]" variability="continuousState" direction="none" type="Real" differentiatedIndex="1" fixed="true" flow="NonConnector" stream="NonStreamConnector" comment="Cell enthalpy [J/kg]">
+<attributesValues>
+<initialValue string="pipe.h_init">
+</initialValue>
+<fixed string="true">
+</fixed>
+</attributesValues>
+</variable>
+<variable id="37" name="pipe.h[3]" variability="continuousState" direction="none" type="Real" differentiatedIndex="1" fixed="true" flow="NonConnector" stream="NonStreamConnector" comment="Cell enthalpy [J/kg]">
+<attributesValues>
+<initialValue string="pipe.h_init">
+</initialValue>
+<fixed string="true">
+</fixed>
+</attributesValues>
+</variable>
+<variable id="38" name="pipe.h[2]" variability="continuousState" direction="none" type="Real" differentiatedIndex="1" fixed="true" flow="NonConnector" stream="NonStreamConnector" comment="Cell enthalpy [J/kg]">
+<attributesValues>
+<initialValue string="pipe.h_init">
+</initialValue>
+<fixed string="true">
+</fixed>
+</attributesValues>
+</variable>
+<variable id="39" name="pipe.h[1]" variability="continuousState" direction="none" type="Real" differentiatedIndex="1" fixed="true" flow="NonConnector" stream="NonStreamConnector" comment="Cell enthalpy [J/kg]">
+<attributesValues>
+<initialValue string="pipe.h_init">
+</initialValue>
+<fixed string="true">
+</fixed>
+</attributesValues>
+</variable>
+<variable id="40" name="pipe.p[5]" variability="continuousState" direction="none" type="Real" differentiatedIndex="1" fixed="true" flow="NonConnector" stream="NonStreamConnector" comment="Cell pressure [Pa]">
+<attributesValues>
+<initialValue string="pipe.p_init">
+</initialValue>
+<fixed string="true">
+</fixed>
+</attributesValues>
+</variable>
+<variable id="41" name="pipe.p[4]" variability="continuousState" direction="none" type="Real" differentiatedIndex="1" fixed="true" flow="NonConnector" stream="NonStreamConnector" comment="Cell pressure [Pa]">
+<attributesValues>
+<initialValue string="pipe.p_init">
+</initialValue>
+<fixed string="true">
+</fixed>
+</attributesValues>
+</variable>
+<variable id="42" name="pipe.p[3]" variability="continuousState" direction="none" type="Real" differentiatedIndex="1" fixed="true" flow="NonConnector" stream="NonStreamConnector" comment="Cell pressure [Pa]">
+<attributesValues>
+<initialValue string="pipe.p_init">
+</initialValue>
+<fixed string="true">
+</fixed>
+</attributesValues>
+</variable>
+<variable id="43" name="pipe.p[2]" variability="continuousState" direction="none" type="Real" differentiatedIndex="1" fixed="true" flow="NonConnector" stream="NonStreamConnector" comment="Cell pressure [Pa]">
+<attributesValues>
+<initialValue string="pipe.p_init">
+</initialValue>
+<fixed string="true">
+</fixed>
+</attributesValues>
+</variable>
+<variable id="44" name="pipe.p[1]" variability="continuousState" direction="none" type="Real" differentiatedIndex="1" fixed="true" flow="NonConnector" stream="NonStreamConnector" comment="Cell pressure [Pa]">
+<attributesValues>
+<initialValue string="pipe.p_init">
+</initialValue>
+<fixed string="true">
+</fixed>
+</attributesValues>
+</variable>
+<variable id="45" name="closed_end.port.p" variability="continuous" direction="none" type="Real" fixed="false" flow="NonFlow" stream="NonStream" comment="Pressure [Pa]">
+</variable>
+</variablesList>
+</orderedVariables>
+<knownVariables dimension="22">
+<variablesList>
+<variable id="1" name="pipe.mdot[1]" variability="continuousDummyState" direction="none" type="Real" fixed="true" flow="NonConnector" stream="NonStreamConnector" comment="Face mass flow [kg/s]">
+<bindExpression string="-0.0">
+</bindExpression>
+<attributesValues>
+<initialValue string="0.0">
+</initialValue>
+<fixed string="true">
+</fixed>
+</attributesValues>
+</variable>
+<variable id="2" name="pipe.port_a.m_flow" variability="continuous" direction="none" type="Real" fixed="true" flow="Flow" stream="NonStream" comment="Mass flow rate [kg/s], positive into component">
+<bindExpression string="-0.0">
+</bindExpression>
+<attributesValues>
+<fixed string="true">
+</fixed>
+</attributesValues>
+</variable>
+<variable id="3" name="atm.h_set" variability="parameter" direction="none" type="Real" fixed="true" flow="NonConnector" stream="NonStreamConnector" comment="Boundary enthalpy [J/kg]">
+<bindExpression string="9.8e5">
+</bindExpression>
+</variable>
+<variable id="4" name="atm.p_set" variability="parameter" direction="none" type="Real" fixed="true" flow="NonConnector" stream="NonStreamConnector" comment="Boundary pressure [Pa]">
+<bindExpression string="101325.0">
+</bindExpression>
+</variable>
+<variable id="5" name="pipe.q_wall[5]" variability="parameter" direction="none" type="Real" fixed="true" flow="NonConnector" stream="NonStreamConnector" comment="Wall heat source per cell [W]">
+<bindExpression string="0.0">
+</bindExpression>
+</variable>
+<variable id="6" name="pipe.q_wall[4]" variability="parameter" direction="none" type="Real" fixed="true" flow="NonConnector" stream="NonStreamConnector" comment="Wall heat source per cell [W]">
+<bindExpression string="0.0">
+</bindExpression>
+</variable>
+<variable id="7" name="pipe.q_wall[3]" variability="parameter" direction="none" type="Real" fixed="true" flow="NonConnector" stream="NonStreamConnector" comment="Wall heat source per cell [W]">
+<bindExpression string="0.0">
+</bindExpression>
+</variable>
+<variable id="8" name="pipe.q_wall[2]" variability="parameter" direction="none" type="Real" fixed="true" flow="NonConnector" stream="NonStreamConnector" comment="Wall heat source per cell [W]">
+<bindExpression string="0.0">
+</bindExpression>
+</variable>
+<variable id="9" name="pipe.q_wall[1]" variability="parameter" direction="none" type="Real" fixed="true" flow="NonConnector" stream="NonStreamConnector" comment="Wall heat source per cell [W]">
+<bindExpression string="0.0">
+</bindExpression>
+</variable>
+<variable id="10" name="pipe.h_init" variability="parameter" direction="none" type="Real" fixed="true" flow="NonConnector" stream="NonStreamConnector" comment="Initial enthalpy [J/kg]">
+<bindExpression string="9.8e5">
+</bindExpression>
+</variable>
+<variable id="11" name="pipe.p_init" variability="parameter" direction="none" type="Real" fixed="true" flow="NonConnector" stream="NonStreamConnector" comment="Initial pressure [Pa]">
+<bindExpression string="7e6">
+</bindExpression>
+</variable>
+<variable id="12" name="pipe.L" variability="parameter" direction="none" type="Real" fixed="true" flow="NonConnector" stream="NonStreamConnector" comment="Pipe length [m]">
+<bindExpression string="4.096">
+</bindExpression>
+</variable>
+<variable id="13" name="pipe.dx" variability="parameter" direction="none" type="Real" fixed="true" flow="NonConnector" stream="NonStreamConnector" comment="Cell length [m]">
+<bindExpression string="0.2 * pipe.L">
+</bindExpression>
+</variable>
+<variable id="14" name="pipe.D" variability="parameter" direction="none" type="Real" fixed="true" flow="NonConnector" stream="NonStreamConnector" comment="Inner diameter [m]">
+<bindExpression string="0.073">
+</bindExpression>
+</variable>
+<variable id="15" name="pipe.A_flow" variability="parameter" direction="none" type="Real" fixed="true" flow="NonConnector" stream="NonStreamConnector" comment="Flow area [m^2]">
+<bindExpression string="0.7853981633974483 * pipe.D ^ 2.0">
+</bindExpression>
+</variable>
+<variable id="16" name="pipe.V_cell" variability="parameter" direction="none" type="Real" fixed="true" flow="NonConnector" stream="NonStreamConnector" comment="Cell volume [m^3]">
+<bindExpression string="pipe.dx * pipe.A_flow">
+</bindExpression>
+</variable>
+<variable id="17" name="pipe.D_h" variability="parameter" direction="none" type="Real" fixed="true" flow="NonConnector" stream="NonStreamConnector" comment="Hydraulic diameter [m]">
+<bindExpression string="pipe.D">
+</bindExpression>
+</variable>
+<variable id="18" name="pipe.f_D" variability="parameter" direction="none" type="Real" fixed="true" flow="NonConnector" stream="NonStreamConnector" comment="Darcy friction factor [-]">
+<bindExpression string="0.02">
+</bindExpression>
+</variable>
+<variable id="19" name="pipe.N" variability="parameter" direction="none" type="Integer" fixed="true" flow="NonConnector" stream="NonStreamConnector" comment="Number of cells">
+<bindExpression string="5">
+</bindExpression>
+</variable>
+<variable id="20" name="closed_end.port.m_flow" variability="continuous" direction="none" type="Real" fixed="true" flow="Flow" stream="NonStream" comment="Mass flow rate [kg/s], positive into component">
+<bindExpression string="0.0">
+</bindExpression>
+<attributesValues>
+<fixed string="true">
+</fixed>
+</attributesValues>
+</variable>
+<variable id="21" name="closed_end.port.h_outflow" variability="continuous" direction="none" type="Real" fixed="true" flow="NonFlow" stream="Stream" comment="Specific enthalpy of outgoing fluid [J/kg]">
+<bindExpression string="0.0">
+</bindExpression>
+<attributesValues>
+<fixed string="true">
+</fixed>
+</attributesValues>
+</variable>
+<variable id="22" name="pipe.h_face[1]" variability="continuous" direction="none" type="Real" fixed="true" flow="NonConnector" stream="NonStreamConnector" comment="Face enthalpy for energy advection [J/kg]">
+<bindExpression string="0.0">
+</bindExpression>
+<attributesValues>
+<fixed string="true">
+</fixed>
+</attributesValues>
+</variable>
+</variablesList>
+</knownVariables>
+<aliasVariables dimension="10">
+<variablesList>
+<variable id="1" name="atm.port.h_outflow" variability="continuous" direction="none" type="Real" fixed="false" flow="NonFlow" stream="Stream" comment="Specific enthalpy of outgoing fluid [J/kg]">
+<bindExpression string="atm.h_set">
+</bindExpression>
+</variable>
+<variable id="2" name="atm.port.p" variability="continuous" direction="none" type="Real" fixed="false" flow="NonFlow" stream="NonStream" comment="Pressure [Pa]">
+<bindExpression string="atm.p_set">
+</bindExpression>
+</variable>
+<variable id="3" name="pipe.port_b.p" variability="continuous" direction="none" type="Real" fixed="false" flow="NonFlow" stream="NonStream" comment="Pressure [Pa]">
+<bindExpression string="atm.p_set">
+</bindExpression>
+</variable>
+<variable id="4" name="pipe.rho[5]" variability="continuous" direction="none" type="Real" fixed="false" flow="NonConnector" stream="NonStreamConnector" comment="Cell density [kg/m^3]">
+<bindExpression string="pipe.rho_face[6]">
+</bindExpression>
+</variable>
+<variable id="5" name="pipe.rho[1]" variability="continuous" direction="none" type="Real" fixed="false" flow="NonConnector" stream="NonStreamConnector" comment="Cell density [kg/m^3]">
+<bindExpression string="pipe.rho_face[1]">
+</bindExpression>
+</variable>
+<variable id="6" name="pipe.port_b.h_outflow" variability="continuous" direction="none" type="Real" fixed="false" flow="NonFlow" stream="Stream" comment="Specific enthalpy of outgoing fluid [J/kg]">
+<bindExpression string="pipe.h[5]">
+</bindExpression>
+</variable>
+<variable id="7" name="pipe.port_a.h_outflow" variability="continuous" direction="none" type="Real" fixed="false" flow="NonFlow" stream="Stream" comment="Specific enthalpy of outgoing fluid [J/kg]">
+<bindExpression string="pipe.h[1]">
+</bindExpression>
+</variable>
+<variable id="8" name="pipe.port_b.m_flow" variability="continuous" direction="none" type="Real" fixed="false" flow="Flow" stream="NonStream" comment="Mass flow rate [kg/s], positive into component">
+<bindExpression string="-pipe.mdot[6]">
+</bindExpression>
+</variable>
+<variable id="9" name="atm.port.m_flow" variability="continuous" direction="none" type="Real" fixed="false" flow="Flow" stream="NonStream" comment="Mass flow rate [kg/s], positive into component">
+<bindExpression string="pipe.mdot[6]">
+</bindExpression>
+</variable>
+<variable id="10" name="pipe.port_a.p" variability="continuous" direction="none" type="Real" fixed="false" flow="NonFlow" stream="NonStream" comment="Pressure [Pa]">
+<bindExpression string="closed_end.port.p">
+</bindExpression>
+</variable>
+</variablesList>
+</aliasVariables>
+</variables>
+<equations dimension="45">
+<equation id="1">pipe.rho_face[6] * pipe.V_cell * der(pipe.h[5]) = pipe.mdot[5] * (pipe.h_face[5] - pipe.h[5]) + pipe.mdot[6] * (pipe.h[5] - pipe.h_face[6]) + pipe.V_cell * der(pipe.p[5]) + pipe.q_wall[5]
+</equation>
+<equation id="2">pipe.rho[4] * pipe.V_cell * der(pipe.h[4]) = pipe.mdot[4] * (pipe.h_face[4] - pipe.h[4]) + pipe.mdot[5] * (pipe.h[4] - pipe.h_face[5]) + pipe.V_cell * der(pipe.p[4]) + pipe.q_wall[4]
+</equation>
+<equation id="3">pipe.rho[3] * pipe.V_cell * der(pipe.h[3]) = pipe.mdot[3] * (pipe.h_face[3] - pipe.h[3]) + pipe.mdot[4] * (pipe.h[3] - pipe.h_face[4]) + pipe.V_cell * der(pipe.p[3]) + pipe.q_wall[3]
+</equation>
+<equation id="4">pipe.rho[2] * pipe.V_cell * der(pipe.h[2]) = pipe.mdot[2] * (pipe.h_face[2] - pipe.h[2]) + pipe.mdot[3] * (pipe.h[2] - pipe.h_face[3]) + pipe.V_cell * der(pipe.p[2]) + pipe.q_wall[2]
+</equation>
+<equation id="5">pipe.rho_face[1] * pipe.V_cell * der(pipe.h[1]) = pipe.mdot[2] * (pipe.h[1] - pipe.h_face[2]) + pipe.V_cell * der(pipe.p[1]) + pipe.q_wall[1]
+</equation>
+<equation id="6">der(pipe.mdot[6]) = (pipe.A_flow * (pipe.p[5] - atm.p_set) + (-0.5) * pipe.f_D * pipe.dx * abs(pipe.mdot[6]) * pipe.mdot[6] / (pipe.A_flow ^ 2.0 * pipe.D_h * pipe.rho_face[6])) * pipe.A_flow / (pipe.rho_face[6] * pipe.dx)
+</equation>
+<equation id="7">der(pipe.mdot[5]) = (pipe.A_flow * (pipe.p[4] - pipe.p[5]) + (-0.5) * pipe.f_D * pipe.dx * abs(pipe.mdot[5]) * pipe.mdot[5] / (pipe.A_flow ^ 2.0 * pipe.rho_face[5]) / pipe.D_h) * pipe.A_flow / (pipe.rho_face[5] * pipe.dx)
+</equation>
+<equation id="8">der(pipe.mdot[4]) = (pipe.A_flow * (pipe.p[3] - pipe.p[4]) + (-0.5) * pipe.f_D * pipe.dx * abs(pipe.mdot[4]) * pipe.mdot[4] / (pipe.A_flow ^ 2.0 * pipe.rho_face[4]) / pipe.D_h) * pipe.A_flow / (pipe.rho_face[4] * pipe.dx)
+</equation>
+<equation id="9">der(pipe.mdot[3]) = (pipe.A_flow * (pipe.p[2] - pipe.p[3]) + (-0.5) * pipe.f_D * pipe.dx * abs(pipe.mdot[3]) * pipe.mdot[3] / (pipe.A_flow ^ 2.0 * pipe.rho_face[3]) / pipe.D_h) * pipe.A_flow / (pipe.rho_face[3] * pipe.dx)
+</equation>
+<equation id="10">der(pipe.mdot[2]) = (pipe.A_flow * (pipe.p[1] - pipe.p[2]) + (-0.5) * pipe.f_D * pipe.dx * abs(pipe.mdot[2]) * pipe.mdot[2] / (pipe.A_flow ^ 2.0 * pipe.rho_face[2]) / pipe.D_h) * pipe.A_flow / (pipe.rho_face[2] * pipe.dx)
+</equation>
+<equation id="11">closed_end.port.p = pipe.p[1]
+</equation>
+<equation id="12">pipe.V_cell * (pipe.drho_dp[5] * der(pipe.p[5]) + pipe.drho_dh[5] * der(pipe.h[5])) = pipe.mdot[5] - pipe.mdot[6]
+</equation>
+<equation id="13">pipe.V_cell * (pipe.drho_dp[4] * der(pipe.p[4]) + pipe.drho_dh[4] * der(pipe.h[4])) = pipe.mdot[4] - pipe.mdot[5]
+</equation>
+<equation id="14">pipe.V_cell * (pipe.drho_dp[3] * der(pipe.p[3]) + pipe.drho_dh[3] * der(pipe.h[3])) = pipe.mdot[3] - pipe.mdot[4]
+</equation>
+<equation id="15">pipe.V_cell * (pipe.drho_dp[2] * der(pipe.p[2]) + pipe.drho_dh[2] * der(pipe.h[2])) = pipe.mdot[2] - pipe.mdot[3]
+</equation>
+<equation id="16">pipe.V_cell * (pipe.drho_dp[1] * der(pipe.p[1]) + pipe.drho_dh[1] * der(pipe.h[1])) = -pipe.mdot[2]
+</equation>
+<equation id="17">pipe.h_face[6] = if pipe.mdot[6] &gt;= 0.0 then pipe.h[5] else atm.h_set
+</equation>
+<equation id="18">pipe.h_face[5] = if pipe.mdot[5] &gt;= 0.0 then pipe.h[4] else pipe.h[5]
+</equation>
+<equation id="19">pipe.h_face[4] = if pipe.mdot[4] &gt;= 0.0 then pipe.h[3] else pipe.h[4]
+</equation>
+<equation id="20">pipe.h_face[3] = if pipe.mdot[3] &gt;= 0.0 then pipe.h[2] else pipe.h[3]
+</equation>
+<equation id="21">pipe.h_face[2] = if pipe.mdot[2] &gt;= 0.0 then pipe.h[1] else pipe.h[2]
+</equation>
+<equation id="22">pipe.rho_face[5] = 0.5 * (pipe.rho[4] + pipe.rho_face[6])
+</equation>
+<equation id="23">pipe.rho_face[4] = 0.5 * (pipe.rho[3] + pipe.rho[4])
+</equation>
+<equation id="24">pipe.rho_face[3] = 0.5 * (pipe.rho[2] + pipe.rho[3])
+</equation>
+<equation id="25">pipe.rho_face[2] = 0.5 * (pipe.rho_face[1] + pipe.rho[2])
+</equation>
+<equation id="26">pipe.rho_face[1] = library.Media.SimpleFluid.rho_ph(pipe.p[1], pipe.h[1])
+</equation>
+<equation id="27">pipe.drho_dp[1] = library.Media.SimpleFluid.drho_dp_h(pipe.p[1], pipe.h[1])
+</equation>
+<equation id="28">pipe.drho_dh[1] = library.Media.SimpleFluid.drho_dh_p(pipe.p[1], pipe.h[1])
+</equation>
+<equation id="29">pipe.T_cell[1] = library.Media.SimpleFluid.T_ph(pipe.p[1], pipe.h[1])
+</equation>
+<equation id="30">pipe.rho[2] = library.Media.SimpleFluid.rho_ph(pipe.p[2], pipe.h[2])
+</equation>
+<equation id="31">pipe.drho_dp[2] = library.Media.SimpleFluid.drho_dp_h(pipe.p[2], pipe.h[2])
+</equation>
+<equation id="32">pipe.drho_dh[2] = library.Media.SimpleFluid.drho_dh_p(pipe.p[2], pipe.h[2])
+</equation>
+<equation id="33">pipe.T_cell[2] = library.Media.SimpleFluid.T_ph(pipe.p[2], pipe.h[2])
+</equation>
+<equation id="34">pipe.rho[3] = library.Media.SimpleFluid.rho_ph(pipe.p[3], pipe.h[3])
+</equation>
+<equation id="35">pipe.drho_dp[3] = library.Media.SimpleFluid.drho_dp_h(pipe.p[3], pipe.h[3])
+</equation>
+<equation id="36">pipe.drho_dh[3] = library.Media.SimpleFluid.drho_dh_p(pipe.p[3], pipe.h[3])
+</equation>
+<equation id="37">pipe.T_cell[3] = library.Media.SimpleFluid.T_ph(pipe.p[3], pipe.h[3])
+</equation>
+<equation id="38">pipe.rho[4] = library.Media.SimpleFluid.rho_ph(pipe.p[4], pipe.h[4])
+</equation>
+<equation id="39">pipe.drho_dp[4] = library.Media.SimpleFluid.drho_dp_h(pipe.p[4], pipe.h[4])
+</equation>
+<equation id="40">pipe.drho_dh[4] = library.Media.SimpleFluid.drho_dh_p(pipe.p[4], pipe.h[4])
+</equation>
+<equation id="41">pipe.T_cell[4] = library.Media.SimpleFluid.T_ph(pipe.p[4], pipe.h[4])
+</equation>
+<equation id="42">pipe.rho_face[6] = library.Media.SimpleFluid.rho_ph(pipe.p[5], pipe.h[5])
+</equation>
+<equation id="43">pipe.drho_dp[5] = library.Media.SimpleFluid.drho_dp_h(pipe.p[5], pipe.h[5])
+</equation>
+<equation id="44">pipe.drho_dh[5] = library.Media.SimpleFluid.drho_dh_p(pipe.p[5], pipe.h[5])
+</equation>
+<equation id="45">pipe.T_cell[5] = library.Media.SimpleFluid.T_ph(pipe.p[5], pipe.h[5])
+</equation>
+</equations>
+<zeroCrossingList dimension="5">
+<zeroCrossingElement string="pipe.mdot[6] &gt;= 0.0">
+<involvedEquations>
+<equationId>
+17
+</equationId>
+</involvedEquations>
+</zeroCrossingElement>
+<zeroCrossingElement string="pipe.mdot[5] &gt;= 0.0">
+<involvedEquations>
+<equationId>
+18
+</equationId>
+</involvedEquations>
+</zeroCrossingElement>
+<zeroCrossingElement string="pipe.mdot[4] &gt;= 0.0">
+<involvedEquations>
+<equationId>
+19
+</equationId>
+</involvedEquations>
+</zeroCrossingElement>
+<zeroCrossingElement string="pipe.mdot[3] &gt;= 0.0">
+<involvedEquations>
+<equationId>
+20
+</equationId>
+</involvedEquations>
+</zeroCrossingElement>
+<zeroCrossingElement string="pipe.mdot[2] &gt;= 0.0">
+<involvedEquations>
+<equationId>
+21
+</equationId>
+</involvedEquations>
+</zeroCrossingElement>
+</zeroCrossingList>
+<functions>
+<function name="library.Media.SimpleFluid.T_ph">
+<ModelicaImplementation>function(p :: Real * h :: Real) =&gt; Reallibrary.Media.SimpleFluid.T_phfunction library.Media.SimpleFluid.T_ph &quot;Temperature [K] from (p, h)&quot;
+  input Real p &quot;Pressure [Pa]&quot;;
+  input Real h &quot;Specific enthalpy [J/kg]&quot;;
+  output Real T_val;
+  protected Integer reg = library.Media.SimpleFluid.region_ph(p, h);
+algorithm
+  if reg == 1 then
+    T_val := library.Media.SimpleFluid.T_sat(p) - (library.Media.SimpleFluid.h_f(p) - h) / 4000.0;
+  elseif reg == 2 then
+    T_val := library.Media.SimpleFluid.T_sat(p) + (h - library.Media.SimpleFluid.h_g(p)) / 2000.0;
+  else
+    T_val := library.Media.SimpleFluid.T_sat(p);
+  end if;
+end library.Media.SimpleFluid.T_ph;
+
+
+</ModelicaImplementation>
+</function>
+<function name="library.Media.SimpleFluid.T_sat">
+<ModelicaImplementation>function(p :: Real) =&gt; Reallibrary.Media.SimpleFluid.T_satfunction library.Media.SimpleFluid.T_sat &quot;Saturation temperature [K]&quot;
+  input Real p &quot;Pressure [Pa]&quot;;
+  output Real T_val;
+algorithm
+  T_val := 400.0 + 20.0 * (p - 1e7) / 1e7;
+end library.Media.SimpleFluid.T_sat;
+
+
+</ModelicaImplementation>
+</function>
+<function name="library.Media.SimpleFluid.drho_dh_p">
+<ModelicaImplementation>function(p :: Real * h :: Real) =&gt; Reallibrary.Media.SimpleFluid.drho_dh_pfunction library.Media.SimpleFluid.drho_dh_p &quot;Partial derivative drho/dh at constant p [kg/(m^3 * J/kg)]&quot;
+  input Real p &quot;Pressure [Pa]&quot;;
+  input Real h &quot;Specific enthalpy [J/kg]&quot;;
+  output Real val;
+  protected Integer reg = library.Media.SimpleFluid.region_ph(p, h);
+  protected Real rf;
+  protected Real rg;
+  protected Real hfgv;
+  protected Real rho_mix;
+algorithm
+  if reg == 1 then
+    val := -6.25e-5;
+  elseif reg == 2 then
+    val := -2e-5;
+  else
+    rf := library.Media.SimpleFluid.rho_f(p);
+    rg := library.Media.SimpleFluid.rho_g(p);
+    hfgv := library.Media.SimpleFluid.h_fg(p);
+    rho_mix := library.Media.SimpleFluid.rho_ph_2phase(p, h);
+    val := -rho_mix * rho_mix * (1.0 / rg - 1.0 / rf) / hfgv;
+  end if;
+end library.Media.SimpleFluid.drho_dh_p;
+
+
+</ModelicaImplementation>
+</function>
+<function name="library.Media.SimpleFluid.drho_dp_h">
+<ModelicaImplementation>function(p :: Real * h :: Real) =&gt; Reallibrary.Media.SimpleFluid.drho_dp_hfunction library.Media.SimpleFluid.drho_dp_h &quot;Partial derivative drho/dp at constant h [kg/(m^3*Pa)]&quot;
+  input Real p &quot;Pressure [Pa]&quot;;
+  input Real h &quot;Specific enthalpy [J/kg]&quot;;
+  output Real val;
+  protected Integer reg = library.Media.SimpleFluid.region_ph(p, h);
+  protected Real rf;
+  protected Real rg;
+  protected Real hfv;
+  protected Real hgv;
+  protected Real hfgv;
+  protected Real x;
+  protected Real vf;
+  protected Real vg;
+  protected Real v;
+  protected Real rho2;
+  protected Real drf_dp;
+  protected Real drg_dp;
+  protected Real dhf_dp;
+  protected Real dhg_dp;
+  protected Real dhfg_dp;
+  protected Real dvf_dp;
+  protected Real dvg_dp;
+  protected Real dx_dp;
+  protected Real dv_dp;
+algorithm
+  if reg == 1 then
+    val := 2.625e-6;
+  elseif reg == 2 then
+    val := 6e-7;
+  else
+    rf := library.Media.SimpleFluid.rho_f(p);
+    rg := library.Media.SimpleFluid.rho_g(p);
+    hfv := library.Media.SimpleFluid.h_f(p);
+    hgv := library.Media.SimpleFluid.h_g(p);
+    hfgv := hgv - hfv;
+    x := (h - hfv) / hfgv;
+    vf := 1.0 / rf;
+    vg := 1.0 / rg;
+    v := x * vg + (1.0 - x) * vf;
+    rho2 := 1.0 / (v * v);
+    drf_dp := 2e-6;
+    drg_dp := 5e-7;
+    dhf_dp := 0.01;
+    dhg_dp := 0.005;
+    dhfg_dp := dhg_dp - dhf_dp;
+    dvf_dp := -drf_dp / (rf * rf);
+    dvg_dp := -drg_dp / (rg * rg);
+    dx_dp := (dhf_dp + x * dhfg_dp) / (-hfgv);
+    dv_dp := dx_dp * (vg - vf) + x * dvg_dp + (1.0 - x) * dvf_dp;
+    val := -rho2 * dv_dp;
+  end if;
+end library.Media.SimpleFluid.drho_dp_h;
+
+
+</ModelicaImplementation>
+</function>
+<function name="library.Media.SimpleFluid.h_f">
+<ModelicaImplementation>function(p :: Real) =&gt; Reallibrary.Media.SimpleFluid.h_ffunction library.Media.SimpleFluid.h_f &quot;Saturated liquid enthalpy [J/kg]&quot;
+  input Real p &quot;Pressure [Pa]&quot;;
+  output Real h_val;
+algorithm
+  h_val := 8e5 + 1e5 * (p - 1e7) / 1e7;
+end library.Media.SimpleFluid.h_f;
+
+
+</ModelicaImplementation>
+</function>
+<function name="library.Media.SimpleFluid.h_fg">
+<ModelicaImplementation>function(p :: Real) =&gt; Reallibrary.Media.SimpleFluid.h_fgfunction library.Media.SimpleFluid.h_fg &quot;Latent heat [J/kg]&quot;
+  input Real p &quot;Pressure [Pa]&quot;;
+  output Real h_val;
+algorithm
+  h_val := library.Media.SimpleFluid.h_g(p) - library.Media.SimpleFluid.h_f(p);
+end library.Media.SimpleFluid.h_fg;
+
+
+</ModelicaImplementation>
+</function>
+<function name="library.Media.SimpleFluid.h_g">
+<ModelicaImplementation>function(p :: Real) =&gt; Reallibrary.Media.SimpleFluid.h_gfunction library.Media.SimpleFluid.h_g &quot;Saturated vapour enthalpy [J/kg]&quot;
+  input Real p &quot;Pressure [Pa]&quot;;
+  output Real h_val;
+algorithm
+  h_val := 2.8e6 + 5e4 * (p - 1e7) / 1e7;
+end library.Media.SimpleFluid.h_g;
+
+
+</ModelicaImplementation>
+</function>
+<function name="library.Media.SimpleFluid.quality_ph">
+<ModelicaImplementation>function(p :: Real * h :: Real) =&gt; Reallibrary.Media.SimpleFluid.quality_phfunction library.Media.SimpleFluid.quality_ph &quot;Steam quality x from (p, h)&quot;
+  input Real p &quot;Pressure [Pa]&quot;;
+  input Real h &quot;Specific enthalpy [J/kg]&quot;;
+  output Real x_val;
+algorithm
+  x_val := (h - library.Media.SimpleFluid.h_f(p)) / library.Media.SimpleFluid.h_fg(p);
+end library.Media.SimpleFluid.quality_ph;
+
+
+</ModelicaImplementation>
+</function>
+<function name="library.Media.SimpleFluid.region_ph">
+<ModelicaImplementation>function(p :: Real * h :: Real) =&gt; Integerlibrary.Media.SimpleFluid.region_phfunction library.Media.SimpleFluid.region_ph &quot;Region flag: 1=liquid, 2=steam, 4=two-phase&quot;
+  input Real p &quot;Pressure [Pa]&quot;;
+  input Real h &quot;Specific enthalpy [J/kg]&quot;;
+  output Integer region;
+algorithm
+  if h &lt; library.Media.SimpleFluid.h_f(p) then
+    region := 1;
+  elseif h &gt; library.Media.SimpleFluid.h_g(p) then
+    region := 2;
+  else
+    region := 4;
+  end if;
+end library.Media.SimpleFluid.region_ph;
+
+
+</ModelicaImplementation>
+</function>
+<function name="library.Media.SimpleFluid.rho_f">
+<ModelicaImplementation>function(p :: Real) =&gt; Reallibrary.Media.SimpleFluid.rho_ffunction library.Media.SimpleFluid.rho_f &quot;Saturated liquid density [kg/m^3]&quot;
+  input Real p &quot;Pressure [Pa]&quot;;
+  output Real rho_val;
+algorithm
+  rho_val := 750.0 + 20.0 * (p - 1e7) / 1e7;
+end library.Media.SimpleFluid.rho_f;
+
+
+</ModelicaImplementation>
+</function>
+<function name="library.Media.SimpleFluid.rho_g">
+<ModelicaImplementation>function(p :: Real) =&gt; Reallibrary.Media.SimpleFluid.rho_gfunction library.Media.SimpleFluid.rho_g &quot;Saturated vapour density [kg/m^3]&quot;
+  input Real p &quot;Pressure [Pa]&quot;;
+  output Real rho_val;
+algorithm
+  rho_val := 40.0 + 5.0 * (p - 1e7) / 1e7;
+end library.Media.SimpleFluid.rho_g;
+
+
+</ModelicaImplementation>
+</function>
+<function name="library.Media.SimpleFluid.rho_ph">
+<ModelicaImplementation>function(p :: Real * h :: Real) =&gt; Reallibrary.Media.SimpleFluid.rho_phfunction library.Media.SimpleFluid.rho_ph &quot;Density [kg/m^3] from (p, h)&quot;
+  input Real p &quot;Pressure [Pa]&quot;;
+  input Real h &quot;Specific enthalpy [J/kg]&quot;;
+  output Real rho_val;
+  protected Integer reg = library.Media.SimpleFluid.region_ph(p, h);
+algorithm
+  if reg == 1 then
+    rho_val := library.Media.SimpleFluid.rho_f(p) + 6.25e-5 * (library.Media.SimpleFluid.h_f(p) - h);
+  elseif reg == 2 then
+    rho_val := library.Media.SimpleFluid.rho_g(p) - 2e-5 * (h - library.Media.SimpleFluid.h_g(p));
+  else
+    rho_val := library.Media.SimpleFluid.rho_ph_2phase(p, h);
+  end if;
+end library.Media.SimpleFluid.rho_ph;
+
+
+</ModelicaImplementation>
+</function>
+<function name="library.Media.SimpleFluid.rho_ph_2phase">
+<ModelicaImplementation>function(p :: Real * h :: Real) =&gt; Reallibrary.Media.SimpleFluid.rho_ph_2phasefunction library.Media.SimpleFluid.rho_ph_2phase &quot;Two-phase mixture density [kg/m^3]&quot;
+  input Real p &quot;Pressure [Pa]&quot;;
+  input Real h &quot;Specific enthalpy [J/kg]&quot;;
+  output Real rho_val;
+  protected Real x = library.Media.SimpleFluid.quality_ph(p, h);
+  protected Real rf = library.Media.SimpleFluid.rho_f(p);
+  protected Real rg = library.Media.SimpleFluid.rho_g(p);
+algorithm
+  rho_val := 1.0 / (x / rg + (1.0 - x) / rf);
+end library.Media.SimpleFluid.rho_ph_2phase;
+
+
+</ModelicaImplementation>
+</function>
+</functions>
+</dae>
