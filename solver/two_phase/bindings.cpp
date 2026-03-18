@@ -139,8 +139,41 @@ PYBIND11_MODULE(opal_two_phase, m) {
         .def_readonly("cp_v",        &PhasicProps::cp_v)
         .def_readonly("sigma",       &PhasicProps::sigma);
 
+    // InterfacialState struct (input to closures) --------------------------
+    py::class_<InterfacialState>(m, "InterfacialState")
+        .def(py::init<>())
+        .def_readwrite("p",       &InterfacialState::p)
+        .def_readwrite("alpha",   &InterfacialState::alpha)
+        .def_readwrite("rho_l",   &InterfacialState::rho_l)
+        .def_readwrite("rho_v",   &InterfacialState::rho_v)
+        .def_readwrite("h_l",     &InterfacialState::h_l)
+        .def_readwrite("h_v",     &InterfacialState::h_v)
+        .def_readwrite("T_l",     &InterfacialState::T_l)
+        .def_readwrite("T_v",     &InterfacialState::T_v)
+        .def_readwrite("T_sat",   &InterfacialState::T_sat)
+        .def_readwrite("h_sat_l", &InterfacialState::h_sat_l)
+        .def_readwrite("h_sat_v", &InterfacialState::h_sat_v)
+        .def_readwrite("cp_l",    &InterfacialState::cp_l)
+        .def_readwrite("sigma",   &InterfacialState::sigma)
+        .def_readwrite("D_h",     &InterfacialState::D_h);
+
+    // ClosureResult struct (output from closures) -------------------------
+    py::class_<ClosureResult>(m, "ClosureResult")
+        .def_readonly("Gamma", &ClosureResult::Gamma)
+        .def_readonly("q_i_l", &ClosureResult::q_i_l)
+        .def_readonly("q_i_v", &ClosureResult::q_i_v);
+
+    // DriftFluxResult struct (output from drift_flux) --------------------
+    py::class_<DriftFluxResult>(m, "DriftFluxResult")
+        .def_readonly("C_0",  &DriftFluxResult::C_0)
+        .def_readonly("V_gj", &DriftFluxResult::V_gj);
+
     // InterfacialClosures hierarchy ----------------------------------------
-    py::class_<InterfacialClosures>(m, "InterfacialClosures");
+    py::class_<InterfacialClosures>(m, "InterfacialClosures")
+        .def("compute", &InterfacialClosures::compute,
+             py::arg("state"), "Compute interfacial transfer rates")
+        .def("drift_flux", &InterfacialClosures::drift_flux,
+             py::arg("state"), "Compute drift-flux parameters");
 
     py::class_<NoClosures, InterfacialClosures>(m, "NoClosures")
         .def(py::init<>(), "No closures (for HEM)");
@@ -215,6 +248,13 @@ PYBIND11_MODULE(opal_two_phase, m) {
             py::arg("dt"),
             py::arg("q_wall") = py::none(),
             "Transport-only: update alpha/h_l/h_v using C++ closures.")
+
+        // Phasic flux split (public for unit testing)
+        .def("split_phasic_flux", &FiveEqModel::split_phasic_flux,
+             py::arg("mdot_m"), py::arg("alpha_face"),
+             py::arg("rho_l"), py::arg("rho_v"), py::arg("rho_m"),
+             py::arg("C_0"), py::arg("V_gj"), py::arg("A_flow"),
+             "Split mixture mass flux into (mdot_l, mdot_v) via drift-flux.")
 
         // Direct 5-eq step: operates on (p, alpha, h_l, h_v, mdot) arrays
         .def("make_state_5eq",

@@ -111,8 +111,10 @@ private:
         const SolverState& state,
         const MeshParams& mesh) const;
 
+public:
     /// Split mixture mass flux into phasic fluxes via drift-flux.
-    /// Returns (G_l * A, G_v * A) = phasic mass flow rates at a face.
+    /// Returns (mdot_l, mdot_v) = phasic mass flow rates at a face.
+    /// Public for unit testing.
     std::pair<double, double> split_phasic_flux(
         double mdot_m, double alpha_face,
         double rho_l, double rho_v, double rho_m,

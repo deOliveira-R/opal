@@ -480,10 +480,14 @@ void FiveEqModel::update_transport(
             double h_v_new = h_v_old[i]
                 + dt / m_v * (flux_v + p_work_v + q_wall_v + qi_v + phase_v);
 
-            // Enthalpy bounds: vapor enthalpy should stay between liquid
+            // Enthalpy bounds: vapor enthalpy should stay between vapor
             // saturation and a reasonable maximum (~4 MJ/kg at 1 atm).
+            // Floor at h_sat_v (not h_sat_l): h_v < h_sat_v is non-physical
+            // for bulk vapor and produces invalid IAPWS Region 2 inputs
+            // (negative density). Condensation is handled by Gamma, not
+            // by h_v undershooting saturation.
             constexpr double h_v_max = 4.0e6;  // 4 MJ/kg
-            state.h_v[i] = std::clamp(h_v_new, phasic_props_[i].h_sat_l, h_v_max);
+            state.h_v[i] = std::clamp(h_v_new, phasic_props_[i].h_sat_v, h_v_max);
         }  // end vapor update
     }
 }

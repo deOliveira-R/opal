@@ -125,11 +125,12 @@ public:
         double a_i = std::max(4.0 * alpha_eff * (1.0 - alpha_eff), alpha_eff);
 
         // ── Interfacial heat transfer ──
-        // q_i_l = H_i * a_i * (T_l - T_sat)
-        // When T_l > T_sat: q_i_l > 0, Γ > 0 (evaporation/flashing)
-        // When T_l < T_sat: q_i_l < 0, Γ < 0 (condensation)
-        r.q_i_l = H_i_ * a_i * (s.T_l - s.T_sat);
-        r.Gamma = r.q_i_l / h_fg;
+        // q_i_l = heat flux INTO liquid from interface [W/m³]
+        // When T_l > T_sat: q_i_l < 0 (heat leaves liquid → drives evaporation)
+        // When T_l < T_sat: q_i_l > 0 (heat enters liquid → drives condensation)
+        // Γ = -q_i_l / h_fg: positive = evaporation, negative = condensation
+        r.q_i_l = H_i_ * a_i * (s.T_sat - s.T_l);
+        r.Gamma = -r.q_i_l / h_fg;
 
         // Interface energy balance: q_i_l + q_i_v + Γ·(h_v - h_l) = 0
         // Enforce balance using actual phasic enthalpies (not saturation)
