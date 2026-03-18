@@ -154,30 +154,24 @@ void FiveEqModel::compute_phasic_state(
 
 void FiveEqModel::evaluate_properties(
     const SolverState& state,
-    const FluidProperties& /*fluid*/,
+    const FluidProperties& fluid,
     std::vector<FluidProps>& props) const
 {
     int N = static_cast<int>(state.p.size());
     props.resize(N);
 
     for (int i = 0; i < N; ++i) {
+        // Compute mixture enthalpy for property evaluation
         double al = state.alpha[i];
-        double rl = phasic_.rho_liquid(state.p[i], state.h_l[i]);
-        double rv = phasic_.rho_vapor(state.p[i], state.h_v[i]);
-        auto pp = phasic_.evaluate_phasic(state.p[i]);
+        double h_mix = (1.0 - al) * state.h_l[i]
+                     + al * (state.h_v.empty() ? state.h_l[i] : state.h_v[i]);
 
-        // Mixture density
-        props[i].rho = (1.0 - al) * rl + al * rv;
-
-        // Pressure derivative (with h and alpha frozen):
-        // ∂ρ_m/∂P = (1-α)·∂ρ_l/∂P + α·∂ρ_v/∂P
-        props[i].drho_dp_h = (1.0 - al) * pp.drho_l_dp + al * pp.drho_v_dp;
-
-        // drho_dh_p: not meaningful for 5-eq (separate h_l, h_v)
-        props[i].drho_dh_p = 0.0;
-
-        // Temperature: use liquid temperature (or mixture for diagnostic)
-        props[i].T = phasic_.T_liquid(state.p[i], state.h_l[i]);
+        // Use the FluidProperties evaluate at (p, h_mix) to get the correct
+        // mixture density and compressibility. This gives the actual drho_dp_h
+        // at the subcooled/superheated/two-phase state, NOT the saturation-
+        // curve derivative. The pressure equation needs this for stability
+        // with inertial momentum during rapid transients.
+        props[i] = fluid.evaluate(state.p[i], h_mix);
     }
 }
 
@@ -400,14 +394,11 @@ void FiveEqModel::update_transport(
         double alpha_new = alpha_rho_v_new / rv_new;
         alpha_new = std::clamp(alpha_new, 0.0, 1.0);
 
-        // Nucleation floor: if liquid is superheated and closure nucleated,
-        // ensure the void fraction doesn't drop below the nucleation seed.
-        // This prevents the advective term from washing away nucleated void
-        // before flashing can grow it.
-        if (cr.Gamma > 0.0 && alpha_new < al) {
-            // Closure says evaporation, but advection shrinks void —
-            // keep at least the current value (don't fight the source)
-            alpha_new = std::max(alpha_new, std::min(al, 1e-3));
+        // Nucleation floor: when liquid is superheated (Gamma > 0 from
+        // closure), enforce a minimum void fraction. Without this, advective
+        // loss washes away the nucleation seed before flashing can grow it.
+        if (cr.Gamma > 0.0) {
+            alpha_new = std::max(alpha_new, 1e-3);
         }
 
         state.alpha[i] = alpha_new;
