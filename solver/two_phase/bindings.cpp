@@ -28,6 +28,8 @@
 #include "five_eq_model.hpp"
 #include "phasic_properties.hpp"
 #include "closures.hpp"
+#include "momentum.hpp"
+#include "critical_flow.hpp"
 
 namespace py = pybind11;
 using namespace opal;
@@ -81,11 +83,21 @@ PYBIND11_MODULE(opal_two_phase, m) {
              py::arg("p"), py::arg("h_v"));
 
     // IAPWSIF97Properties ---------------------------------------------------
-    py::class_<IAPWSIF97Properties, FluidProperties>(m, "IAPWSIF97Properties")
+    py::class_<IAPWSIF97Properties, FluidProperties, PhasicProperties>(m, "IAPWSIF97Properties")
         .def(py::init<>(), "IAPWS-IF97 industrial steam tables (Regions 1, 2, 4)")
         .def("evaluate", &IAPWSIF97Properties::evaluate,
              py::arg("p"), py::arg("h"),
-             "Evaluate all properties at (p, h)");
+             "Evaluate all properties at (p, h)")
+        .def("evaluate_phasic", &IAPWSIF97Properties::evaluate_phasic,
+             py::arg("p"))
+        .def("rho_liquid", &IAPWSIF97Properties::rho_liquid,
+             py::arg("p"), py::arg("h_l"))
+        .def("rho_vapor", &IAPWSIF97Properties::rho_vapor,
+             py::arg("p"), py::arg("h_v"))
+        .def("T_liquid", &IAPWSIF97Properties::T_liquid,
+             py::arg("p"), py::arg("h_l"))
+        .def("T_vapor", &IAPWSIF97Properties::T_vapor,
+             py::arg("p"), py::arg("h_v"));
 
     // FluidProps struct (returned by evaluate) ------------------------------
     py::class_<FluidProps>(m, "FluidProps")
@@ -225,6 +237,12 @@ PYBIND11_MODULE(opal_two_phase, m) {
                 return d;
             });
 
+    // BCType enum -----------------------------------------------------------
+    py::enum_<BCType>(m, "BCType")
+        .value("PRESSURE", BCType::PRESSURE)
+        .value("WALL",     BCType::WALL)
+        .value("BREAK",    BCType::BREAK);
+
     // BoundaryConditions ---------------------------------------------------
     py::class_<BoundaryConditions>(m, "BoundaryConditions")
         .def(py::init<>())
@@ -235,7 +253,34 @@ PYBIND11_MODULE(opal_two_phase, m) {
         .def_readwrite("h_v_in",   &BoundaryConditions::h_v_in)
         .def_readwrite("alpha_in", &BoundaryConditions::alpha_in)
         .def_readwrite("v_l_in",   &BoundaryConditions::v_l_in)
-        .def_readwrite("v_v_in",   &BoundaryConditions::v_v_in);
+        .def_readwrite("v_v_in",   &BoundaryConditions::v_v_in)
+        .def_readwrite("bc_type_in",  &BoundaryConditions::bc_type_in)
+        .def_readwrite("bc_type_out", &BoundaryConditions::bc_type_out)
+        .def_readwrite("break_area_fraction", &BoundaryConditions::break_area_fraction);
+
+    // MomentumModel hierarchy ----------------------------------------------
+    py::class_<MomentumModel>(m, "MomentumModel")
+        .def_property_readonly("name", &MomentumModel::name);
+
+    py::class_<AlgebraicMomentum, MomentumModel>(m, "AlgebraicMomentum")
+        .def(py::init<>(), "Steady-state algebraic momentum: mdot = dp/R");
+
+    py::class_<InertialMomentum, MomentumModel>(m, "InertialMomentum")
+        .def(py::init<>(), "Time-advanced inertial momentum for transients");
+
+    // CriticalFlowModel hierarchy ------------------------------------------
+    py::class_<CriticalFlowModel>(m, "CriticalFlowModel")
+        .def_property_readonly("name", &CriticalFlowModel::name);
+
+    py::class_<NoCriticalFlow, CriticalFlowModel>(m, "NoCriticalFlow")
+        .def(py::init<>(), "No critical flow (never choked)");
+
+    py::class_<RansomTrapp, CriticalFlowModel>(m, "RansomTrapp")
+        .def(py::init<double, double>(),
+             py::arg("x_trans") = 0.10, py::arg("c_floor") = 1200.0,
+             "Ransom-Trapp quality-blended critical flow model")
+        .def("set_saturation_props", &RansomTrapp::set_saturation_props,
+             py::arg("h_f"), py::arg("h_g"), py::arg("rho_f"));
 
     // TwoPhaseBCs (legacy) -------------------------------------------------
     py::class_<TwoPhaseBCs>(m, "TwoPhaseBCs")
@@ -282,6 +327,23 @@ PYBIND11_MODULE(opal_two_phase, m) {
              py::keep_alive<1, 8>(),  // solver keeps recon alive
              py::keep_alive<1, 9>(),  // solver keeps model alive
              "Construct solver with selectable reconstruction and flow model.")
+
+        // Full constructor with momentum + critical flow
+        .def(py::init<int, double, double, double, double,
+                      const FluidProperties&, const FaceReconstruction&,
+                      const FlowModel&, const MomentumModel&,
+                      const CriticalFlowModel*>(),
+             py::arg("N"), py::arg("dx"), py::arg("A_flow"),
+             py::arg("D_h"), py::arg("f_D"), py::arg("fluid"),
+             py::arg("recon"), py::arg("model"),
+             py::arg("momentum"),
+             py::arg("critical_flow") = nullptr,
+             py::keep_alive<1, 7>(),   // fluid
+             py::keep_alive<1, 8>(),   // recon
+             py::keep_alive<1, 9>(),   // model
+             py::keep_alive<1, 10>(),  // momentum
+             py::keep_alive<1, 11>(),  // critical_flow
+             "Full constructor: flow model + momentum + critical flow.")
 
         .def_property_readonly("N",      &TwoPhaseSolver::N)
         .def_property_readonly("dx",     &TwoPhaseSolver::dx)

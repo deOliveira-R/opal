@@ -1,12 +1,17 @@
 /**
  * solver.cpp — Semi-implicit staggered-mesh two-phase solver implementation.
  *
- * Phase 3 refactor: the solver is now a thin orchestrator that delegates
- * equation-set work to a FlowModel. The time-stepping loop, Thomas algorithm,
- * and CFL check remain here. The physics (pressure matrix, flow update,
- * enthalpy update) is in the FlowModel.
+ * The solver orchestrates the timestep:
+ *   1. Properties at old state
+ *   2. Face densities
+ *   3. Pressure system assembly (via MomentumModel — algebraic or inertial)
+ *   4. Tridiagonal solve + pressure floor
+ *   5. Velocity update (via MomentumModel)
+ *   6. Transport update (via FlowModel — enthalpy, void fraction)
  *
- * Legacy API (step with p,h,mdot vectors) is preserved as a wrapper.
+ * Critical flow (optional): evaluated before pressure assembly when the
+ * outlet BC is BREAK. If choked, the outlet face decouples from downstream
+ * pressure and the flow rate is limited.
  */
 
 #include "solver.hpp"
@@ -23,6 +28,7 @@ namespace opal {
 
 const DonorCell TwoPhaseSolver::default_donor_cell_{};
 const HEMModel  TwoPhaseSolver::default_hem_model_{};
+const AlgebraicMomentum TwoPhaseSolver::default_algebraic_momentum_{};
 
 // ---------------------------------------------------------------------------
 // Constructors
@@ -31,14 +37,16 @@ const HEMModel  TwoPhaseSolver::default_hem_model_{};
 TwoPhaseSolver::TwoPhaseSolver(int N, double dx, double A_flow, double D_h,
                                double f_D, const FluidProperties& fluid)
     : TwoPhaseSolver(N, dx, A_flow, D_h, f_D, fluid,
-                     default_donor_cell_, default_hem_model_)
+                     default_donor_cell_, default_hem_model_,
+                     default_algebraic_momentum_, nullptr)
 {
 }
 
 TwoPhaseSolver::TwoPhaseSolver(int N, double dx, double A_flow, double D_h,
                                double f_D, const FluidProperties& fluid,
                                const FaceReconstruction& recon)
-    : TwoPhaseSolver(N, dx, A_flow, D_h, f_D, fluid, recon, default_hem_model_)
+    : TwoPhaseSolver(N, dx, A_flow, D_h, f_D, fluid, recon,
+                     default_hem_model_, default_algebraic_momentum_, nullptr)
 {
 }
 
@@ -46,9 +54,21 @@ TwoPhaseSolver::TwoPhaseSolver(int N, double dx, double A_flow, double D_h,
                                double f_D, const FluidProperties& fluid,
                                const FaceReconstruction& recon,
                                const FlowModel& model)
+    : TwoPhaseSolver(N, dx, A_flow, D_h, f_D, fluid, recon, model,
+                     default_algebraic_momentum_, nullptr)
+{
+}
+
+TwoPhaseSolver::TwoPhaseSolver(int N, double dx, double A_flow, double D_h,
+                               double f_D, const FluidProperties& fluid,
+                               const FaceReconstruction& recon,
+                               const FlowModel& model,
+                               const MomentumModel& momentum,
+                               const CriticalFlowModel* critical_flow)
     : n_(N), dx_(dx), A_(A_flow), D_h_(D_h), f_D_(f_D),
       V_(dx * A_flow), fluid_(fluid), recon_(&recon), model_(&model),
-      props_(N), R_face_(N + 1),
+      momentum_(&momentum), critical_flow_(critical_flow),
+      props_(N), rho_face_(N + 1), R_face_(N + 1),
       c_prime_(N), d_prime_(N)
 {
     if (N < 1)       throw std::invalid_argument("N must be >= 1");
@@ -61,19 +81,39 @@ TwoPhaseSolver::TwoPhaseSolver(int N, double dx, double A_flow, double D_h,
 }
 
 // ---------------------------------------------------------------------------
-// Helper
+// Helpers
 // ---------------------------------------------------------------------------
 
 MeshParams TwoPhaseSolver::mesh_params() const {
     return {n_, dx_, A_, D_h_, f_D_, V_};
 }
 
+void TwoPhaseSolver::compute_face_densities(
+    const SolverState& /*state*/,
+    const BoundaryConditions& bc) const
+{
+    // Face 0 (inlet)
+    if (bc.bc_type_in == BCType::WALL) {
+        rho_face_[0] = props_[0].rho;
+    } else {
+        double rho_in = fluid_.evaluate(bc.p_in, bc.h_in).rho;
+        rho_face_[0] = 0.5 * (rho_in + props_[0].rho);
+    }
+
+    // Interior faces
+    for (int i = 1; i < n_; ++i) {
+        rho_face_[i] = 0.5 * (props_[i - 1].rho + props_[i].rho);
+    }
+
+    // Face N (outlet)
+    rho_face_[n_] = props_[n_ - 1].rho;
+}
+
 // ---------------------------------------------------------------------------
-// Thomas algorithm (shared infrastructure — model-independent)
+// Thomas algorithm
 // ---------------------------------------------------------------------------
 
 void TwoPhaseSolver::solve_tridiagonal(std::vector<double>& p) const {
-    // Forward sweep
     c_prime_[0] = tri_.c[0] / tri_.b[0];
     d_prime_[0] = tri_.d[0] / tri_.b[0];
 
@@ -83,7 +123,6 @@ void TwoPhaseSolver::solve_tridiagonal(std::vector<double>& p) const {
         d_prime_[i] = (tri_.d[i] - tri_.a[i] * d_prime_[i - 1]) / denom;
     }
 
-    // Back substitution
     p[n_ - 1] = d_prime_[n_ - 1];
     for (int i = n_ - 2; i >= 0; --i) {
         p[i] = d_prime_[i] - c_prime_[i] * p[i + 1];
@@ -109,25 +148,59 @@ void TwoPhaseSolver::step(SolverState& state,
     // 1. Evaluate properties at old state
     model_->evaluate_properties(state, fluid_, props_);
 
-    // 2. Compute density-dependent face resistances
-    model_->compute_face_resistance(state, bc, fluid_, mesh, props_, R_face_);
+    // 2. Compute face densities
+    compute_face_densities(state, bc);
 
-    // 3. Assemble and solve pressure system
-    model_->assemble_pressure_system(state, bc, mesh, props_, R_face_, dt, tri_);
-    solve_tridiagonal(state.p);
+    // 3. Critical flow check (if break BC at outlet)
+    CriticalFlowResult cf_result{};
+    if (bc.bc_type_out == BCType::BREAK && critical_flow_) {
+        int last = n_ - 1;
+        double h_mix = state.h_l.empty() ? 0.0 :
+            (state.alpha.empty()
+                ? state.h_l[last]
+                : (1.0 - state.alpha[last]) * state.h_l[last]
+                  + state.alpha[last] * (state.h_v.empty()
+                      ? state.h_l[last] : state.h_v[last]));
 
-    // Pressure floor: prevent sub-triple-point pressures that cause
-    // property evaluation failures. The IAPWS-IF97 triple point is
-    // 611.657 Pa; we use 700 Pa with a small margin.
-    constexpr double p_floor = 700.0;  // Pa (just above triple point)
-    for (int i = 0; i < n_; ++i) {
-        if (state.p[i] < p_floor) state.p[i] = p_floor;
+        // Pre-compute momentum estimate at outlet (what mdot would be
+        // without critical flow limit) for the choke check.
+        double beta = dt * mesh.A_flow / mesh.dx;
+        double fric_out = 0.0;
+        if (rho_face_[n_] > 0.01) {
+            fric_out = mesh.f_D * mesh.dx / (2.0 * mesh.D_h)
+                     * std::abs(state.mdot[n_]) * state.mdot[n_]
+                     / (rho_face_[n_] * mesh.A_flow * mesh.A_flow);
+        }
+        double mdot_mom_est = state.mdot[n_]
+            + beta * (state.p[last] - bc.p_out) - dt * fric_out;
+
+        cf_result = critical_flow_->evaluate(
+            state.p[last], h_mix,
+            props_[last].rho, props_[last].drho_dp_h,
+            bc.p_out, mesh.A_flow, bc.break_area_fraction,
+            mdot_mom_est);
     }
 
-    // 4. Update face velocities/flows from new pressures
-    model_->update_velocities(state, bc, mesh, R_face_);
+    // 4. Assemble pressure system (momentum model handles algebraic vs inertial)
+    momentum_->assemble_pressure_system(
+        state, bc, mesh, props_, rho_face_, dt,
+        *model_, fluid_, tri_,
+        cf_result.is_choked ? &cf_result : nullptr);
 
-    // CFL check (explicit transport stability)
+    // 5. Solve tridiagonal + pressure bounds
+    solve_tridiagonal(state.p);
+    constexpr double p_floor   = 700.0;      // above triple point (611 Pa)
+    constexpr double p_ceiling = 21.0e6;     // below critical point (22.064 MPa)
+    for (int i = 0; i < n_; ++i) {
+        state.p[i] = std::clamp(state.p[i], p_floor, p_ceiling);
+    }
+
+    // 6. Update velocities (momentum model handles algebraic vs inertial)
+    momentum_->update_velocities(
+        state, bc, mesh, rho_face_, dt, *model_,
+        cf_result.is_choked ? &cf_result : nullptr);
+
+    // CFL check
     if (!cfl_warned_ && !state.mdot.empty()) {
         double dt_cfl = 1e30;
         for (int i = 0; i < n_; ++i) {
@@ -147,12 +220,12 @@ void TwoPhaseSolver::step(SolverState& state,
         }
     }
 
-    // 5. Explicit transport update
+    // 7. Transport update (FlowModel handles equation-set-specific transport)
     model_->update_transport(state, p_old, bc, mesh, props_, *recon_, dt, q_wall);
 }
 
 // ---------------------------------------------------------------------------
-// Legacy step — wraps new step for backward compatibility
+// Legacy step — wraps new step
 // ---------------------------------------------------------------------------
 
 void TwoPhaseSolver::step(std::vector<double>& p,
@@ -168,17 +241,14 @@ void TwoPhaseSolver::step(std::vector<double>& p,
     if (q_wall && static_cast<int>(q_wall->size()) != n_)
         throw std::invalid_argument("q_wall size mismatch");
 
-    // Convert legacy types to new types
     SolverState state = model_->make_state(p, h, mdot);
     BoundaryConditions new_bc;
     new_bc.p_in  = bc.p_in;
     new_bc.p_out = bc.p_out;
     new_bc.h_in  = bc.h_in;
 
-    // Delegate
     step(state, new_bc, dt, q_wall);
 
-    // Copy back
     p    = state.p;
     h    = state.h_l;
     mdot = state.mdot;

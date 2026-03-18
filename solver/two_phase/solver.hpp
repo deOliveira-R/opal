@@ -7,15 +7,17 @@
  *   Cell faces   : mdot[0..N]              (mass flow rate)
  *
  * One timestep (semi-implicit, operator-split):
- *   1. Evaluate properties at old state → rho, drho_dp_h, drho_dh_p per cell
- *   2. Compute face resistances (density-dependent friction)
- *   3. Implicit pressure: tridiagonal system with variable coefficients
- *   4. Algebraic flows from new pressures
- *   5. Explicit enthalpy update (donor-cell upwind, forward Euler)
+ *   1. Evaluate properties at old state
+ *   2. Compute face densities
+ *   3. Assemble pressure system (algebraic or inertial momentum)
+ *   4. Solve tridiagonal pressure system
+ *   5. Update face flows (algebraic or inertial momentum)
+ *   6. Explicit transport update (enthalpy, void fraction, etc.)
  *
- * Phase 3 architecture: the solver delegates equation-set-specific work to
- * a FlowModel (strategy pattern). The default is HEMModel for backward
- * compatibility. All original API signatures are preserved.
+ * Strategies:
+ *   FlowModel     — equation set (HEM, 5-eq, etc.)
+ *   MomentumModel — momentum treatment (algebraic or inertial)
+ *   CriticalFlowModel — choked flow at break (optional)
  *
  * Thread safety: NOT thread-safe per instance.
  */
@@ -24,6 +26,8 @@
 #include "reconstruction.hpp"
 #include "flow_model.hpp"
 #include "hem_model.hpp"
+#include "momentum.hpp"
+#include "critical_flow.hpp"
 
 #include <vector>
 #include <stdexcept>
@@ -39,7 +43,7 @@ struct TwoPhaseBCs {
 class TwoPhaseSolver {
 public:
     /**
-     * Legacy constructors (backward compatible — use HEMModel internally).
+     * Legacy constructors (backward compatible — algebraic momentum, no critical flow).
      */
     TwoPhaseSolver(int N, double dx, double A_flow, double D_h,
                    double f_D, const FluidProperties& fluid);
@@ -49,7 +53,7 @@ public:
                    const FaceReconstruction& recon);
 
     /**
-     * New constructor with explicit FlowModel selection.
+     * Constructor with FlowModel selection (algebraic momentum).
      */
     TwoPhaseSolver(int N, double dx, double A_flow, double D_h,
                    double f_D, const FluidProperties& fluid,
@@ -57,8 +61,17 @@ public:
                    const FlowModel& model);
 
     /**
+     * Full constructor with all strategies.
+     */
+    TwoPhaseSolver(int N, double dx, double A_flow, double D_h,
+                   double f_D, const FluidProperties& fluid,
+                   const FaceReconstruction& recon,
+                   const FlowModel& model,
+                   const MomentumModel& momentum,
+                   const CriticalFlowModel* critical_flow = nullptr);
+
+    /**
      * Legacy step — operates on separate p, h, mdot arrays.
-     * Delegates to FlowModel internally.
      */
     void step(std::vector<double>& p,
               std::vector<double>& h,
@@ -98,23 +111,29 @@ public:
 private:
     int    n_;
     double dx_, A_, D_h_, f_D_;
-    double V_;   // = dx * A (cell volume)
+    double V_;
     const FluidProperties& fluid_;
     const FaceReconstruction* recon_;
     const FlowModel* model_;
+    const MomentumModel* momentum_;
+    const CriticalFlowModel* critical_flow_;
 
     static const DonorCell default_donor_cell_;
     static const HEMModel default_hem_model_;
+    static const AlgebraicMomentum default_algebraic_momentum_;
 
     MeshParams mesh_params() const;
 
-    // Scratch arrays (mutable for logical-const step/solve)
+    // Scratch arrays
     mutable std::vector<FluidProps> props_;
+    mutable std::vector<double>     rho_face_;
     mutable std::vector<double>     R_face_;
     mutable TridiagCoeffs           tri_;
-    mutable std::vector<double>     c_prime_, d_prime_;  // Thomas scratch
+    mutable std::vector<double>     c_prime_, d_prime_;
     mutable bool cfl_warned_ = false;
 
+    void compute_face_densities(const SolverState& state,
+                                const BoundaryConditions& bc) const;
     void solve_tridiagonal(std::vector<double>& p) const;
 };
 

@@ -10,12 +10,13 @@
  */
 
 #include "properties.hpp"
+#include "phasic_properties.hpp"
 #include <cmath>
 #include <cstdio>
 
 namespace opal {
 
-class IAPWSIF97Properties : public FluidProperties {
+class IAPWSIF97Properties : public FluidProperties, public PhasicProperties {
 public:
 
     // =====================================================================
@@ -450,6 +451,52 @@ public:
         }
 
         return fp;
+    }
+
+    // =====================================================================
+    // PhasicProperties interface
+    // =====================================================================
+
+    PhasicProps evaluate_phasic(double p) const override {
+        PhasicProps pp{};
+        double Ts = T_sat(p);
+        pp.rho_l       = rho_f(p);
+        pp.rho_v       = rho_g(p);
+        pp.h_sat_l     = h_f(p);
+        pp.h_sat_v     = h_g(p);
+        pp.T_sat       = Ts;
+        // Pressure derivatives via finite difference (±500 Pa)
+        pp.drho_l_dp   = (rho_f(p + 500.0) - rho_f(p - 500.0)) / 1000.0;
+        pp.drho_v_dp   = (rho_g(p + 500.0) - rho_g(p - 500.0)) / 1000.0;
+        pp.dh_sat_l_dp = (h_f(p + 500.0) - h_f(p - 500.0)) / 1000.0;
+        pp.dh_sat_v_dp = (h_g(p + 500.0) - h_g(p - 500.0)) / 1000.0;
+        // cp from Gibbs function
+        double pi1  = p / p_star_R1;
+        double tau1 = T_star_R1 / Ts;
+        pp.cp_l = -R * tau1 * tau1 * g_tautau_R1(pi1, tau1);
+        double pi2  = p / p_star_R2;
+        double tau2 = T_star_R2 / Ts;
+        pp.cp_v = -R * tau2 * tau2 * g_tautau_tot_R2(pi2, tau2);
+        pp.sigma = 0.0728 * std::pow(1.0 - Ts / Tc, 1.256);  // IAPWS surface tension
+        return pp;
+    }
+
+    double rho_liquid(double p, double h_l) const override {
+        double T = T_ph_R1(p, h_l);
+        return rho_pT_R1(p, T);
+    }
+
+    double rho_vapor(double p, double h_v) const override {
+        double T = T_ph_R2(p, h_v);
+        return rho_pT_R2(p, T);
+    }
+
+    double T_liquid(double p, double h_l) const override {
+        return T_ph_R1(p, h_l);
+    }
+
+    double T_vapor(double p, double h_v) const override {
+        return T_ph_R2(p, h_v);
     }
 };
 
