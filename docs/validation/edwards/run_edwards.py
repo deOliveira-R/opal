@@ -94,8 +94,30 @@ def step_edwards(p, h, mdot, dt):
     for i in range(1, N + 1):
         fric[i] = f_D * dx / (2 * D_h) * abs(mdot_old[i]) * mdot_old[i] / (rho_face[i] * A_flow**2)
 
-    # 3. Implicit pressure solve with inertial momentum coupling
-    # beta = dt * A / dx (uniform coupling coefficient from inertial momentum)
+    # 3. Check if outlet will be choked (using old-time properties)
+    # Use a simple critical flow model that blends between subcooled
+    # (frozen) and HEM (equilibrium) based on local void fraction.
+    # At very low quality, HEM underestimates the sound speed severely.
+    rho_N = props[N-1].rho
+    drho_dp_N = props[N-1].drho_dp_h
+    if drho_dp_N > 0:
+        c_sound_hem = (1.0 / (rho_N * drho_dp_N)) ** 0.5
+    else:
+        c_sound_hem = 1200.0
+
+    # Subcooled sound speed (frozen): use single-phase compressibility
+    # For water at typical conditions: c ~ 1000-1200 m/s
+    # Approximate: c_frozen = min(1200, c_hem) but at least 50 m/s
+    c_sound = max(c_sound_hem, 50.0)  # floor at 50 m/s to avoid HEM collapse
+
+    C_d = geom["break_flow_area_fraction"]
+    mdot_critical = C_d * A_flow * rho_N * c_sound
+
+    # Will the momentum equation give more than critical?
+    mdot_mom_estimate = mdot_old[N] + (dt * A_flow / dx) * (p_old[N-1] - p_atm) - dt * fric[N]
+    outlet_choked = (mdot_mom_estimate > mdot_critical) and (mdot_critical > 0)
+
+    # 3b. Implicit pressure solve with inertial momentum coupling
     beta = dt * A_flow / dx
 
     a = np.zeros(N)
@@ -108,7 +130,12 @@ def step_edwards(p, h, mdot, dt):
 
         # Wall BC at face 0: no left connection for cell 0
         beta_left  = 0.0 if i == 0 else beta
-        beta_right = beta
+
+        # Choked outlet: face N decouples from downstream pressure
+        if i == N - 1 and outlet_choked:
+            beta_right = 0.0  # no pressure coupling through choked face
+        else:
+            beta_right = beta
 
         a[i] = -beta_left if i > 0 else 0.0
         c[i] = -beta_right if i < N - 1 else 0.0
@@ -116,13 +143,17 @@ def step_edwards(p, h, mdot, dt):
         d[i] = alpha_i * p_old[i]
 
         # RHS: old-time mass flux imbalance + friction correction
-        # From substituting mdot_new = mdot_old + dt*A/dx*(p_left - p_right) - dt*fric
-        # into mass conservation
         d[i] += (mdot_old[i] - mdot_old[i+1]) - dt * (fric[i] - fric[i+1])
 
-        # Pressure BC at outlet (face N, cell N-1)
+        # Boundary terms
         if i == N - 1:
-            d[i] += beta_right * p_atm
+            if outlet_choked:
+                # Choked: outlet flux is fixed at mdot_critical
+                # Mass balance for last cell: accumulation = mdot[N-1] - mdot_critical
+                # The mdot_old[N] in the RHS should be replaced by mdot_critical
+                d[i] += (mdot_old[N] - mdot_critical)  # correction for choked flow
+            else:
+                d[i] += beta_right * p_atm
 
     # Thomas algorithm
     c_p = np.zeros(N)
@@ -143,8 +174,25 @@ def step_edwards(p, h, mdot, dt):
     for i in range(1, N):
         mdot[i] = mdot_old[i] + beta * (p[i-1] - p[i]) - dt * fric[i]
 
-    # Outlet face
-    mdot[N] = mdot_old[N] + beta * (p[N-1] - p_atm) - dt * fric[N]
+    # Outlet face — with critical flow limiter
+    mdot_momentum = mdot_old[N] + beta * (p[N-1] - p_atm) - dt * fric[N]
+
+    # Critical flow (same model as pressure solve)
+    rho_N = props[N-1].rho
+    drho_dp_N = props[N-1].drho_dp_h
+    if drho_dp_N > 0:
+        c_sound_hem = (1.0 / (rho_N * drho_dp_N)) ** 0.5
+    else:
+        c_sound_hem = 1200.0
+    c_sound = max(c_sound_hem, 50.0)
+    C_d = geom["break_flow_area_fraction"]
+    mdot_critical = C_d * A_flow * rho_N * c_sound
+
+    # Critical flow only limits positive outflow (not inflow)
+    if mdot_momentum > 0:
+        mdot[N] = min(mdot_momentum, mdot_critical)
+    else:
+        mdot[N] = mdot_momentum
 
     # 5. Enthalpy update (donor-cell, forward Euler)
     for i in range(N):
