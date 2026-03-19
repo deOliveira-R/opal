@@ -32,6 +32,57 @@ struct CriticalFlowResult {
     bool   is_choked = false;  ///< True if outlet is choked
 };
 
+// ===========================================================================
+// Friction model — pluggable wall friction for inertial momentum.
+// ===========================================================================
+
+/**
+ * Abstract friction model.
+ *
+ * Computes per-face friction force from old-time flows. Different
+ * implementations: single-phase Darcy-Weisbach, two-phase multipliers
+ * (Martinelli-Nelson, Friedel, Lockhart-Martinelli), etc.
+ */
+struct FrictionModel {
+    virtual ~FrictionModel() = default;
+
+    /// Compute friction force at each face.
+    /// fric[i] has units of [N/m²] (momentum flux).
+    virtual void compute(
+        const SolverState& state,
+        const MeshParams& mesh,
+        const std::vector<double>& rho_face,
+        std::vector<double>& fric) const = 0;
+};
+
+/**
+ * Darcy-Weisbach single-phase friction.
+ *
+ *   fric[i] = (f_D · dx) / (2 · D_h) · |mdot| · mdot / (ρ_face · A²)
+ *
+ * Uses the constant Darcy factor f_D from MeshParams.
+ */
+class DarcyFriction : public FrictionModel {
+public:
+    void compute(
+        const SolverState& state,
+        const MeshParams& mesh,
+        const std::vector<double>& rho_face,
+        std::vector<double>& fric) const override
+    {
+        int N = mesh.N;
+        double geom = mesh.f_D * mesh.dx / (2.0 * mesh.D_h);
+        double A2 = mesh.A_flow * mesh.A_flow;
+
+        for (int i = 0; i <= N; ++i) {
+            if (rho_face[i] > 0.01) {
+                fric[i] = geom * std::abs(state.mdot[i]) * state.mdot[i]
+                        / (rho_face[i] * A2);
+            }
+        }
+    }
+};
+
 /**
  * Abstract momentum model.
  */
@@ -155,6 +206,12 @@ private:
  */
 class InertialMomentum : public MomentumModel {
 public:
+    /// Default: uses Darcy-Weisbach friction.
+    InertialMomentum() : friction_(default_friction()) {}
+
+    /// Explicit friction model injection.
+    explicit InertialMomentum(const FrictionModel& friction) : friction_(friction) {}
+
     const char* name() const override { return "inertial"; }
 
     void assemble_pressure_system(
@@ -181,7 +238,7 @@ public:
         bool outlet_choked = cf && cf->is_choked;
 
         std::vector<double> fric(N + 1, 0.0);
-        compute_friction(state, mesh, rho_face, fric);
+        friction_.compute(state, mesh, rho_face, fric);
 
         for (int i = 0; i < N; ++i) {
             double alpha_coeff = mesh.V * props[i].drho_dp_h / dt;
@@ -241,7 +298,7 @@ public:
         bool outlet_wall = (pbc_out.type == FacePressureBC::ZERO_FLUX);
 
         std::vector<double> fric(N + 1, 0.0);
-        compute_friction(state, mesh, rho_face, fric);
+        friction_.compute(state, mesh, rho_face, fric);
 
         std::vector<double> mdot_old = state.mdot;
 
@@ -280,24 +337,11 @@ public:
     }
 
 private:
-    /// Compute friction force per face from old-time flows.
-    /// fric[i] = f_D * dx / (2 * D_h) * |mdot|*mdot / (rho_face * A^2)
-    void compute_friction(
-        const SolverState& state,
-        const MeshParams& mesh,
-        const std::vector<double>& rho_face,
-        std::vector<double>& fric) const
-    {
-        int N = mesh.N;
-        double geom = mesh.f_D * mesh.dx / (2.0 * mesh.D_h);
-        double A2 = mesh.A_flow * mesh.A_flow;
+    const FrictionModel& friction_;
 
-        for (int i = 0; i <= N; ++i) {
-            if (rho_face[i] > 0.01) {
-                fric[i] = geom * std::abs(state.mdot[i]) * state.mdot[i]
-                        / (rho_face[i] * A2);
-            }
-        }
+    static const DarcyFriction& default_friction() {
+        static const DarcyFriction instance;
+        return instance;
     }
 };
 

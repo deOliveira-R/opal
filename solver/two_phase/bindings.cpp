@@ -354,6 +354,12 @@ PYBIND11_MODULE(opal_two_phase, m) {
              py::arg("h_l") = 0.0, py::arg("h_v") = 0.0,
              "Time-ramped break: C_d ramps from 0 to C_d_final over t_open seconds");
 
+    // FrictionModel hierarchy -----------------------------------------------
+    py::class_<FrictionModel>(m, "FrictionModel");
+
+    py::class_<DarcyFriction, FrictionModel>(m, "DarcyFriction")
+        .def(py::init<>(), "Single-phase Darcy-Weisbach friction");
+
     // MomentumModel hierarchy ----------------------------------------------
     py::class_<MomentumModel>(m, "MomentumModel")
         .def_property_readonly("name", &MomentumModel::name);
@@ -362,7 +368,11 @@ PYBIND11_MODULE(opal_two_phase, m) {
         .def(py::init<>(), "Steady-state algebraic momentum: mdot = dp/R");
 
     py::class_<InertialMomentum, MomentumModel>(m, "InertialMomentum")
-        .def(py::init<>(), "Time-advanced inertial momentum for transients");
+        .def(py::init<>(), "Time-advanced inertial momentum (default Darcy friction)")
+        .def(py::init<const FrictionModel&>(),
+             py::arg("friction"),
+             py::keep_alive<1, 2>(),
+             "Time-advanced inertial momentum with custom friction model");
 
     // CriticalFlowModel hierarchy ------------------------------------------
     // CriticalFlowResult struct
