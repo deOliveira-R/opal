@@ -18,9 +18,10 @@ See `docs/architecture.md` Cardinal Rule.
 
 ### Implemented
 - `Pipes/` — 1D pipe components
-  - `Pipe1D.mo` — 3-equation HEM (mass, inertial momentum, energy)
-  - `Pipe1D_DriftFlux.mo` — 5-equation drift-flux (+ void, phasic energy, closures)
-  - Both: replaceable Medium, gravity, source terms, optional critical flow
+  - `PartialPipe1D.mo` — Base class: geometry, connectors, face densities, momentum (with Phi2), critical flow
+  - `Pipe1D.mo` — 3-equation HEM (extends PartialPipe1D + mixture energy)
+  - `Pipe1D_DriftFlux.mo` — 5-equation drift-flux (extends PartialPipe1D + phasic energy, closures)
+  - Concrete models provide: `rho_cell`, `Phi2`, `h_mix_outlet`, `rho_outlet`, properties, mass conservation, energy
 - `Media/` — Thermodynamic property packages
   - `PartialMedium.mo` — Abstract interface (rho_ph, drho_dp_h, drho_dh_p, T_ph, T_sat, h_f, h_g, h_fg, rho_f, rho_g, sigma)
   - `SimpleFluid.mo` — Linear verification fluid (hand-verifiable)

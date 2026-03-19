@@ -1,79 +1,37 @@
 within library.Pipes;
 model Pipe1D_DriftFlux
-  "1D pipe with 5-equation drift-flux model — two-phase with phasic energy"
+  "1D pipe with 5-equation drift-flux model — extends shared base class"
+  extends PartialPipe1D;
 
   // ═══════════════════════════════════════════════════════════════════
-  // Parameters
+  // Drift-flux specific parameters
   // ═══════════════════════════════════════════════════════════════════
-  parameter Integer N = 5 "Number of cells";
-  parameter Real L = 1.0 "Pipe length [m]";
-  parameter Real D = 0.1 "Inner diameter [m]";
-  parameter Real f_D = 0.02 "Darcy friction factor [-]";
-
-  // Derived geometry
-  parameter Real dx = L / N "Cell length [m]";
-  parameter Real A_flow = Modelica.Constants.pi / 4 * D^2 "Flow area [m^2]";
-  parameter Real D_h = D "Hydraulic diameter [m]";
-  parameter Real V_cell = dx * A_flow "Cell volume [m^3]";
-
-  // Initial conditions
-  parameter Real p_init = 10e6 "Initial pressure [Pa]";
   parameter Real h_l_init = 800e3 "Initial liquid enthalpy [J/kg]";
   parameter Real h_v_init = 2800e3 "Initial vapour enthalpy [J/kg]";
   parameter Real alpha_init = 1e-6 "Initial void fraction [-]";
-
-  // Wall heat (per cell)
-  parameter Real q_wall[N] = zeros(N) "Wall heat source per cell [W]";
-
-  // Gravity
-  parameter Real g_axial = 0.0
-    "Gravity projection on pipe axis [m/s^2]. Positive opposes positive flow (upward pipe).";
 
   // Closure parameters
   parameter Real H_i = 1e5 "Interfacial heat transfer coefficient [W/(m^3*K)]";
   parameter Real C_0 = 1.13 "Drift-flux distribution parameter [-]";
   parameter Real alpha_nucleation = 1e-3 "Nucleation onset void fraction [-]";
 
-  // Generic source terms (per cell/face)
-  parameter Real S_mass[N] = zeros(N) "Mass source per cell [kg/s]";
-  parameter Real S_momentum[N + 1] = zeros(N + 1) "Momentum source per face [N]";
+  // Generic source terms (phasic)
   parameter Real S_energy_l[N] = zeros(N) "Liquid energy source per cell [W]";
   parameter Real S_energy_v[N] = zeros(N) "Vapour energy source per cell [W]";
   parameter Real S_void[N] = zeros(N) "Vapour mass source per cell [kg/s]";
-
-  // Critical flow at outlet (Ransom-Trapp)
-  parameter Boolean use_critical_flow = false "Enable critical flow limiter at outlet";
-  parameter Real C_d = 1.0 "Break discharge coefficient [-]";
-  parameter Real x_trans = 0.10 "Quality transition for critical flow blend [-]";
-  parameter Real c_floor = 1200.0 "Minimum sound speed for critical flow [m/s]";
 
   // Two-phase friction multiplier
   parameter Boolean use_two_phase_friction = false "Enable Martinelli-Nelson friction multiplier";
   parameter Real Phi2_max = 20.0 "Maximum two-phase friction multiplier [-]";
 
   // ═══════════════════════════════════════════════════════════════════
-  // Replaceable medium
+  // 5-equation state variables — staggered mesh
+  //   Cell centres: p[1..N] (inherited), alpha[1..N], h_l[1..N], h_v[1..N]
+  //   Cell faces:   mdot[1..N+1] (inherited)
   // ═══════════════════════════════════════════════════════════════════
-  replaceable package Medium = library.Media.SimpleFluid
-    constrainedby library.Media.PartialMedium
-    annotation(choicesAllMatching=true);
-
-  // ═══════════════════════════════════════════════════════════════════
-  // Connectors
-  // ═══════════════════════════════════════════════════════════════════
-  library.Connectors.FluidPort port_a "Inlet (face 0)";
-  library.Connectors.FluidPort port_b "Outlet (face N)";
-
-  // ═══════════════════════════════════════════════════════════════════
-  // State variables — staggered mesh, 5 equations per cell
-  //   Cell centres: p[1..N], alpha[1..N], h_l[1..N], h_v[1..N]
-  //   Cell faces:   mdot[1..N+1]
-  // ═══════════════════════════════════════════════════════════════════
-  Real p[N](each start = p_init, each fixed = true) "Cell pressure [Pa]";
   Real alpha[N](each start = alpha_init, each fixed = true) "Void fraction [-]";
   Real h_l[N](each start = h_l_init, each fixed = true) "Liquid enthalpy [J/kg]";
   Real h_v[N](each start = h_v_init, each fixed = true) "Vapour enthalpy [J/kg]";
-  Real mdot[N + 1](each start = 0, each fixed = true) "Face mass flow [kg/s]";
 
   // ═══════════════════════════════════════════════════════════════════
   // Phasic properties (per cell)
@@ -85,11 +43,6 @@ model Pipe1D_DriftFlux
   Real T_sat_cell[N] "Saturation temperature [K]";
   Real h_sat_l[N] "Sat. liquid enthalpy [J/kg]";
   Real h_sat_v[N] "Sat. vapour enthalpy [J/kg]";
-  Real drho_dp[N] "Mixture drho/dp at constant h [kg/(m^3*Pa)]";
-  Real drho_dh[N] "Mixture drho/dh at constant p [kg/(m^3*J/kg)]";
-
-  // Face densities
-  Real rho_face[N + 1] "Face density [kg/m^3]";
 
   // ═══════════════════════════════════════════════════════════════════
   // Interfacial closures (per cell)
@@ -104,24 +57,39 @@ model Pipe1D_DriftFlux
   Real V_gj[N] "Drift velocity [m/s]";
 
   // ═══════════════════════════════════════════════════════════════════
-  // Two-phase friction multiplier (per face)
-  // ═══════════════════════════════════════════════════════════════════
-  Real Phi2[N + 1] "Two-phase friction multiplier [-]";
-
-  // Critical flow (at outlet cell)
-  Real mdot_crit "Critical mass flow rate at outlet [kg/s]";
-
-  // ═══════════════════════════════════════════════════════════════════
-  // Donor-cell face enthalpies (mixture, for connector coupling)
+  // Mixture enthalpy (for connector coupling and critical flow)
   // ═══════════════════════════════════════════════════════════════════
   Real h_mix[N] "Mixture enthalpy [J/kg]";
 
 equation
   // ─────────────────────────────────────────────────────────────────
-  // Connector coupling
+  // Abstract variable bindings for base class
   // ─────────────────────────────────────────────────────────────────
-  mdot[1] = port_a.m_flow;
-  mdot[N + 1] = -port_b.m_flow;
+  for i in 1:N loop
+    rho_cell[i] = rho_m[i];
+  end for;
+
+  h_mix_outlet = h_mix[N];
+  rho_outlet = rho_m[N];
+
+  // ─────────────────────────────────────────────────────────────────
+  // Two-phase friction multiplier (per face)
+  // ─────────────────────────────────────────────────────────────────
+  for i in 1:N + 1 loop
+    if use_two_phase_friction then
+      Phi2[i] = min(library.Numerics.TwoPhaseFriction.martinelli_nelson(
+        if i <= N then alpha[i] else alpha[N],
+        if i <= N then rho_l[i] else rho_l[N],
+        if i <= N then rho_v[i] else rho_v[N]),
+        Phi2_max);
+    else
+      Phi2[i] = 1.0;
+    end if;
+  end for;
+
+  // ─────────────────────────────────────────────────────────────────
+  // Connector enthalpy outflow
+  // ─────────────────────────────────────────────────────────────────
   for i in 1:N loop
     h_mix[i] = (1 - alpha[i]) * h_l[i] + alpha[i] * h_v[i];
   end for;
@@ -144,15 +112,6 @@ equation
     drho_dp[i] = Medium.drho_dp_h(p[i], h_mix[i]);
     drho_dh[i] = Medium.drho_dh_p(p[i], h_mix[i]);
   end for;
-
-  // ─────────────────────────────────────────────────────────────────
-  // Face densities (arithmetic average)
-  // ─────────────────────────────────────────────────────────────────
-  rho_face[1] = rho_m[1];
-  for i in 2:N loop
-    rho_face[i] = 0.5 * (rho_m[i - 1] + rho_m[i]);
-  end for;
-  rho_face[N + 1] = rho_m[N];
 
   // ─────────────────────────────────────────────────────────────────
   // Interfacial closures
@@ -194,66 +153,6 @@ equation
                           + alpha[i] * der(h_v[i])))
       = mdot[i] - mdot[i + 1] + S_mass[i];
   end for;
-
-  // ─────────────────────────────────────────────────────────────────
-  // Two-phase friction multiplier (per face)
-  // ─────────────────────────────────────────────────────────────────
-  for i in 1:N + 1 loop
-    if use_two_phase_friction then
-      Phi2[i] = min(library.Numerics.TwoPhaseFriction.martinelli_nelson(
-        if i <= N then alpha[i] else alpha[N],
-        if i <= N then rho_l[i] else rho_l[N],
-        if i <= N then rho_v[i] else rho_v[N]),
-        Phi2_max);
-    else
-      Phi2[i] = 1.0;
-    end if;
-  end for;
-
-  // ─────────────────────────────────────────────────────────────────
-  // Critical flow at outlet (Ransom-Trapp, in Modelica)
-  // ─────────────────────────────────────────────────────────────────
-  mdot_crit = if use_critical_flow then
-    library.Numerics.CriticalFlow.ransom_trapp(
-      p[N], h_mix[N], rho_m[N], drho_dp[N],
-      Medium.h_f(p[N]), Medium.h_g(p[N]), Medium.rho_f(p[N]),
-      port_b.p, A_flow, C_d, x_trans, c_floor)
-    else 1e10;
-
-  // ─────────────────────────────────────────────────────────────────
-  // MOMENTUM (per face) — inertial + Darcy + two-phase friction + gravity
-  // ─────────────────────────────────────────────────────────────────
-  (rho_face[1] * dx / A_flow) * der(mdot[1])
-    = A_flow * (port_a.p - p[1])
-    - Phi2[1] * f_D * dx / (2 * D_h) * abs(mdot[1]) * mdot[1] / (rho_face[1] * A_flow^2)
-    - rho_face[1] * g_axial * A_flow * dx
-    + S_momentum[1];
-
-  for i in 2:N loop
-    (rho_face[i] * dx / A_flow) * der(mdot[i])
-      = A_flow * (p[i - 1] - p[i])
-      - Phi2[i] * f_D * dx / (2 * D_h) * abs(mdot[i]) * mdot[i] / (rho_face[i] * A_flow^2)
-      - rho_face[i] * g_axial * A_flow * dx
-      + S_momentum[i];
-  end for;
-
-  // Outlet face with optional critical flow limiter
-  if use_critical_flow then
-    (rho_face[N + 1] * dx / A_flow) * der(mdot[N + 1])
-      = A_flow * (p[N] - port_b.p)
-      - Phi2[N + 1] * f_D * dx / (2 * D_h) * abs(mdot[N + 1]) * mdot[N + 1] / (rho_face[N + 1] * A_flow^2)
-      - rho_face[N + 1] * g_axial * A_flow * dx
-      + S_momentum[N + 1]
-      - (if mdot[N + 1] > mdot_crit then
-           (mdot[N + 1] - mdot_crit) / (dx / A_flow)
-         else 0.0);
-  else
-    (rho_face[N + 1] * dx / A_flow) * der(mdot[N + 1])
-      = A_flow * (p[N] - port_b.p)
-      - Phi2[N + 1] * f_D * dx / (2 * D_h) * abs(mdot[N + 1]) * mdot[N + 1] / (rho_face[N + 1] * A_flow^2)
-      - rho_face[N + 1] * g_axial * A_flow * dx
-      + S_momentum[N + 1];
-  end if;
 
   // ─────────────────────────────────────────────────────────────────
   // VOID FRACTION (per cell) — vapour mass transport
@@ -324,12 +223,14 @@ equation
 
   annotation(Documentation(info="<html>
 <p><b>5-equation drift-flux model for two-phase pipe flow.</b></p>
+<p>Extends PartialPipe1D for shared geometry, momentum, and face density.
+Adds phasic state variables, interfacial closures, and two phasic energy equations.</p>
 <p>State variables per cell: pressure p, void fraction α, liquid enthalpy h_l,
 vapour enthalpy h_v. Mass flow at faces (staggered mesh).</p>
 <p>Equations:</p>
 <ol>
 <li>Mass conservation (mixture, pressure-linearised)</li>
-<li>Momentum (inertial, mixture, Darcy friction)</li>
+<li>Momentum (inertial, mixture, Darcy friction — inherited from base)</li>
 <li>Void fraction transport (vapour mass with interfacial transfer Γ)</li>
 <li>Liquid energy (phasic, with interfacial HT and phase-change coupling)</li>
 <li>Vapour energy (phasic, with interfacial HT and phase-change coupling)</li>

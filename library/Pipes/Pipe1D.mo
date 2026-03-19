@@ -1,78 +1,26 @@
 within library.Pipes;
 model Pipe1D
-  "1D pipe with inertial momentum, staggered mesh, replaceable medium"
+  "1D pipe with HEM (3-equation) — extends shared base class"
+  extends PartialPipe1D;
 
   // ═══════════════════════════════════════════════════════════════════
-  // Parameters
+  // HEM-specific parameters
   // ═══════════════════════════════════════════════════════════════════
-  parameter Integer N = 5 "Number of cells";
-  parameter Real L = 1.0 "Pipe length [m]";
-  parameter Real D = 0.1 "Inner diameter [m]";
-  parameter Real f_D = 0.02 "Darcy friction factor [-]";
-
-  // Derived geometry
-  parameter Real dx = L / N "Cell length [m]";
-  parameter Real A_flow = Modelica.Constants.pi / 4 * D^2 "Flow area [m^2]";
-  parameter Real D_h = D "Hydraulic diameter [m]";
-  parameter Real V_cell = dx * A_flow "Cell volume [m^3]";
-
-  // Gravity
-  parameter Real g_axial = 0.0
-    "Gravity projection on pipe axis [m/s^2]. Positive opposes positive flow (upward pipe).";
-
-  // Initial conditions
-  parameter Real p_init = 10e6 "Initial pressure [Pa]";
   parameter Real h_init = 800e3 "Initial enthalpy [J/kg]";
 
-  // Wall heat (per cell)
-  parameter Real q_wall[N] = zeros(N) "Wall heat source per cell [W]";
-
-  // Generic source terms (per cell)
-  parameter Real S_mass[N] = zeros(N) "Mass source per cell [kg/s]";
-  parameter Real S_momentum[N + 1] = zeros(N + 1) "Momentum source per face [N]";
+  // Generic energy source term
   parameter Real S_energy[N] = zeros(N) "Energy source per cell [W]";
 
-  // Critical flow at outlet (Ransom-Trapp)
-  parameter Boolean use_critical_flow = false "Enable critical flow limiter at outlet";
-  parameter Real C_d = 1.0 "Break discharge coefficient [-]";
-  parameter Real x_trans = 0.10 "Quality transition for critical flow blend [-]";
-  parameter Real c_floor = 1200.0 "Minimum sound speed for critical flow [m/s]";
-
   // ═══════════════════════════════════════════════════════════════════
-  // Replaceable medium — swap SimpleFluid ↔ Water at system level
+  // HEM state variables — single mixture enthalpy per cell
   // ═══════════════════════════════════════════════════════════════════
-  replaceable package Medium = library.Media.SimpleFluid
-    constrainedby library.Media.PartialMedium
-    annotation(choicesAllMatching=true);
-
-  // ═══════════════════════════════════════════════════════════════════
-  // Connectors
-  // ═══════════════════════════════════════════════════════════════════
-  library.Connectors.FluidPort port_a "Inlet (face 0)";
-  library.Connectors.FluidPort port_b "Outlet (face N)";
-
-  // ═══════════════════════════════════════════════════════════════════
-  // State variables — staggered mesh
-  //   Cell centres: p[1..N], h[1..N]
-  //   Cell faces:   mdot[1..N+1]  (mdot[1]=inlet face, mdot[N+1]=outlet face)
-  // ═══════════════════════════════════════════════════════════════════
-  Real p[N](each start = p_init, each fixed = true) "Cell pressure [Pa]";
   Real h[N](each start = h_init, each fixed = true) "Cell enthalpy [J/kg]";
-  Real mdot[N + 1](each start = 0, each fixed = true) "Face mass flow [kg/s]";
 
   // ═══════════════════════════════════════════════════════════════════
-  // Property evaluation (per cell) — via replaceable Medium
+  // Property evaluation (per cell)
   // ═══════════════════════════════════════════════════════════════════
   Real rho[N] "Cell density [kg/m^3]";
-  Real drho_dp[N] "drho/dp at constant h [kg/(m^3*Pa)]";
-  Real drho_dh[N] "drho/dh at constant p [kg/(m^3*J/kg)]";
   Real T_cell[N] "Cell temperature [K] (diagnostic)";
-
-  // Critical flow variables (computed at outlet cell)
-  Real mdot_crit "Critical mass flow rate at outlet [kg/s]";
-
-  // Face densities (arithmetic average of adjacent cells)
-  Real rho_face[N + 1] "Face density for momentum equation [kg/m^3]";
 
   // ═══════════════════════════════════════════════════════════════════
   // Donor-cell face enthalpies
@@ -81,10 +29,22 @@ model Pipe1D
 
 equation
   // ─────────────────────────────────────────────────────────────────
-  // Connector-to-internal coupling
+  // Abstract variable bindings for base class
   // ─────────────────────────────────────────────────────────────────
-  mdot[1] = port_a.m_flow;
-  mdot[N + 1] = -port_b.m_flow;
+  for i in 1:N loop
+    rho_cell[i] = rho[i];
+  end for;
+
+  for i in 1:N + 1 loop
+    Phi2[i] = 1.0;  // no two-phase friction multiplier for HEM
+  end for;
+
+  h_mix_outlet = h[N];
+  rho_outlet = rho[N];
+
+  // ─────────────────────────────────────────────────────────────────
+  // Connector enthalpy outflow
+  // ─────────────────────────────────────────────────────────────────
   port_a.h_outflow = h[1];
   port_b.h_outflow = h[N];
 
@@ -97,15 +57,6 @@ equation
     drho_dh[i] = Medium.drho_dh_p(p[i], h[i]);
     T_cell[i] = Medium.T_ph(p[i], h[i]);
   end for;
-
-  // ─────────────────────────────────────────────────────────────────
-  // Face densities
-  // ─────────────────────────────────────────────────────────────────
-  rho_face[1] = rho[1];
-  for i in 2:N loop
-    rho_face[i] = 0.5 * (rho[i - 1] + rho[i]);
-  end for;
-  rho_face[N + 1] = rho[N];
 
   // ─────────────────────────────────────────────────────────────────
   // Donor-cell face enthalpies
@@ -127,60 +78,6 @@ equation
   end for;
 
   // ─────────────────────────────────────────────────────────────────
-  // MOMENTUM (per face) — inertial with Darcy friction + gravity
-  //
-  //   (rho_face * dx / A) * d(mdot)/dt
-  //     = A * (p_left - p_right)
-  //     - f_D * dx / (2*D_h) * |mdot|*mdot / (rho_face * A^2)
-  //     - rho_face * g_axial * A * dx        [hydrostatic head]
-  //     + S_momentum                          [external body force]
-  // ─────────────────────────────────────────────────────────────────
-  (rho_face[1] * dx / A_flow) * der(mdot[1])
-    = A_flow * (port_a.p - p[1])
-    - f_D * dx / (2 * D_h) * abs(mdot[1]) * mdot[1] / (rho_face[1] * A_flow^2)
-    - rho_face[1] * g_axial * A_flow * dx
-    + S_momentum[1];
-
-  for i in 2:N loop
-    (rho_face[i] * dx / A_flow) * der(mdot[i])
-      = A_flow * (p[i - 1] - p[i])
-      - f_D * dx / (2 * D_h) * abs(mdot[i]) * mdot[i] / (rho_face[i] * A_flow^2)
-      - rho_face[i] * g_axial * A_flow * dx
-      + S_momentum[i];
-  end for;
-
-  // ─────────────────────────────────────────────────────────────────
-  // Critical flow at outlet (Ransom-Trapp)
-  // ─────────────────────────────────────────────────────────────────
-  mdot_crit = if use_critical_flow then
-    library.Numerics.CriticalFlow.ransom_trapp(
-      p[N], h[N], rho[N], drho_dp[N],
-      Medium.h_f(p[N]), Medium.h_g(p[N]), Medium.rho_f(p[N]),
-      port_b.p, A_flow, C_d, x_trans, c_floor)
-    else 1e10;  // effectively no limit
-
-  // Outlet face momentum — with optional critical flow limiter
-  // When choked: mdot[N+1] is clamped to mdot_crit (if positive outflow)
-  if use_critical_flow then
-    // Critical flow: momentum drives mdot, but cannot exceed mdot_crit
-    (rho_face[N + 1] * dx / A_flow) * der(mdot[N + 1])
-      = A_flow * (p[N] - port_b.p)
-      - f_D * dx / (2 * D_h) * abs(mdot[N + 1]) * mdot[N + 1] / (rho_face[N + 1] * A_flow^2)
-      - rho_face[N + 1] * g_axial * A_flow * dx
-      + S_momentum[N + 1]
-      - (if mdot[N + 1] > mdot_crit then
-           (mdot[N + 1] - mdot_crit) / (dx / A_flow)
-         else 0.0);
-  else
-    // No critical flow: standard momentum equation
-    (rho_face[N + 1] * dx / A_flow) * der(mdot[N + 1])
-      = A_flow * (p[N] - port_b.p)
-      - f_D * dx / (2 * D_h) * abs(mdot[N + 1]) * mdot[N + 1] / (rho_face[N + 1] * A_flow^2)
-      - rho_face[N + 1] * g_axial * A_flow * dx
-      + S_momentum[N + 1];
-  end if;
-
-  // ─────────────────────────────────────────────────────────────────
   // ENERGY (per cell) — enthalpy form with pressure work
   // ─────────────────────────────────────────────────────────────────
   for i in 1:N loop
@@ -193,10 +90,11 @@ equation
   end for;
 
   annotation(Documentation(info="<html>
-<p><b>1D pipe with inertial momentum equation and replaceable medium.</b></p>
+<p><b>1D pipe with HEM (Homogeneous Equilibrium Model) — 3 equations per cell.</b></p>
+<p>Extends PartialPipe1D for shared geometry, momentum, and face density.
+Adds mixture enthalpy state, single energy equation, and donor-cell reconstruction.</p>
 <p>Staggered mesh: pressure and enthalpy at cell centres, mass flow at faces.</p>
 <p>Swap medium: <code>Pipe1D pipe(redeclare package Medium = library.Media.Water)</code></p>
-<p>This is the HEM (Homogeneous Equilibrium Model) variant. For multi-equation
-models (drift-flux, two-fluid), see Pipe1D_DriftFlux and Pipe1D_TwoFluid.</p>
+<p>For multi-equation models (drift-flux, two-fluid), see Pipe1D_DriftFlux.</p>
 </html>"));
 end Pipe1D;
