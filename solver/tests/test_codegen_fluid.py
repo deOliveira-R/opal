@@ -222,14 +222,11 @@ class TestL1Interface:
         assert hasattr(fp, 'T')
 
     def test_evaluate_phasic_returns_correct_attrs(self, mfp):
-        """evaluate_phasic() result has .T_sat, .h_sat_l, .h_sat_v, .rho_l, .rho_g."""
+        """evaluate_phasic() result has all required attributes including aliases."""
         pp = mfp.evaluate_phasic(10e6)
-        assert hasattr(pp, 'T_sat')
-        assert hasattr(pp, 'h_sat_l')
-        assert hasattr(pp, 'h_sat_v')
-        assert hasattr(pp, 'rho_l')
-        assert hasattr(pp, 'rho_g')
-        assert hasattr(pp, 'sigma')
+        for attr in ['T_sat', 'h_sat_l', 'h_sat_v', 'rho_l', 'rho_g',
+                     'rho_v', 'sigma', 'cp_l', 'cp_v', 'drho_l_dp', 'drho_v_dp']:
+            assert hasattr(pp, attr), f"PhasicProperties missing attribute: {attr}"
 
     def test_has_pressure_bounds(self, mfp):
         """ModelicaFluidPackage has p_min and p_max."""
@@ -354,6 +351,192 @@ class TestBuild:
         for sym in expected:
             assert sym in symbols or f'_{sym}' in symbols, \
                 f"Missing symbol: {sym}"
+
+
+# ============================================================================
+# QA Round 1 gap closure: rho_v alias, drho_l_dp, sigma, diagnostics,
+# off-reference derivatives, region boundaries, multi-step
+# ============================================================================
+
+class TestRhoVAlias:
+    """FINDING 1: rho_v alias on PhasicProperties."""
+
+    def test_rho_v_equals_rho_g(self, mfp):
+        """pp.rho_v must exist and equal pp.rho_g."""
+        pp = mfp.evaluate_phasic(10e6)
+        assert hasattr(pp, 'rho_v'), "PhasicProperties must have rho_v alias"
+        assert pp.rho_v == pp.rho_g
+
+    def test_rho_v_at_off_reference(self, mfp):
+        """rho_v alias works at non-reference pressure."""
+        pp = mfp.evaluate_phasic(12e6)
+        assert pp.rho_v == pytest.approx(pp.rho_g)
+        assert pp.rho_v > 0
+
+
+class TestPhasicDerivatives:
+    """FINDING 2: drho_l_dp and drho_v_dp via finite difference."""
+
+    def test_drho_l_dp_nonzero(self, mfp):
+        """drho_f/dp must be nonzero for SimpleFluid (rho_f has pressure dependence)."""
+        pp = mfp.evaluate_phasic(10e6)
+        # SimpleFluid: rho_f = 750 + 20*(p-p_ref)/p_ref → drho_f/dp = 20/p_ref = 2e-6
+        assert pp.drho_l_dp == pytest.approx(20.0 / 10e6, rel=0.01)
+
+    def test_drho_v_dp_nonzero(self, mfp):
+        """drho_g/dp must be nonzero for SimpleFluid."""
+        pp = mfp.evaluate_phasic(10e6)
+        # SimpleFluid: rho_g = 40 + 5*(p-p_ref)/p_ref → drho_g/dp = 5/p_ref = 5e-7
+        assert pp.drho_v_dp == pytest.approx(5.0 / 10e6, rel=0.01)
+
+    def test_drho_l_dp_at_off_reference(self, mfp):
+        """Derivative should be similar at different pressures (linear model)."""
+        pp8 = mfp.evaluate_phasic(8e6)
+        pp12 = mfp.evaluate_phasic(12e6)
+        assert pp8.drho_l_dp == pytest.approx(pp12.drho_l_dp, rel=0.01)
+
+
+class TestSigmaFallback:
+    """FINDING 3: sigma computed from SimpleFluid formula when not exported."""
+
+    def test_sigma_at_reference(self, mfp):
+        """sigma(10MPa) = 0.06 (SimpleFluid reference)."""
+        pp = mfp.evaluate_phasic(10e6)
+        assert pp.sigma == pytest.approx(0.06, abs=1e-10)
+
+    def test_sigma_varies_with_pressure(self, mfp):
+        """sigma must change with pressure (not a constant 0.06 everywhere)."""
+        pp8 = mfp.evaluate_phasic(8e6)
+        pp12 = mfp.evaluate_phasic(12e6)
+        # SimpleFluid: sigma = 0.06 - 0.04*(p-p_ref)/p_ref
+        # At 8MPa: p_hat = -0.2, sigma = 0.06 + 0.008 = 0.068
+        # At 12MPa: p_hat = 0.2, sigma = 0.06 - 0.008 = 0.052
+        assert pp8.sigma == pytest.approx(0.068, abs=1e-6)
+        assert pp12.sigma == pytest.approx(0.052, abs=1e-6)
+        assert pp8.sigma != pp12.sigma
+
+
+class TestDiagnosticFunctions:
+    """FINDING 5: quality_ph and region_ph exposed and working."""
+
+    def test_quality_subcooled(self, mfp):
+        """quality = 0 in subcooled region."""
+        assert mfp.quality_ph(10e6, 700e3) == pytest.approx(0.0)
+
+    def test_quality_superheated(self, mfp):
+        """quality = 1 in superheated region."""
+        assert mfp.quality_ph(10e6, 3000e3) == pytest.approx(1.0)
+
+    def test_quality_midpoint(self, mfp):
+        """quality = 0.5 at midpoint enthalpy."""
+        assert mfp.quality_ph(10e6, 1800e3) == pytest.approx(0.5)
+
+    def test_region_subcooled(self, mfp):
+        """region = 1 (subcooled)."""
+        assert mfp.region_ph(10e6, 700e3) == 1
+
+    def test_region_two_phase(self, mfp):
+        """region = 4 (two-phase)."""
+        assert mfp.region_ph(10e6, 1800e3) == 4
+
+    def test_region_superheated(self, mfp):
+        """region = 2 (superheated)."""
+        assert mfp.region_ph(10e6, 3000e3) == 2
+
+
+class TestOffReferenceDerivatives:
+    """MISSING: Derivatives at off-reference pressures in two-phase region."""
+
+    def test_drho_dp_two_phase_at_8MPa(self, mfp, cpp_fluid):
+        """drho_dp in two-phase at p=8MPa must match C++."""
+        fp_om = mfp.evaluate(8e6, 1800e3)
+        fp_cpp = cpp_fluid.evaluate(8e6, 1800e3)
+        assert fp_om.drho_dp_h == pytest.approx(fp_cpp.drho_dp_h, rel=1e-10)
+
+    def test_drho_dh_two_phase_at_12MPa(self, mfp, cpp_fluid):
+        """drho_dh in two-phase at p=12MPa must match C++."""
+        fp_om = mfp.evaluate(12e6, 1500e3)
+        fp_cpp = cpp_fluid.evaluate(12e6, 1500e3)
+        assert fp_om.drho_dh_p == pytest.approx(fp_cpp.drho_dh_p, rel=1e-10)
+
+    def test_drho_dp_two_phase_positive(self, mfp):
+        """drho/dp must be positive in two-phase (compressibility)."""
+        fp = mfp.evaluate(8e6, 1800e3)
+        assert fp.drho_dp_h > 0
+
+
+class TestRegionBoundaries:
+    """MISSING: Behavior exactly at h_f and h_g boundaries."""
+
+    def test_at_h_f_boundary(self, mfp, cpp_fluid):
+        """rho at h exactly equal to h_f matches C++."""
+        h_f = mfp.evaluate_phasic(10e6).h_sat_l  # 800e3
+        fp_om = mfp.evaluate(10e6, h_f)
+        fp_cpp = cpp_fluid.evaluate(10e6, h_f)
+        assert fp_om.rho == pytest.approx(fp_cpp.rho, rel=1e-12)
+
+    def test_at_h_g_boundary(self, mfp, cpp_fluid):
+        """rho at h exactly equal to h_g matches C++."""
+        h_g = mfp.evaluate_phasic(10e6).h_sat_v  # 2800e3
+        fp_om = mfp.evaluate(10e6, h_g)
+        fp_cpp = cpp_fluid.evaluate(10e6, h_g)
+        assert fp_om.rho == pytest.approx(fp_cpp.rho, rel=1e-12)
+
+
+class TestMultiStep:
+    """MISSING: Multi-step L2 test to catch cumulative drift."""
+
+    def test_100_steps_match(self, mfp, cpp_fluid):
+        """100 timesteps with both fluids — no cumulative drift."""
+        import numpy as np
+        from partitioner.model_spec import (
+            ExtractedModelSpec, GeometrySpec, ClosureSpec,
+            BoundarySpec, InitialConditions, SafetyThresholds,
+        )
+        from partitioner.parameterized_5eq_solver import Parameterized5EqSolver
+
+        spec = ExtractedModelSpec(
+            prefix="pipe",
+            model_type="drift_flux",
+            geometry=GeometrySpec(N=3, dx=1.0, A_flow=0.004, D_h=0.073,
+                                  f_D=0.02, V_cell=0.004, g_axial=0.0),
+            closures=ClosureSpec(H_i=1e5, C_0=1.13, alpha_nucleation=1e-3,
+                                 use_critical_flow=False, C_d=1.0, x_trans=0.1,
+                                 c_floor=1200.0, use_two_phase_friction=False,
+                                 Phi2_max=20.0),
+            boundary=BoundarySpec(inlet_type="wall", outlet_type="pressure",
+                                  p_out=101325.0, h_out=800e3),
+            ic=InitialConditions(p0=[10e6]*3, h0=[800e3]*3,
+                                 h_v0=[2800e3]*3, alpha0=[1e-6]*3,
+                                 mdot0=[0.0]*4),
+            thresholds=SafetyThresholds(),
+        )
+
+        solver1 = Parameterized5EqSolver(cpp_fluid, spec)
+        p1 = np.array([10e6, 10e6, 10e6])
+        a1 = np.array([1e-6, 1e-6, 1e-6])
+        hl1 = np.array([800e3, 800e3, 800e3])
+        hv1 = np.array([2800e3, 2800e3, 2800e3])
+        m1 = np.array([0.0, 0.0, 0.0, 0.0])
+
+        solver2 = Parameterized5EqSolver(mfp, spec)
+        p2 = np.array([10e6, 10e6, 10e6])
+        a2 = np.array([1e-6, 1e-6, 1e-6])
+        hl2 = np.array([800e3, 800e3, 800e3])
+        hv2 = np.array([2800e3, 2800e3, 2800e3])
+        m2 = np.array([0.0, 0.0, 0.0, 0.0])
+
+        dt = 1e-4
+        for _ in range(100):
+            solver1.step(p1, a1, hl1, hv1, m1, dt)
+            solver2.step(p2, a2, hl2, hv2, m2, dt)
+
+        np.testing.assert_allclose(p1, p2, rtol=1e-10,
+                                   err_msg="Pressure diverged after 100 steps")
+        np.testing.assert_allclose(hl1, hl2, rtol=1e-10,
+                                   err_msg="h_l diverged after 100 steps")
+        np.testing.assert_allclose(m1, m2, rtol=1e-10, atol=1e-15,
+                                   err_msg="mdot diverged after 100 steps")
 
 
 if __name__ == "__main__":
