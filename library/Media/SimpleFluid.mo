@@ -1,4 +1,4 @@
-within OPAL.library.Media;
+within library.Media;
 package SimpleFluid
   "Synthetic test fluid — linear properties for rigorous two-phase solver verification"
 
@@ -39,6 +39,7 @@ package SimpleFluid
     output Real T_val;
   algorithm
     T_val := T_sat_0 + T_sat_1 * (p - p_ref) / p_ref;
+    annotation(Inline=true);
   end T_sat;
 
   function h_f "Saturated liquid enthalpy [J/kg]"
@@ -46,6 +47,7 @@ package SimpleFluid
     output Real h_val;
   algorithm
     h_val := h_f_0 + h_f_1 * (p - p_ref) / p_ref;
+    annotation(Inline=true);
   end h_f;
 
   function h_g "Saturated vapour enthalpy [J/kg]"
@@ -53,6 +55,7 @@ package SimpleFluid
     output Real h_val;
   algorithm
     h_val := h_g_0 + h_g_1 * (p - p_ref) / p_ref;
+    annotation(Inline=true);
   end h_g;
 
   function h_fg "Latent heat [J/kg]"
@@ -60,6 +63,7 @@ package SimpleFluid
     output Real h_val;
   algorithm
     h_val := h_g(p) - h_f(p);
+    annotation(Inline=true);
   end h_fg;
 
   function rho_f "Saturated liquid density [kg/m^3]"
@@ -67,6 +71,7 @@ package SimpleFluid
     output Real rho_val;
   algorithm
     rho_val := rho_f_0 + rho_f_1 * (p - p_ref) / p_ref;
+    annotation(Inline=true);
   end rho_f;
 
   function rho_g "Saturated vapour density [kg/m^3]"
@@ -74,6 +79,7 @@ package SimpleFluid
     output Real rho_val;
   algorithm
     rho_val := rho_g_0 + rho_g_1 * (p - p_ref) / p_ref;
+    annotation(Inline=true);
   end rho_g;
 
   // =========================================================================
@@ -91,6 +97,7 @@ package SimpleFluid
     else
       region := 4;
     end if;
+    annotation(Inline=true);
   end region_ph;
 
   // =========================================================================
@@ -102,6 +109,7 @@ package SimpleFluid
     output Real x_val;
   algorithm
     x_val := (h - h_f(p)) / h_fg(p);
+    annotation(Inline=true);
   end quality_ph;
 
   function rho_ph_2phase "Two-phase mixture density [kg/m^3]"
@@ -114,6 +122,7 @@ package SimpleFluid
     Real rg  = rho_g(p);
   algorithm
     rho_val := 1.0 / (x / rg + (1.0 - x) / rf);
+    annotation(Inline=true);
   end rho_ph_2phase;
 
   // =========================================================================
@@ -133,6 +142,7 @@ package SimpleFluid
     else
       rho_val := rho_ph_2phase(p, h);
     end if;
+    annotation(Inline=true);
   end rho_ph;
 
   function T_ph "Temperature [K] from (p, h)"
@@ -149,6 +159,7 @@ package SimpleFluid
     else
       T_val := T_sat(p);
     end if;
+    annotation(Inline=true);
   end T_ph;
 
   // =========================================================================
@@ -217,6 +228,7 @@ package SimpleFluid
 
       val := -rho2 * dv_dp;
     end if;
+    annotation(Inline=true);
   end drho_dp_h;
 
   function drho_dh_p "Partial derivative drho/dh at constant p [kg/(m^3 * J/kg)]"
@@ -238,6 +250,7 @@ package SimpleFluid
       rho_mix := rho_ph_2phase(p, h);
       val     := -rho_mix * rho_mix * (1.0 / rg - 1.0 / rf) / hfgv;
     end if;
+    annotation(Inline=true);
   end drho_dh_p;
 
   // =========================================================================
@@ -255,6 +268,7 @@ package SimpleFluid
     else
       h_val := h_g(p) + cp_G * (T - T_s);
     end if;
+    annotation(Inline=true);
   end h_pT;
 
   function rho_pT "Density [kg/m^3] from (p, T)"
@@ -263,6 +277,7 @@ package SimpleFluid
     output Real rho_val;
   algorithm
     rho_val := rho_ph(p, h_pT(p, T));
+    annotation(Inline=true);
   end rho_pT;
 
   annotation(Documentation(info="<html>

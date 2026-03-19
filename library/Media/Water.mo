@@ -1,4 +1,4 @@
-within OPAL.library.Media;
+within library.Media;
 package Water "OPAL water medium — unified IAPWS-IF97 API with event-free region selection"
 
   // ---------------------------------------------------------------------------

@@ -1,4 +1,4 @@
-within OPAL.library.Media.IF97;
+within library.Media.IF97;
 package Constants "IAPWS-IF97 universal and region-specific constants"
   // --- Universal ---
   constant Real R = 461.526

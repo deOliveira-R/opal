@@ -1,4 +1,4 @@
-within OPAL.library.Media.IF97;
+within library.Media.IF97;
 package Region2 "IAPWS-IF97 Region 2 — superheated steam (T ∈ [273,1073] K, p ∈ [0,10] MPa)"
 
   // ---------------------------------------------------------------------------

@@ -1,4 +1,4 @@
-within OPAL.library.Media.IF97;
+within library.Media.IF97;
 package Saturation "IAPWS-IF97 Region 4 — saturation curve"
 
   // ---------------------------------------------------------------------------

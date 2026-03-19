@@ -1,4 +1,4 @@
-within OPAL.library.Media;
+within library.Media;
 package IF97 "IAPWS-IF97 industrial steam tables — pure Modelica polynomial arithmetic"
   annotation(Documentation(info="<html>
 <p>IAPWS-IF97 (Release 2007) implementation in pure Modelica.</p>

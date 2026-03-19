@@ -1,4 +1,4 @@
-within OPAL.library.Media.IF97;
+within library.Media.IF97;
 package Derivatives
   "Analytical thermodynamic derivatives needed by the semi-implicit pressure solver"
 

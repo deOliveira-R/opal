@@ -1,4 +1,4 @@
-within OPAL.library;
+within library;
 package Media "OPAL thermodynamic media — pure Modelica, no external C"
   annotation(Documentation(info="<html>
 <p>Two fluid packages for the OPAL solver:</p>

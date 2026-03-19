@@ -1,4 +1,4 @@
-within OPAL.library.Media.IF97;
+within library.Media.IF97;
 package Region1 "IAPWS-IF97 Region 1 — compressed liquid (T ∈ [273,623] K, p ∈ [0.6,100] MPa)"
 
   // ---------------------------------------------------------------------------
