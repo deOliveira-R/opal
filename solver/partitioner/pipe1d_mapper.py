@@ -13,6 +13,11 @@ The prefix (e.g., "pipe") is the component instance name in the system model.
 mdot[1] may be eliminated (dummyState) if connected to a ClosedEnd.
 
 Returns a Pipe1DGridSpec that the two-phase solver consumes.
+
+Factory functions:
+  solver_from_spec()          — Pipe1DGridSpec → TwoPhaseSolver
+  boundary_faces_from_spec()  — Pipe1DGridSpec → (bc_in, bc_out)
+  init_5eq_state()            — Pipe1DGridSpec + fluid → (p, alpha, h_l, h_v, mdot)
 """
 
 from __future__ import annotations
@@ -157,6 +162,106 @@ def map_pipe1d(es: "EquationSystem") -> Pipe1DGridSpec:
         inlet_closed=inlet_closed, outlet_closed=outlet_closed,
         p0=p0, h0=h0, mdot0=mdot0,
     )
+
+
+# ---------------------------------------------------------------------------
+# Factory functions: Pipe1DGridSpec → Solver construction
+# ---------------------------------------------------------------------------
+
+def solver_from_spec(spec, fluid, model, recon=None, momentum=None,
+                     critical_flow=None):
+    """Construct a TwoPhaseSolver from an extracted Pipe1DGridSpec.
+
+    The spec provides geometry (N, dx, A_flow, D_h, f_D).
+    Strategy objects (fluid, model, recon, momentum, critical_flow) are
+    the user's solver configuration — NOT extracted from the Modelica model.
+    """
+    import opal_two_phase as tp
+    return tp.TwoPhaseSolver(
+        spec.N, spec.dx, spec.A_flow, spec.D_h, spec.f_D,
+        fluid,
+        recon or tp.DonorCell(),
+        model,
+        momentum or tp.InertialMomentum(),
+        critical_flow,
+    )
+
+
+def boundary_faces_from_spec(spec, h_l, h_v, C_d=None):
+    """Map Pipe1DGridSpec BC flags to BoundaryFace strategy objects.
+
+    Args:
+        spec:  Extracted grid spec with inlet_closed, outlet_closed, p_out.
+        h_l:   Liquid enthalpy for BC ghost cells [J/kg].
+        h_v:   Vapor enthalpy for BC ghost cells [J/kg].
+        C_d:   Break discharge coefficient [-]. If provided and outlet is open,
+               creates a BreakFace instead of PressureFace.
+
+    Returns:
+        (bc_in, bc_out) tuple of BoundaryFace objects.
+    """
+    import opal_two_phase as tp
+
+    if spec.inlet_closed:
+        bc_in = tp.WallFace(h_l, h_v)
+    else:
+        bc_in = tp.PressureFace(spec.p_out, h_l, h_v, 0.0)  # TODO: p_in field
+
+    if spec.outlet_closed:
+        bc_out = tp.WallFace(h_l, h_v)
+    elif C_d is not None:
+        bc_out = tp.BreakFace(spec.p_out, C_d, h_l, h_v)
+    else:
+        bc_out = tp.PressureFace(spec.p_out, h_l, h_v, 0.0)
+
+    return bc_in, bc_out
+
+
+def init_5eq_state(spec, fluid):
+    """Initialize 5-equation state arrays from extracted HEM initial conditions.
+
+    The spec gives mixture enthalpy h0. For the 5-eq model we need
+    separate (alpha, h_l, h_v). Classification:
+      h < h_sat_l → subcooled: alpha=0, h_l=h, h_v=h_sat_v
+      h > h_sat_v → superheated: alpha=1, h_l=h_sat_l, h_v=h
+      otherwise   → two-phase: alpha from quality, h_l=h_sat_l, h_v=h_sat_v
+
+    Returns:
+        (p, alpha, h_l, h_v, mdot) as numpy arrays.
+    """
+    import numpy as np
+
+    N = spec.N
+    p     = np.array(spec.p0, dtype=float)
+    alpha = np.zeros(N)
+    h_l   = np.zeros(N)
+    h_v   = np.zeros(N)
+    mdot  = np.array(spec.mdot0, dtype=float)
+
+    for i in range(N):
+        pp = fluid.evaluate_phasic(p[i])
+        h = spec.h0[i]
+
+        if h <= pp.h_sat_l:
+            # Subcooled liquid
+            alpha[i] = 1e-6  # near-zero void for numerical stability
+            h_l[i] = h
+            h_v[i] = pp.h_sat_v
+        elif h >= pp.h_sat_v:
+            # Superheated vapor
+            alpha[i] = 1.0 - 1e-6
+            h_l[i] = pp.h_sat_l
+            h_v[i] = h
+        else:
+            # Two-phase: quality x = (h - h_f) / (h_g - h_f)
+            h_fg = pp.h_sat_v - pp.h_sat_l
+            x = (h - pp.h_sat_l) / h_fg if h_fg > 1.0 else 0.5
+            # Void fraction from quality (HEM: alpha = x*rho_l / (x*rho_l + (1-x)*rho_v))
+            alpha[i] = x * pp.rho_l / (x * pp.rho_l + (1 - x) * pp.rho_v)
+            h_l[i] = pp.h_sat_l
+            h_v[i] = pp.h_sat_v
+
+    return p, alpha, h_l, h_v, mdot
 
 
 # ---------------------------------------------------------------------------
