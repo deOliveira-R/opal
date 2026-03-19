@@ -177,7 +177,8 @@ PYBIND11_MODULE(opal_two_phase, m) {
         .def_readwrite("h_sat_v", &InterfacialState::h_sat_v)
         .def_readwrite("cp_l",    &InterfacialState::cp_l)
         .def_readwrite("sigma",   &InterfacialState::sigma)
-        .def_readwrite("D_h",     &InterfacialState::D_h);
+        .def_readwrite("D_h",     &InterfacialState::D_h)
+        .def_readwrite("g_mag",   &InterfacialState::g_mag);
 
     // ClosureResult struct (output from closures) -------------------------
     py::class_<ClosureResult>(m, "ClosureResult")
@@ -262,17 +263,18 @@ PYBIND11_MODULE(opal_two_phase, m) {
                 state.mdot  = to_vec(mdot);
 
                 auto p_old_vec = to_vec(p_old_arr);
-                MeshParams mesh{N, dx, A_flow, D_h, f_D, dx * A_flow};
+                MeshParams mesh{N, dx, A_flow, D_h, f_D, dx * A_flow, 9.81, 9.81};
                 std::vector<FluidProps> props(N);
                 static const DonorCell default_recon;
+                static const SolverNumerics default_numerics;
 
                 if (q_wall_obj.is_none()) {
                     self.update_transport(
-                        state, p_old_vec, tbc_in, mesh, props, default_recon, dt, nullptr);
+                        state, p_old_vec, tbc_in, mesh, props, default_recon, dt, nullptr, default_numerics);
                 } else {
                     auto q_v = to_vec(q_wall_obj.cast<py::array_t<double>>());
                     self.update_transport(
-                        state, p_old_vec, tbc_in, mesh, props, default_recon, dt, &q_v);
+                        state, p_old_vec, tbc_in, mesh, props, default_recon, dt, &q_v, default_numerics);
                 }
 
                 copy_back(alpha, state.alpha);
@@ -356,11 +358,26 @@ PYBIND11_MODULE(opal_two_phase, m) {
              py::arg("h_l") = 0.0, py::arg("h_v") = 0.0,
              "Time-ramped break: C_d ramps from 0 to C_d_final over t_open seconds");
 
+    // SolverNumerics --------------------------------------------------------
+    py::class_<SolverNumerics>(m, "SolverNumerics")
+        .def(py::init<>())
+        .def_readwrite("alpha_min",              &SolverNumerics::alpha_min)
+        .def_readwrite("rv_floor_frac",          &SolverNumerics::rv_floor_frac)
+        .def_readwrite("rv_floor_abs",           &SolverNumerics::rv_floor_abs)
+        .def_readwrite("alpha_nucleation_floor", &SolverNumerics::alpha_nucleation_floor)
+        .def_readwrite("m_phase_min",            &SolverNumerics::m_phase_min)
+        .def_readwrite("h_l_min",                &SolverNumerics::h_l_min)
+        .def_readwrite("h_v_max",                &SolverNumerics::h_v_max)
+        .def_readwrite("rho_face_min",           &SolverNumerics::rho_face_min);
+
     // FrictionModel hierarchy -----------------------------------------------
     py::class_<FrictionModel>(m, "FrictionModel");
 
     py::class_<DarcyFriction, FrictionModel>(m, "DarcyFriction")
-        .def(py::init<>(), "Single-phase Darcy-Weisbach friction");
+        .def(py::init<double>(),
+             py::arg("rho_face_min") = 0.01,
+             "Single-phase Darcy-Weisbach friction")
+        .def_property_readonly("rho_face_min", &DarcyFriction::rho_face_min);
 
     // MomentumModel hierarchy ----------------------------------------------
     py::class_<MomentumModel>(m, "MomentumModel")
@@ -456,6 +473,9 @@ PYBIND11_MODULE(opal_two_phase, m) {
         .def_property_readonly("D_h",    &TwoPhaseSolver::D_h)
         .def_property_readonly("f_D",    &TwoPhaseSolver::f_D)
         .def_property_readonly("V",      &TwoPhaseSolver::V)
+        .def("set_gravity", &TwoPhaseSolver::set_gravity,
+             py::arg("g_axial"), py::arg("g_mag"),
+             "Set gravity: g_axial = projection on pipe axis, g_mag = |g| for buoyancy")
 
         // step_5eq REMOVED — all callers migrated to step_bf
 

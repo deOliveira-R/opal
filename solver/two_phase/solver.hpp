@@ -79,11 +79,24 @@ public:
     double f_D()    const { return f_D_; }
     double V()      const { return V_; }
     const FlowModel& model() const { return *model_; }
+    const SolverNumerics& numerics() const { return numerics_; }
+
+    /// Set gravity for this pipe segment.
+    /// @param g_axial  Gravity projection on pipe axis [m/s²].
+    ///                 Positive = opposes positive flow direction (upward flow).
+    /// @param g_mag    |g⃗| for buoyancy correlations [m/s²].
+    void set_gravity(double g_axial, double g_mag) {
+        g_axial_ = g_axial;
+        g_mag_ = g_mag;
+    }
 
 private:
     int    n_;
     double dx_, A_, D_h_, f_D_;
     double V_;
+    double g_axial_ = 9.81;
+    double g_mag_   = 9.81;
+    SolverNumerics numerics_;
     const FluidPackage& fluid_;
     const FaceReconstruction* recon_;
     const FlowModel* model_;

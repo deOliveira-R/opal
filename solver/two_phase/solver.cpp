@@ -85,7 +85,7 @@ TwoPhaseSolver::TwoPhaseSolver(int N, double dx, double A_flow, double D_h,
 // ---------------------------------------------------------------------------
 
 MeshParams TwoPhaseSolver::mesh_params() const {
-    return {n_, dx_, A_, D_h_, f_D_, V_};
+    return {n_, dx_, A_, D_h_, f_D_, V_, g_axial_, g_mag_};
 }
 
 void TwoPhaseSolver::compute_face_densities(
@@ -195,7 +195,7 @@ void TwoPhaseSolver::step_internal(
 
         double beta = dt * mesh.A_flow / mesh.dx;
         double fric_out = 0.0;
-        if (rho_face_[n_] > 0.01) {
+        if (rho_face_[n_] > numerics_.rho_face_min) {
             fric_out = mesh.f_D * mesh.dx / (2.0 * mesh.D_h)
                      * std::abs(state.mdot[n_]) * state.mdot[n_]
                      / (rho_face_[n_] * mesh.A_flow * mesh.A_flow);
@@ -258,7 +258,7 @@ void TwoPhaseSolver::step_internal(
     }
 
     // 8. Transport update
-    model_->update_transport(state, p_old, tbc_in, mesh, props_, *recon_, dt, q_wall, sources);
+    model_->update_transport(state, p_old, tbc_in, mesh, props_, *recon_, dt, q_wall, numerics_, sources);
 }
 
 } // namespace opal

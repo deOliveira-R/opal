@@ -15,6 +15,7 @@
  */
 
 #include "solver_state.hpp"
+#include "solver_numerics.hpp"
 #include "boundary_conditions.hpp"
 #include "fluid_package.hpp"
 #include "reconstruction.hpp"
@@ -25,12 +26,16 @@ namespace opal {
 
 /// Mesh + geometry parameters passed to FlowModel methods.
 struct MeshParams {
-    int    N;       ///< Number of cells
-    double dx;      ///< Cell length [m]
-    double A_flow;  ///< Flow area [m^2]
-    double D_h;     ///< Hydraulic diameter [m]
-    double f_D;     ///< Darcy friction factor [-]
-    double V;       ///< Cell volume = dx * A_flow [m^3]
+    int    N;           ///< Number of cells
+    double dx;          ///< Cell length [m]
+    double A_flow;      ///< Flow area [m^2]
+    double D_h;         ///< Hydraulic diameter [m]
+    double f_D;         ///< Darcy friction factor [-]
+    double V;           ///< Cell volume = dx * A_flow [m^3]
+    double g_axial = 9.81;  ///< Gravity projection on pipe axis [m/s²]
+                             ///  Positive = opposes positive flow direction.
+                             ///  Vertical pipe + upward flow → g_axial = +9.81
+    double g_mag   = 9.81;  ///< |g⃗| for buoyancy correlations [m/s²]
 };
 
 /// Tridiagonal system coefficients (output from assemble_pressure_system).
@@ -130,6 +135,7 @@ public:
         const FaceReconstruction& recon,
         double dt,
         const std::vector<double>* q_wall,
+        const SolverNumerics& numerics,
         const SourceTerms* sources = nullptr) const = 0;
 
     /**

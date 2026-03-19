@@ -90,6 +90,7 @@ public:
         const FaceReconstruction& recon,
         double dt,
         const std::vector<double>* q_wall,
+        const SolverNumerics& numerics,
         const SourceTerms* sources = nullptr) const override;
 
     void pack_state(

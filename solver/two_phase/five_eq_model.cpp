@@ -142,6 +142,7 @@ void FiveEqModel::compute_phasic_state(
         is.cp_l   = pp.cp_l;
         is.sigma  = pp.sigma;
         is.D_h    = mesh.D_h;
+        is.g_mag  = mesh.g_mag;
 
         closure_results_[i] = closures_.compute(is);
         drift_results_[i]   = closures_.drift_flux(is);
@@ -325,6 +326,7 @@ void FiveEqModel::update_transport(
     const FaceReconstruction& recon,
     double dt,
     const std::vector<double>* q_wall,
+    const SolverNumerics& numerics,
     const SourceTerms* sources) const
 {
     int N = mesh.N;
@@ -400,7 +402,8 @@ void FiveEqModel::update_transport(
         // Floor at 1% of saturation density to avoid division by zero
         // while remaining physically reasonable across pressure range.
         double rv_new = phasic_.rho_vapor(state.p[i], state.h_v[i]);
-        double rv_floor = std::max(0.01 * phasic_props_[i].rho_v, 0.01);
+        double rv_floor = std::max(numerics.rv_floor_frac * phasic_props_[i].rho_v,
+                                   numerics.rv_floor_abs);
         if (rv_new < rv_floor) rv_new = rv_floor;
 
         double alpha_new = alpha_rho_v_new / rv_new;
@@ -410,7 +413,7 @@ void FiveEqModel::update_transport(
         // closure), enforce a minimum void fraction. Without this, advective
         // loss washes away the nucleation seed before flashing can grow it.
         if (cr.Gamma > 0.0) {
-            alpha_new = std::max(alpha_new, 1e-3);
+            alpha_new = std::max(alpha_new, numerics.alpha_nucleation_floor);
         }
 
         state.alpha[i] = alpha_new;
@@ -433,7 +436,7 @@ void FiveEqModel::update_transport(
 
         // --- Liquid enthalpy ---
         double m_l = (1.0 - al) * rl * mesh.V;
-        if (m_l <= 1e-12) {
+        if (m_l <= numerics.m_phase_min) {
             // Phase absent: reset to saturation so enthalpy is physical
             // when the phase reappears via condensation.
             state.h_l[i] = phasic_props_[i].h_sat_l;
@@ -479,13 +482,12 @@ void FiveEqModel::update_transport(
             // Enthalpy bounds: prevent non-physical values from explicit
             // overshoot during rapid transients. Liquid enthalpy should stay
             // between a reasonable minimum and the vapor saturation enthalpy.
-            constexpr double h_min = 1e4;  // 10 kJ/kg (above ice)
-            state.h_l[i] = std::clamp(h_l_new, h_min, phasic_props_[i].h_sat_v);
+            state.h_l[i] = std::clamp(h_l_new, numerics.h_l_min, phasic_props_[i].h_sat_v);
         }  // end liquid update
 
         // --- Vapor enthalpy ---
         double m_v = al * rv * mesh.V;
-        if (m_v <= 1e-12) {
+        if (m_v <= numerics.m_phase_min) {
             // Phase absent: reset to saturation so enthalpy is physical
             // when the phase reappears via evaporation.
             state.h_v[i] = phasic_props_[i].h_sat_v;
@@ -529,8 +531,7 @@ void FiveEqModel::update_transport(
             // for bulk vapor and produces invalid IAPWS Region 2 inputs
             // (negative density). Condensation is handled by Gamma, not
             // by h_v undershooting saturation.
-            constexpr double h_v_max = 4.0e6;  // 4 MJ/kg
-            state.h_v[i] = std::clamp(h_v_new, phasic_props_[i].h_sat_v, h_v_max);
+            state.h_v[i] = std::clamp(h_v_new, phasic_props_[i].h_sat_v, numerics.h_v_max);
         }  // end vapor update
     }
 }

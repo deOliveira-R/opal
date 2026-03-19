@@ -146,6 +146,7 @@ void HEMModel::update_transport(
     const FaceReconstruction& recon,
     double dt,
     const std::vector<double>* q_wall,
+    const SolverNumerics& /*numerics*/,
     const SourceTerms* sources) const
 {
     int N = mesh.N;

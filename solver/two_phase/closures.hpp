@@ -35,6 +35,7 @@ struct InterfacialState {
     double cp_l;     ///< Liquid heat capacity [J/(kg·K)]
     double sigma;    ///< Surface tension [N/m]
     double D_h;      ///< Hydraulic diameter [m]
+    double g_mag = 9.81;  ///< |g⃗| for buoyancy correlations [m/s²]
 };
 
 struct ClosureResult {
@@ -201,7 +202,7 @@ public:
         double rho_l2 = s.rho_l * s.rho_l;
         if (rho_l2 < 1.0) rho_l2 = 1.0;
 
-        constexpr double g = 9.81;
+        double g = s.g_mag;
         r.V_gj = 1.41 * std::pow(s.sigma * g * drho / rho_l2, 0.25);
 
         // OPAL regularization: scale V_gj by 4α(1-α) to smoothly

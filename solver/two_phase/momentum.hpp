@@ -64,6 +64,10 @@ struct FrictionModel {
  */
 class DarcyFriction : public FrictionModel {
 public:
+    /// @param rho_face_min  Skip friction if face density below this [kg/m³]
+    explicit DarcyFriction(double rho_face_min = 0.01)
+        : rho_face_min_(rho_face_min) {}
+
     void compute(
         const SolverState& state,
         const MeshParams& mesh,
@@ -75,12 +79,17 @@ public:
         double A2 = mesh.A_flow * mesh.A_flow;
 
         for (int i = 0; i <= N; ++i) {
-            if (rho_face[i] > 0.01) {
+            if (rho_face[i] > rho_face_min_) {
                 fric[i] = geom * std::abs(state.mdot[i]) * state.mdot[i]
                         / (rho_face[i] * A2);
             }
         }
     }
+
+    double rho_face_min() const { return rho_face_min_; }
+
+private:
+    double rho_face_min_;
 };
 
 /**
