@@ -61,6 +61,19 @@ class ExtractedSemiImplicitSolver:
         self.inlet_closed = spec.inlet_closed
         self.p_out = spec.p_out or 101325.0
 
+        # Exposed internals for L0 testing (populated during step)
+        self.last_rho = None
+        self.last_drho_dp = None
+        self.last_drho_dh = None
+        self.last_rho_face = None
+        self.last_fric = None
+        self.last_h_face_in = None
+        self.last_h_face_out = None
+        self.last_a = None
+        self.last_b = None
+        self.last_c = None
+        self.last_d = None
+
     def step(self, p, h, mdot, dt):
         """
         One semi-implicit timestep. Modifies p, h, mdot in-place.
@@ -102,6 +115,12 @@ class ExtractedSemiImplicitSolver:
             rho_face[i] = 0.5 * (rho[i - 1] + rho[i])
         rho_face[N] = rho[N - 1]
 
+        # Store for L0 testing
+        self.last_rho = rho.copy()
+        self.last_drho_dp = drho_dp.copy()
+        self.last_drho_dh = drho_dh.copy()
+        self.last_rho_face = rho_face.copy()
+
         # ──────────────────────────────────────────────────────
         # Step 3: Friction (from extracted momentum equations)
         # The momentum equation contains:
@@ -113,6 +132,8 @@ class ExtractedSemiImplicitSolver:
                 fric[i] = (self.f_D * self.dx / (2 * self.D_h)
                            * abs(mdot_old[i]) * mdot_old[i]
                            / (rho_face[i] * self.A_flow**2))
+
+        self.last_fric = fric.copy()
 
         # ──────────────────────────────────────────────────────
         # Step 4: Assemble pressure tridiagonal
@@ -148,6 +169,11 @@ class ExtractedSemiImplicitSolver:
             if i == N - 1:
                 d[i] += beta_right * self.p_out
 
+        self.last_a = a.copy()
+        self.last_b = b.copy()
+        self.last_c = c.copy()
+        self.last_d = d.copy()
+
         # ──────────────────────────────────────────────────────
         # Step 5: Thomas algorithm (tridiagonal solve)
         # ──────────────────────────────────────────────────────
@@ -182,6 +208,9 @@ class ExtractedSemiImplicitSolver:
         #              + V*der(p) + q_wall
         # Discretised as forward Euler with donor-cell advection.
         # ──────────────────────────────────────────────────────
+        h_face_in_arr = np.zeros(N)
+        h_face_out_arr = np.zeros(N)
+
         for i in range(N):
             # Donor-cell face enthalpies (from extracted conditional equations)
             if mdot[i] >= 0:
@@ -194,7 +223,13 @@ class ExtractedSemiImplicitSolver:
             else:
                 h_face_out = h[i + 1] if i < N - 1 else h[i]
 
+            h_face_in_arr[i] = h_face_in
+            h_face_out_arr[i] = h_face_out
+
             flux = mdot[i] * (h_face_in - h[i]) - mdot[i + 1] * (h_face_out - h[i])
             p_work = self.V_cell * (p[i] - p_old[i]) / dt
 
             h[i] = h[i] + dt / (rho[i] * self.V_cell) * (flux + p_work)
+
+        self.last_h_face_in = h_face_in_arr
+        self.last_h_face_out = h_face_out_arr
