@@ -41,6 +41,16 @@ model Pipe1D_DriftFlux
   parameter Real S_energy_v[N] = zeros(N) "Vapour energy source per cell [W]";
   parameter Real S_void[N] = zeros(N) "Vapour mass source per cell [kg/s]";
 
+  // Critical flow at outlet (Ransom-Trapp)
+  parameter Boolean use_critical_flow = false "Enable critical flow limiter at outlet";
+  parameter Real C_d = 1.0 "Break discharge coefficient [-]";
+  parameter Real x_trans = 0.10 "Quality transition for critical flow blend [-]";
+  parameter Real c_floor = 1200.0 "Minimum sound speed for critical flow [m/s]";
+
+  // Two-phase friction multiplier
+  parameter Boolean use_two_phase_friction = false "Enable Martinelli-Nelson friction multiplier";
+  parameter Real Phi2_max = 20.0 "Maximum two-phase friction multiplier [-]";
+
   // ═══════════════════════════════════════════════════════════════════
   // Replaceable medium
   // ═══════════════════════════════════════════════════════════════════
@@ -92,6 +102,14 @@ model Pipe1D_DriftFlux
 
   // Drift-flux (per cell)
   Real V_gj[N] "Drift velocity [m/s]";
+
+  // ═══════════════════════════════════════════════════════════════════
+  // Two-phase friction multiplier (per face)
+  // ═══════════════════════════════════════════════════════════════════
+  Real Phi2[N + 1] "Two-phase friction multiplier [-]";
+
+  // Critical flow (at outlet cell)
+  Real mdot_crit "Critical mass flow rate at outlet [kg/s]";
 
   // ═══════════════════════════════════════════════════════════════════
   // Donor-cell face enthalpies (mixture, for connector coupling)
@@ -178,27 +196,64 @@ equation
   end for;
 
   // ─────────────────────────────────────────────────────────────────
-  // MOMENTUM (per face) — inertial with Darcy friction + gravity
+  // Two-phase friction multiplier (per face)
+  // ─────────────────────────────────────────────────────────────────
+  for i in 1:N + 1 loop
+    if use_two_phase_friction then
+      Phi2[i] = min(library.Numerics.TwoPhaseFriction.martinelli_nelson(
+        if i <= N then alpha[i] else alpha[N],
+        if i <= N then rho_l[i] else rho_l[N],
+        if i <= N then rho_v[i] else rho_v[N]),
+        Phi2_max);
+    else
+      Phi2[i] = 1.0;
+    end if;
+  end for;
+
+  // ─────────────────────────────────────────────────────────────────
+  // Critical flow at outlet (Ransom-Trapp, in Modelica)
+  // ─────────────────────────────────────────────────────────────────
+  mdot_crit = if use_critical_flow then
+    library.Numerics.CriticalFlow.ransom_trapp(
+      p[N], h_mix[N], rho_m[N], drho_dp[N],
+      Medium.h_f(p[N]), Medium.h_g(p[N]), Medium.rho_f(p[N]),
+      port_b.p, A_flow, C_d, x_trans, c_floor)
+    else 1e10;
+
+  // ─────────────────────────────────────────────────────────────────
+  // MOMENTUM (per face) — inertial + Darcy + two-phase friction + gravity
   // ─────────────────────────────────────────────────────────────────
   (rho_face[1] * dx / A_flow) * der(mdot[1])
     = A_flow * (port_a.p - p[1])
-    - f_D * dx / (2 * D_h) * abs(mdot[1]) * mdot[1] / (rho_face[1] * A_flow^2)
+    - Phi2[1] * f_D * dx / (2 * D_h) * abs(mdot[1]) * mdot[1] / (rho_face[1] * A_flow^2)
     - rho_face[1] * g_axial * A_flow * dx
     + S_momentum[1];
 
   for i in 2:N loop
     (rho_face[i] * dx / A_flow) * der(mdot[i])
       = A_flow * (p[i - 1] - p[i])
-      - f_D * dx / (2 * D_h) * abs(mdot[i]) * mdot[i] / (rho_face[i] * A_flow^2)
+      - Phi2[i] * f_D * dx / (2 * D_h) * abs(mdot[i]) * mdot[i] / (rho_face[i] * A_flow^2)
       - rho_face[i] * g_axial * A_flow * dx
       + S_momentum[i];
   end for;
 
-  (rho_face[N + 1] * dx / A_flow) * der(mdot[N + 1])
-    = A_flow * (p[N] - port_b.p)
-    - f_D * dx / (2 * D_h) * abs(mdot[N + 1]) * mdot[N + 1] / (rho_face[N + 1] * A_flow^2)
-    - rho_face[N + 1] * g_axial * A_flow * dx
-    + S_momentum[N + 1];
+  // Outlet face with optional critical flow limiter
+  if use_critical_flow then
+    (rho_face[N + 1] * dx / A_flow) * der(mdot[N + 1])
+      = A_flow * (p[N] - port_b.p)
+      - Phi2[N + 1] * f_D * dx / (2 * D_h) * abs(mdot[N + 1]) * mdot[N + 1] / (rho_face[N + 1] * A_flow^2)
+      - rho_face[N + 1] * g_axial * A_flow * dx
+      + S_momentum[N + 1]
+      - (if mdot[N + 1] > mdot_crit then
+           (mdot[N + 1] - mdot_crit) / (dx / A_flow)
+         else 0.0);
+  else
+    (rho_face[N + 1] * dx / A_flow) * der(mdot[N + 1])
+      = A_flow * (p[N] - port_b.p)
+      - Phi2[N + 1] * f_D * dx / (2 * D_h) * abs(mdot[N + 1]) * mdot[N + 1] / (rho_face[N + 1] * A_flow^2)
+      - rho_face[N + 1] * g_axial * A_flow * dx
+      + S_momentum[N + 1];
+  end if;
 
   // ─────────────────────────────────────────────────────────────────
   // VOID FRACTION (per cell) — vapour mass transport
