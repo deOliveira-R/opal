@@ -49,12 +49,12 @@ class ModelicaFluidPackage:
     _SF_SIGMA_1 = -0.04
     _SF_P_REF = 10e6
 
-    def __init__(self, so_path, p_min=700.0, p_max=21e6):
+    def __init__(self, so_path, p_min=1e4, p_max=50e6):
         """
         Args:
             so_path: Path to compiled .so from build_codegen.py
-            p_min: Minimum valid pressure [Pa]
-            p_max: Maximum valid pressure [Pa]
+            p_min: Minimum valid pressure [Pa] (SimpleFluid default: 1e4)
+            p_max: Maximum valid pressure [Pa] (SimpleFluid default: 50e6)
         """
         so_path = str(so_path)
         self.lib = ctypes.CDLL(so_path)
