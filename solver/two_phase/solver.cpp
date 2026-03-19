@@ -131,47 +131,7 @@ void TwoPhaseSolver::solve_tridiagonal(std::vector<double>& p) const {
 }
 
 // ---------------------------------------------------------------------------
-// New step — operates on SolverState
-// ---------------------------------------------------------------------------
-
-void TwoPhaseSolver::step(SolverState& state,
-                          const BoundaryConditions& bc,
-                          double dt,
-                          const std::vector<double>* q_wall,
-                          const SourceTerms* sources) const
-{
-    // Legacy adapter: convert struct to decomposed BC data and delegate.
-    FacePressureBC pbc_in, pbc_out;
-    FaceTransportBC tbc_in;
-
-    // Pressure BCs
-    if (bc.bc_type_in == BCType::WALL) {
-        pbc_in = {FacePressureBC::ZERO_FLUX, 0.0};
-    } else {
-        pbc_in = {FacePressureBC::DIRICHLET, bc.p_in};
-    }
-    if (bc.bc_type_out == BCType::WALL) {
-        pbc_out = {FacePressureBC::ZERO_FLUX, 0.0};
-    } else {
-        pbc_out = {FacePressureBC::DIRICHLET, bc.p_out};
-    }
-
-    // Transport BC
-    tbc_in.h_l    = (bc.h_l_in != 0.0) ? bc.h_l_in : bc.h_in;
-    tbc_in.h_v    = bc.h_v_in;
-    tbc_in.h_mix  = bc.h_in;
-    tbc_in.alpha  = bc.alpha_in;
-
-    // Critical flow
-    bool has_cf = (bc.bc_type_out == BCType::BREAK) && critical_flow_;
-    double C_d = bc.break_area_fraction;
-
-    step_internal(state, pbc_in, pbc_out, tbc_in, has_cf, C_d,
-                  dt, q_wall, sources);
-}
-
-// ---------------------------------------------------------------------------
-// BoundaryFace step — time-aware, strategy-based BCs
+// BoundaryFace step — the only public step method
 // ---------------------------------------------------------------------------
 
 void TwoPhaseSolver::step(SolverState& state,
@@ -299,73 +259,6 @@ void TwoPhaseSolver::step_internal(
 
     // 8. Transport update
     model_->update_transport(state, p_old, tbc_in, mesh, props_, *recon_, dt, q_wall, sources);
-}
-
-// ---------------------------------------------------------------------------
-// Legacy step — wraps new step
-// ---------------------------------------------------------------------------
-
-void TwoPhaseSolver::step(std::vector<double>& p,
-                          std::vector<double>& h,
-                          std::vector<double>& mdot,
-                          const TwoPhaseBCs& bc,
-                          double dt,
-                          const std::vector<double>* q_wall) const
-{
-    if (static_cast<int>(p.size())    != n_)     throw std::invalid_argument("p size mismatch");
-    if (static_cast<int>(h.size())    != n_)     throw std::invalid_argument("h size mismatch");
-    if (static_cast<int>(mdot.size()) != n_ + 1) throw std::invalid_argument("mdot size mismatch");
-    if (q_wall && static_cast<int>(q_wall->size()) != n_)
-        throw std::invalid_argument("q_wall size mismatch");
-
-    SolverState state = model_->make_state(p, h, mdot);
-    BoundaryConditions new_bc;
-    new_bc.p_in  = bc.p_in;
-    new_bc.p_out = bc.p_out;
-    new_bc.h_in  = bc.h_in;
-
-    step(state, new_bc, dt, q_wall);
-
-    p    = state.p;
-    h    = state.h_l;
-    mdot = state.mdot;
-}
-
-// ---------------------------------------------------------------------------
-// Legacy solve
-// ---------------------------------------------------------------------------
-
-std::vector<double> TwoPhaseSolver::solve(std::vector<double> p,
-                                           std::vector<double> h,
-                                           std::vector<double> mdot,
-                                           const TwoPhaseBCs& bc,
-                                           double dt, int n_steps,
-                                           int stride,
-                                           const std::vector<double>* q_wall) const
-{
-    if (stride < 1) throw std::invalid_argument("stride must be >= 1");
-
-    int state_sz = model_->state_size(n_);
-    int n_snap = (n_steps + stride - 1) / stride;
-    std::vector<double> out;
-    out.reserve(static_cast<size_t>(n_snap) * static_cast<size_t>(state_sz));
-
-    SolverState state = model_->make_state(p, h, mdot);
-    BoundaryConditions new_bc;
-    new_bc.p_in  = bc.p_in;
-    new_bc.p_out = bc.p_out;
-    new_bc.h_in  = bc.h_in;
-
-    std::vector<double> snap_buf;
-
-    for (int s = 0; s < n_steps; ++s) {
-        step(state, new_bc, dt, q_wall);
-        if ((s + 1) % stride == 0 || s == n_steps - 1) {
-            model_->pack_state(state, snap_buf);
-            out.insert(out.end(), snap_buf.begin(), snap_buf.end());
-        }
-    }
-    return out;
 }
 
 } // namespace opal

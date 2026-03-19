@@ -34,17 +34,9 @@
 
 namespace opal {
 
-struct TwoPhaseBCs {
-    double p_in;    ///< Inlet pressure [Pa]
-    double p_out;   ///< Outlet pressure [Pa]
-    double h_in;    ///< Inlet enthalpy [J/kg]
-};
-
 class TwoPhaseSolver {
 public:
-    /**
-     * Legacy constructors (backward compatible — algebraic momentum, no critical flow).
-     */
+    /// Convenience constructors (default strategies for missing args).
     TwoPhaseSolver(int N, double dx, double A_flow, double D_h,
                    double f_D, const FluidPackage& fluid);
 
@@ -52,17 +44,12 @@ public:
                    double f_D, const FluidPackage& fluid,
                    const FaceReconstruction& recon);
 
-    /**
-     * Constructor with FlowModel selection (algebraic momentum).
-     */
     TwoPhaseSolver(int N, double dx, double A_flow, double D_h,
                    double f_D, const FluidPackage& fluid,
                    const FaceReconstruction& recon,
                    const FlowModel& model);
 
-    /**
-     * Full constructor with all strategies.
-     */
+    /// Full constructor with all strategies.
     TwoPhaseSolver(int N, double dx, double A_flow, double D_h,
                    double f_D, const FluidPackage& fluid,
                    const FaceReconstruction& recon,
@@ -71,31 +58,7 @@ public:
                    const CriticalFlowModel* critical_flow = nullptr);
 
     /**
-     * Legacy step — operates on separate p, h, mdot arrays.
-     */
-    void step(std::vector<double>& p,
-              std::vector<double>& h,
-              std::vector<double>& mdot,
-              const TwoPhaseBCs& bc,
-              double dt,
-              const std::vector<double>* q_wall = nullptr) const;
-
-    /**
-     * Step with legacy BoundaryConditions struct.
-     */
-    void step(SolverState& state,
-              const BoundaryConditions& bc,
-              double dt,
-              const std::vector<double>* q_wall = nullptr,
-              const SourceTerms* sources = nullptr) const;
-
-    /**
      * Step with BoundaryFace strategy objects — time-aware.
-     *
-     * Each boundary face is an independent strategy that produces
-     * mathematical contributions (pressure coupling, transport ghost
-     * cells, critical flow limiting). The solver evaluates them at
-     * time t and applies the results.
      *
      * @param bc_in    Inlet boundary face (left, face 0)
      * @param bc_out   Outlet boundary face (right, face N)
@@ -107,17 +70,6 @@ public:
               double t, double dt,
               const std::vector<double>* q_wall = nullptr,
               const SourceTerms* sources = nullptr) const;
-
-    /**
-     * Legacy solve — collects snapshots as flat array.
-     */
-    std::vector<double> solve(std::vector<double> p,
-                              std::vector<double> h,
-                              std::vector<double> mdot,
-                              const TwoPhaseBCs& bc,
-                              double dt, int n_steps,
-                              int stride = 1,
-                              const std::vector<double>* q_wall = nullptr) const;
 
     // Accessors
     int    N()      const { return n_; }

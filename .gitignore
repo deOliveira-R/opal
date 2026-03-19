@@ -27,3 +27,5 @@ library/Media/tests/_probe.mo
 # macOS
 .DS_Store
 .gitnexus
+solver/two_phase/build/
+*.so

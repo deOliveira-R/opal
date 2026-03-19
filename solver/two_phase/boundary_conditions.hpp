@@ -2,12 +2,8 @@
 /**
  * boundary_conditions.hpp — Boundary condition infrastructure.
  *
- * Two layers:
- *   1. BoundaryFace strategy objects (new): encapsulate physics, produce
- *      mathematical contributions. Time-aware. Extensible via subclassing.
- *   2. BoundaryConditions struct (legacy): static bag of doubles, preserved
- *      for backward compatibility. The legacy step() constructs temporary
- *      BoundaryFace objects from this struct internally.
+ * Each boundary face is a strategy object that encapsulates physics and
+ * produces mathematical contributions. Time-aware. Extensible via subclassing.
  *
  * BoundaryFace subclasses:
  *   PressureFace  — specified pressure with inflow enthalpy
@@ -189,42 +185,7 @@ private:
 };
 
 
-// =========================================================================
-// Legacy structs (preserved for backward compatibility)
-// =========================================================================
-
-/// Boundary condition type for each face (legacy enum).
-enum class BCType {
-    PRESSURE,  ///< Specified pressure (default, existing behavior)
-    WALL,      ///< Closed wall: mdot = 0, no pressure coupling
-    BREAK,     ///< Break/rupture: pressure BC with critical flow limiter
-};
-
-/// Legacy boundary conditions struct. All existing tests use this.
-/// The solver internally constructs BoundaryFace objects from these fields.
-struct BoundaryConditions {
-    // Pressure BCs (always needed)
-    double p_in  = 0.0;   ///< Inlet pressure [Pa]
-    double p_out = 0.0;   ///< Outlet pressure [Pa]
-
-    // Enthalpy BCs
-    double h_in  = 0.0;   ///< Mixture inlet enthalpy [J/kg] (HEM/4-eq)
-    double h_l_in = 0.0;  ///< Liquid inlet enthalpy [J/kg] (5-eq/6-eq)
-    double h_v_in = 0.0;  ///< Vapor inlet enthalpy [J/kg] (5-eq/6-eq)
-
-    // Void fraction BC
-    double alpha_in = 0.0; ///< Inlet void fraction [-] (4-eq+)
-
-    // Velocity BCs (6-eq only)
-    double v_l_in = 0.0;  ///< Inlet liquid velocity [m/s]
-    double v_v_in = 0.0;  ///< Inlet vapor velocity [m/s]
-
-    // Face BC types (default PRESSURE for backward compatibility)
-    BCType bc_type_in  = BCType::PRESSURE;
-    BCType bc_type_out = BCType::PRESSURE;
-
-    // Break parameters (only used when bc_type == BREAK)
-    double break_area_fraction = 1.0;  ///< Discharge coefficient C_d [-]
-};
+// Legacy BoundaryConditions struct, BCType enum, and TwoPhaseBCs removed.
+// All boundary conditions now use the BoundaryFace strategy hierarchy above.
 
 } // namespace opal
