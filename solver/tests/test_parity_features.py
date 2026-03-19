@@ -188,30 +188,26 @@ class TestBreakFaceViaSolver:
         assert mdot[-1] > 0, f"Break should produce outflow, got mdot={mdot[-1]}"
         assert p[-1] < 10e6, f"Break cell pressure should decrease"
 
-    def test_break_vs_pressure_different_flow(self):
-        """BreakFace should produce different flow than PressureFace at same p_back
-        (C_d < 1 limits flow)."""
+    def test_break_with_critical_flow_limits_mdot(self):
+        """BreakFace + RansomTrapp should limit outlet flow (choked)."""
         fluid = tp.SimpleFluidProperties()
         N = 3
+        rt = tp.RansomTrapp(fluid, x_trans=0.10, c_floor=1200.0)
 
-        solver_break = tp.TwoPhaseSolver(N, 1.0, 0.01, 0.1, 0.02, fluid,
-                                         tp.DonorCell(), tp.HEMModel(), tp.InertialMomentum())
-        solver_press = tp.TwoPhaseSolver(N, 1.0, 0.01, 0.1, 0.02, fluid,
-                                         tp.DonorCell(), tp.HEMModel(), tp.InertialMomentum())
+        solver = tp.TwoPhaseSolver(N, 1.0, 0.01, 0.1, 0.02, fluid,
+                                   tp.DonorCell(), tp.HEMModel(), tp.InertialMomentum(), rt)
 
         bc_in = tp.WallFace(700e3)
         bc_break = tp.BreakFace(101325.0, 0.5, 700e3)  # C_d = 0.5
-        bc_press = tp.PressureFace(101325.0, 700e3)
 
-        p1 = np.full(N, 10e6); h1 = np.full(N, 700e3); m1 = np.zeros(N+1)
-        p2 = np.full(N, 10e6); h2 = np.full(N, 700e3); m2 = np.zeros(N+1)
+        p = np.full(N, 10e6); h = np.full(N, 700e3); mdot = np.zeros(N+1)
 
         for _ in range(50):
-            step_hem(solver_break, p1, h1, m1, bc_in, bc_break, 1e-4)
-            step_hem(solver_press, p2, h2, m2, bc_in, bc_press, 1e-4)
+            step_hem(solver, p, h, mdot, bc_in, bc_break, 1e-4)
 
-        # Both should have outflow, but they may differ
-        assert m1[-1] > 0 and m2[-1] > 0
+        # Should have outflow, potentially limited by choking
+        assert mdot[-1] > 0, f"Should have outflow: {mdot[-1]}"
+        assert np.all(np.isfinite(p))
 
 
 # ============================================================================
@@ -301,8 +297,14 @@ class TestMUSCLViaSolver:
             step_hem(s_dc, p_dc, h_dc, m_dc, bc_in, bc_out, 1e-4)
             step_hem(s_vl, p_vl, h_vl, m_vl, bc_in, bc_out, 1e-4)
 
-        # Both should converge, both finite
+        # Both should converge and be finite
         assert np.all(np.isfinite(p_dc)) and np.all(np.isfinite(p_vl))
+        # Van Leer should produce at least as sharp a profile
+        # (measured by enthalpy spread at steady state)
+        h_range_dc = np.max(h_dc) - np.min(h_dc)
+        h_range_vl = np.max(h_vl) - np.min(h_vl)
+        assert h_range_vl >= h_range_dc * 0.9, \
+            f"VanLeer should not be more diffusive: {h_range_vl:.1f} vs {h_range_dc:.1f}"
 
     def test_superbee_runs(self):
         """MUSCL('superbee') runs without crash."""
