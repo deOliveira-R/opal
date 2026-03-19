@@ -84,7 +84,16 @@ def map_pipe1d(es: "EquationSystem") -> Pipe1DGridSpec:
         raise ValueError(f"No pressure states found for prefix '{prefix}'")
     if p_indices != list(range(1, N + 1)):
         raise ValueError(f"p indices not contiguous 1..{N}: {p_indices}")
-    if h_indices != list(range(1, N + 1)):
+
+    # For 5-eq models, h[i] doesn't exist — h_l[i] and h_v[i] are used instead
+    if not h_indices:
+        h_l_indices = _get_state_indices(es, prefix, "h_l")
+        h_v_indices = _get_state_indices(es, prefix, "h_v")
+        if h_l_indices and h_v_indices:
+            h_indices = h_l_indices  # use h_l for grid validation
+        else:
+            raise ValueError(f"No h, h_l, or h_v states found for prefix '{prefix}'")
+    elif h_indices != list(range(1, N + 1)):
         raise ValueError(f"h indices not contiguous 1..{N}: {h_indices}")
 
     # ---- mdot states: may be [2..N+1] if inlet closed, or [1..N+1] ----
@@ -142,14 +151,23 @@ def map_pipe1d(es: "EquationSystem") -> Pipe1DGridSpec:
 
     # ---- Initial conditions ----
     p_init = pval("p_init")
-    h_init = pval("h_init")
+
+    # h_init for HEM, h_l_init for DriftFlux
+    try:
+        h_init = pval("h_init")
+    except ValueError:
+        try:
+            h_init = pval("h_l_init")  # DriftFlux uses h_l_init
+        except ValueError:
+            h_init = 800e3  # fallback
 
     p0 = []
     h0 = []
     for i in range(1, N + 1):
-        # Try to get specific initial value, fall back to p_init/h_init
         pv = _get_initial_value(es, f"{prefix}.p[{i}]", p_init)
-        hv = _get_initial_value(es, f"{prefix}.h[{i}]", h_init)
+        # Try h[i], h_l[i], or fall back to h_init
+        hv = _get_initial_value(es, f"{prefix}.h[{i}]",
+             _get_initial_value(es, f"{prefix}.h_l[{i}]", h_init))
         p0.append(pv)
         h0.append(hv)
 
