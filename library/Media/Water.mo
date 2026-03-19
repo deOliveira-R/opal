@@ -134,6 +134,58 @@ package Water "OPAL water medium — unified IAPWS-IF97 API with event-free regi
   end drho_dh_p;
 
   // ---------------------------------------------------------------------------
+  // Phasic (saturation) properties — delegating to IF97.Saturation
+  // ---------------------------------------------------------------------------
+
+  function T_sat "Saturation temperature [K] from pressure"
+    input Real p "Pressure [Pa]";
+    output Real T_val;
+  algorithm
+    T_val := IF97.Saturation.T_sat(p);
+    annotation(Inline=true);
+  end T_sat;
+
+  function h_f "Saturated liquid enthalpy [J/kg] from pressure"
+    input Real p "Pressure [Pa]";
+    output Real h_val;
+  algorithm
+    h_val := IF97.Saturation.h_f(p);
+    annotation(Inline=true);
+  end h_f;
+
+  function h_g "Saturated vapour enthalpy [J/kg] from pressure"
+    input Real p "Pressure [Pa]";
+    output Real h_val;
+  algorithm
+    h_val := IF97.Saturation.h_g(p);
+    annotation(Inline=true);
+  end h_g;
+
+  function h_fg "Latent heat of vaporisation [J/kg] from pressure"
+    input Real p "Pressure [Pa]";
+    output Real h_val;
+  algorithm
+    h_val := IF97.Saturation.h_fg(p);
+    annotation(Inline=true);
+  end h_fg;
+
+  function rho_f "Saturated liquid density [kg/m^3] from pressure"
+    input Real p "Pressure [Pa]";
+    output Real rho_val;
+  algorithm
+    rho_val := IF97.Saturation.rho_f(p);
+    annotation(Inline=true);
+  end rho_f;
+
+  function rho_g "Saturated vapour density [kg/m^3] from pressure"
+    input Real p "Pressure [Pa]";
+    output Real rho_val;
+  algorithm
+    rho_val := IF97.Saturation.rho_g(p);
+    annotation(Inline=true);
+  end rho_g;
+
+  // ---------------------------------------------------------------------------
   // Convenience wrappers: (p, T) input for use in equation-level models
   // ---------------------------------------------------------------------------
   function rho_pT "Density [kg/m³] from (p, T)  — region selected by p, T"
