@@ -54,32 +54,25 @@ We treat OM as a dependency we're willing to improve:
 
 ## Build Path (Detailed)
 
-### Phase 1 — Single-phase solver coupling
-- Simple single-phase pipe loop in Modelica
-- Extract equations from OpenModelica
-- Route to basic semi-implicit solver (single-phase)
-- Verify: conservation, Hagen-Poiseuille, Joukowski waterhammer
+### Phase 1 — Single-phase solver coupling — COMPLETE
+- Single-phase pipe loop in Modelica, extracted via OpenModelica
+- C++ semi-implicit solver verified: Hagen-Poiseuille to machine precision
+- 8 solver tests, end-to-end pipeline proven
 
-### Phase 2 — Two-phase solver plugin
-- Semi-implicit two-phase solver as pluggable backend
-- Property-dependent EOS: ρ(p,h), ∂ρ/∂p|h, ∂ρ/∂h|p from IAPWS-IF97
-- Equation routing: which subsystem → which solver
-- First-order spatial (donor-cell) and temporal (implicit Euler / forward Euler)
-- Verify with SimpleFluid (synthetic linear fluid, isolates solver from properties)
-- Validate against Edwards blowdown, benchmark against oracle
+### Phase 2 — Two-phase solver plugin — COMPLETE
+- C++ prototype: HEM + 5-eq drift-flux, IAPWS-IF97, semi-implicit staggered mesh
+- Edwards blowdown validated (C++ prototype: 149% MAPE)
+- 330 C++ tests, QA methodology established (L0 term verification)
+- C++ prototype archived in `archive/cpp_prototype/`
 
-### Phase 2.5 — Second-order spatial accuracy
-- MUSCL reconstruction with slope limiter (minmod default, van Leer for void fronts)
-- Face enthalpy: h_face = h_upwind + 0.5 · φ(r) · (h_down − h_up), all algebraic
-- Pressure solve unchanged (tridiagonal) — MUSCL only affects advective fluxes
-- Optional: predictor-corrector temporal for energy (~20-30% cost, second-order time)
-- Stencil widens from 2-point to 4-point for energy, partitioner updated accordingly
-- Pure Modelica expressions (min/max/if) — no OPAQUE risk, extraction-transparent
-- Motivation: first-order donor-cell smears thermal/void fronts over ~√N cells;
-  second-order enables coarse-mesh accuracy (20 cells ≈ 50 first-order cells),
-  directly benefiting real-time performance target
-- Industry precedent: RELAP5/CATHARE-2 started first-order, TRACE/CATHARE-3/ATHLET
-  all upgraded to second-order MUSCL for front tracking (boron, temperature, void)
+### Phase 2.5 — Modelica parity + extraction pipeline — COMPLETE
+- ALL physics migrated to Modelica (.mo files)
+- Pipe1D (HEM) + Pipe1D_DriftFlux (5-eq) with replaceable Medium
+- MUSCL limiters, critical flow, two-phase friction in Numerics/
+- Extraction pipeline: xml_reader → equation_classifier → semi-implicit solver
+- Edwards via Modelica extraction: 79.8% MAPE (best result)
+- 219 Modelica-side tests, QA-audited (4 rounds, final PASS)
+- Case comparison framework: Case 0 (hardcoded) vs Case 1 (extracted params)
 
 ### Phase 3 — Multi-domain demonstration
 - Complete plant: reactor + SG + turbine + condenser + feedwater + controls

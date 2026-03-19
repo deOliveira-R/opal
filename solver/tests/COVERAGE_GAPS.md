@@ -1,5 +1,10 @@
 # OPAL 5-Equation Solver Test Coverage Gap Analysis
 
+> **HISTORICAL DOCUMENT** — This gap analysis was for the C++ prototype solver.
+> Most gaps identified here were subsequently filled (311→330 C++ tests).
+> Additional 219 Modelica-side tests were added in session 2026-03-19.
+> The C++ source has been archived to `archive/cpp_prototype/`.
+
 Date: 2026-03-18
 Triggered by: Two escaped bugs (closure sign convention, vapor enthalpy floor)
 

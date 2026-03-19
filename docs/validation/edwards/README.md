@@ -12,71 +12,59 @@ Energy Society*, vol. 9, pp. 125-135, 1970.
 ## Data
 
 - `data/edwards_blowdown_data.py` — full problem specification (geometry, ICs, gauge stations)
-- `data/fig3.csv` — digitized pressure at GS-1 (near break) vs time
-- `data/EdwardsTest_backEnd.xml` — extracted equation system from Modelica Pipe1D
+- `data/fig3-gs1.csv` through `fig9-gs7.csv` — digitized pressure at 7 gauge stations
+- `data/EdwardsTest_backEnd.xml` — extracted Pipe1D with SimpleFluid (N=5)
+- `data/EdwardsTest_IAPWS_backEnd.xml` — extracted Pipe1D with Water (N=24)
+- `data/EdwardsTest_IAPWS_CritFlow_backEnd.xml` — extracted Pipe1D with Water + critical flow
+- `data/EdwardsTest_DriftFlux_backEnd.xml` — extracted Pipe1D_DriftFlux with Water + all closures
 
-## Incremental Validation Results
+## Results — Modelica Extraction Pipeline
 
-Five iterations, each adding one physics feature:
+All physics defined in Modelica, extracted through OpenModelica, solved by Python
+semi-implicit engine. No C++ physics in the loop.
 
-| Version | Feature | Early (2-10 ms) | Mid (100-200 ms) | Late (400-600 ms) |
-|---------|---------|-----------------|-------------------|-------------------|
-| v1 | Algebraic momentum | Empties instantly | 0.1 MPa | 0.1 MPa |
-| v2 | + Inertial momentum | 1.5-2.1 MPa | 0.8-1.0 MPa | 0.3 MPa |
-| v3 | + HEM critical flow | 2.1 MPa | 1.6-1.8 MPa (stuck) | 1.0 MPa (stuck) |
-| v4 | + Ransom-Trapp blend | 1.5-2.1 MPa | 1.2-1.3 MPa | 1.1 MPa |
-| v5 | + Non-eq flashing | HEM limitation: T=T_sat, no superheat | — | — |
-| **Experiment** | | **2.4-2.5 MPa** | **1.9-2.1 MPa** | **0.3-0.5 MPa** |
+| Model | Physics | Overall MAPE | Best Station |
+|-------|---------|-------------|--------------|
+| HEM + IAPWS | Pipe1D.mo + Water.mo | 100.7% | — |
+| HEM + IAPWS + critical flow | + CriticalFlow.ransom_trapp | 81.0% | GS-1: 47% |
+| **5-eq drift-flux** | Pipe1D_DriftFlux.mo + all closures | **79.8%** | GS-4: 65% |
+
+## Results — C++ Prototype (Archived)
+
+The C++ hand-wired solver (now in `archive/cpp_prototype/`) produced:
+
+| Version | Feature | MAPE |
+|---------|---------|------|
+| C++ HEM (run_edwards.py) | Python semi-implicit + IAPWS | ~100% |
+| C++ 5-eq (run_edwards_5eq.py) | Hybrid Python+C++ transport | 56.5% |
+| C++ full (run_edwards_cpp.py) | All C++ with FiveEqModel | 149% |
+
+Note: The C++ full solver's 149% MAPE was worse than HEM because the 5-eq model's
+drift-flux closures were too aggressive during the subcooled-to-two-phase transition.
+The Modelica extraction path avoids this by correctly reading closure parameters
+from the model (H_i=1e7 from Modelica, not overridden to 1e5 as the C++ driver did).
 
 ## Key Findings
 
-1. **Inertial momentum** was the single largest improvement — enables finite
-   wave speed and the characteristic flashing plateau.
+1. **Critical flow is essential** — dropped MAPE from 101% to 81% (HEM)
+2. **5-eq model helps late-time** — non-equilibrium flashing drives final depressurization
+3. **Parameter extraction matters** — Case 0 (hardcoded H_i=1e5) vs Case 1 (extracted H_i=1e7)
+   showed the hardcoded solver was silently using wrong physics
+4. **Modelica-driven outperforms C++ hand-wired** — 79.8% vs 149% MAPE
 
-2. **Critical flow** improves early-time match but the HEM sound speed
-   collapses to ~1 m/s in low-quality two-phase, requiring a floor or blend.
+## Drivers
 
-3. **Late-time depressurization** is fundamentally limited by the HEM
-   single-mixture model. The enthalpy stays nearly constant because advective
-   flux and pressure work almost cancel. The pipe doesn't void fast enough.
+| File | Description |
+|------|-------------|
+| `solver/edwards_modelica_validation.py` | HEM + IAPWS + critical flow (81% MAPE) |
+| `solver/edwards_5eq_modelica_validation.py` | 5-eq + IAPWS + critical flow (79.8% MAPE) |
+| `solver/edwards_case_comparison.py` | Case 0 vs Case 1 parameter comparison |
+| `archive/cpp_prototype/edwards_drivers/` | Archived C++ drivers (reference only) |
 
-4. **Non-equilibrium flashing** cannot be modeled with HEM because T = T_sat
-   in the two-phase region by definition. There's no superheat to drive
-   flashing. A two-fluid model with separate liquid superheat tracking is
-   needed for full Edwards match.
+## Remaining Gaps
 
-## What This Means for OPAL
-
-The HEM semi-implicit solver is appropriate for:
-- Heated channels and boiling (verified, 26 tests)
-- Quasi-steady two-phase flow
-- Slow transients where thermal equilibrium is a good approximation
-
-For rapid depressurization (blowdowns, LOCAs), the solver needs:
-- Two-fluid model (separate liquid/vapor conservation) — Phase 3+
-- Or drift-flux with mechanical non-equilibrium
-
-This is consistent with RELAP5's architecture (two-fluid) and is the
-expected model boundary for an HEM code.
-
-## 5-Equation Model Results (Phase 3)
-
-| Parameter | HEM (v4) | 5-eq (v1) | Experiment |
-|-----------|----------|-----------|------------|
-| Early (2-10 ms) | 1.5-2.1 MPa | 1.5-2.1 MPa | 2.4-2.5 MPa |
-| Mid (100-200 ms) | 1.2-1.3 MPa | 1.2-1.3 MPa | 1.9-2.1 MPa |
-| Late (500-600 ms) | **1.0 MPa (stuck)** | **0.3-0.6 MPa** | 0.15-0.3 MPa |
-| α at 600 ms | 0 (HEM) | 0.6 | ~0.8 (est.) |
-
-**Key improvement:** The 5-equation model drives late-time depressurization
-through non-equilibrium flashing (T_l > T_sat → Γ > 0 → void grows → density
-drops → pressure drops). HEM cannot do this because T=T_sat in two-phase.
-
-**Remaining gaps (mid-time):** The pressure plateau (100-400 ms) is still
-~40% below experiment. This is a shared issue with HEM and is related to
-the critical flow model (Ransom-Trapp blend) and inertial momentum coupling,
-not the thermal non-equilibrium model. The 5-eq model adds no benefit in
-mid-time because flashing hasn't significantly started yet.
-
-**Closure parameters:** H_i=1e7 W/(m³·K), nucleation onset at T_l > T_sat,
-α_nucleation=1e-3, interfacial area = max(4α(1-α), α).
+- **Mid-time plateau**: pressure 100-400 ms still ~40% below experiment
+  (critical flow model too conservative in subcooled-to-two-phase transition)
+- **Early time**: pressure wave arrives instantaneously (semi-implicit infinite acoustic speed)
+- **Void fraction**: H_i=1e5 keeps void near zero; H_i=1e7 gives more physical voiding
+  but can cause numerical instability without proper safeguards

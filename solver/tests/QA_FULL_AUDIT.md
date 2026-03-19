@@ -1,5 +1,10 @@
 # OPAL Solver QA Full Audit Report
 
+> **HISTORICAL DOCUMENT** — This audit was for the C++ prototype solver (Phase 2).
+> The C++ source has been archived to `archive/cpp_prototype/`.
+> Current test count: 549 (330 C++ reference + 219 Modelica-side).
+> For the Modelica-side QA audit, see the session 2026-03-19 summary.
+
 **Date:** 2026-03-18
 **Auditor:** QA Agent (Claude Opus 4.6)
 **Scope:** All C++ solver source files, all Python test files

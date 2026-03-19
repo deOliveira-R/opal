@@ -1,5 +1,11 @@
 # QA Methodology for AI-Generated Numerical Code
 
+> **LIVING DOCUMENT** — This methodology is actively used for all OPAL code.
+> Originally written for the C++ solver; equally applicable to Modelica models
+> and the Python extraction pipeline. The QA agent (session 2026-03-19) caught
+> a V_gj variable swap (sigma→rho_f, AI failure mode #2) in Pipe1D_DriftFlux.mo
+> using this methodology.
+
 Date: 2026-03-18
 Context: Post-mortem after two bugs escaped 32 tests in the OPAL 5-equation solver.
 Author: QA Agent (self-evaluation)

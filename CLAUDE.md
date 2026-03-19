@@ -57,46 +57,49 @@ opal/
 
 ## Build Path (Summary)
 
-Phase 1: Single-phase solver coupling (proves extraction→solver pipeline)
-Phase 2: Two-phase solver plugin + oracle benchmarking
-Phase 2.5: Second-order spatial accuracy (MUSCL + slope limiters)
-Phase 3: Multi-domain plant demo + real-time benchmark
-Phase 4: Component library + point kinetics + own media package
-Phase 4.5: 3D vessel component
-Phase 5: 3D spatial kinetics (few-group diffusion)
-Phase 6: Real-time mode (fixed-step, bounded iterations)
+- ~~Phase 0: Feasibility (extraction tests)~~ — **COMPLETE**
+- ~~Phase 1: Single-phase solver coupling~~ — **COMPLETE**
+- ~~Phase 2: Two-phase solver plugin + IAPWS-IF97~~ — **COMPLETE**
+- ~~Phase 2.5: MUSCL, Modelica parity, extraction pipeline~~ — **COMPLETE**
+- **Phase 3: Multi-domain plant demo + real-time benchmark** — NEXT
+- Phase 4: Component library + point kinetics
+- Phase 4.5: 3D vessel component
+- Phase 5: 3D spatial kinetics (few-group diffusion)
+- Phase 6: Real-time mode (fixed-step, bounded iterations)
 
 Full phase descriptions: `@docs/architecture.md`
 
-## Oracle
+## Edwards Blowdown Validation (current best)
 
-We have an oracle code for benchmarking. Will sort that when necessary.
+| Model | Physics source | MAPE |
+|-------|---------------|------|
+| Modelica HEM + IAPWS | Pipe1D.mo + Water.mo | 100.7% |
+| Modelica HEM + IAPWS + critical flow | + CriticalFlow.mo | 81.0% |
+| Modelica 5-eq drift-flux | Pipe1D_DriftFlux.mo (all closures) | 79.8% |
 
 ## Working With Claude
 
-### Where Claude is strong
-- Modelica models, XML parsing, OpenModelica source reading (MetaModelica/C)
-- Solver backend (C++ numerical methods), equation routing/partitioning
-- Neutron diffusion solver, cross-section infrastructure, IAPWS-IF97 properties
+### Where Claude should focus
+- Modelica models (.mo files) — ALL physics changes go here
+- Extraction pipeline (solver/partitioner/) — structural analysis + numerical methods
+- Tests — QA rigor for AI-generated code (L0 term verification)
+
+### Where Claude must NOT implement physics
+- `archive/cpp_prototype/` — frozen, reference only
+- `solver/two_phase/*.so` — compiled binary, do not modify
+- Any new C++ file — physics belongs in Modelica
 
 ### Where Claude needs human verification
 - Physical completeness of extracted equations
-- OpenModelica behavior vs. its (possibly stale) documentation
+- OpenModelica behavior vs. its documentation
 - Solver stability for novel partitioning (must run, not just reason)
-- `stream` connector semantics resolution
-- Quasi-static kinetics coupling stability
-- Cross-section data quality
 - Real-time performance claims (measure, don't estimate)
 
 ### Self-correction approach
 - Conservation checks at every level
 - Limiting-case tests (must reduce to known solutions)
-- Benchmark against oracle on identical problems
-- On failure: determine if bug is in extraction, routing, or solver
-
-## Key Differences From established system codes
-
-OPAL: independent/open, Modelica+C++, partitioned solver, multi-domain, real-time capable, everyone else in the world. Complementary projects, not competing.
+- Benchmark against experimental data (Edwards blowdown)
+- On failure: determine if bug is in Modelica model, extraction, or solver numerics
 
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
