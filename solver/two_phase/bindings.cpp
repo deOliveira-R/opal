@@ -65,7 +65,9 @@ PYBIND11_MODULE(opal_two_phase, m) {
     // Property hierarchy: FluidProperties → FluidPackage (+ PhasicProperties)
     py::class_<FluidProperties>(m, "FluidProperties");
     py::class_<PhasicProperties>(m, "PhasicProperties");
-    py::class_<FluidPackage, FluidProperties, PhasicProperties>(m, "FluidPackage");
+    py::class_<FluidPackage, FluidProperties, PhasicProperties>(m, "FluidPackage")
+        .def_property_readonly("p_min", &FluidPackage::p_min)
+        .def_property_readonly("p_max", &FluidPackage::p_max);
 
     // SimpleFluidProperties -------------------------------------------------
     py::class_<SimpleFluidProperties, FluidPackage>(m, "SimpleFluidProperties")
@@ -391,7 +393,7 @@ PYBIND11_MODULE(opal_two_phase, m) {
         .def(py::init<>(), "No critical flow (never choked)");
 
     py::class_<RansomTrapp, CriticalFlowModel>(m, "RansomTrapp")
-        .def(py::init<const PhasicProperties&, double, double>(),
+        .def(py::init<const FluidPackage&, double, double>(),
              py::arg("phasic"),
              py::arg("x_trans") = 0.10, py::arg("c_floor") = 1200.0,
              py::keep_alive<1, 2>(),  // keeps phasic alive

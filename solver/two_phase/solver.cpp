@@ -225,8 +225,8 @@ void TwoPhaseSolver::step_internal(
 
     // 5. Solve tridiagonal + pressure bounds
     solve_tridiagonal(state.p);
-    constexpr double p_floor   = 700.0;
-    constexpr double p_ceiling = 21.0e6;
+    const double p_floor   = fluid_.p_min();
+    const double p_ceiling = fluid_.p_max();
     for (int i = 0; i < n_; ++i) {
         state.p[i] = std::clamp(state.p[i], p_floor, p_ceiling);
     }

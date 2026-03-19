@@ -14,6 +14,10 @@ namespace opal {
 
 class SimpleFluidProperties : public FluidPackage {
 public:
+    // Linear model works over a wide pressure range.
+    double p_min() const override { return 1.0e4; }
+    double p_max() const override { return 50.0e6; }
+
     // ---- Constants (match SimpleFluid.mo lines 8-32) ----
     static constexpr double p_ref   = 10.0e6;
 

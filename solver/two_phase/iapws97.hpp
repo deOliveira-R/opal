@@ -17,6 +17,10 @@ namespace opal {
 
 class IAPWSIF97Properties : public FluidPackage {
 public:
+    // IAPWS-IF97 valid range for two-phase solver (conservative bounds
+    // within triple point → critical point saturation curve).
+    double p_min() const override { return 700.0; }
+    double p_max() const override { return 21.0e6; }
 
     // =====================================================================
     // Constants (from IF97/Constants.mo)

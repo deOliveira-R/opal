@@ -19,6 +19,13 @@ namespace opal {
 class FluidPackage : public FluidProperties, public PhasicProperties {
 public:
     virtual ~FluidPackage() = default;
+
+    /// Minimum pressure for safe property evaluation [Pa].
+    /// The solver clamps pressure to [p_min, p_max] after the tridiagonal solve.
+    virtual double p_min() const { return 100.0; }
+
+    /// Maximum pressure for safe property evaluation [Pa].
+    virtual double p_max() const { return 100.0e6; }
 };
 
 } // namespace opal

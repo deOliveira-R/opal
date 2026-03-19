@@ -14,7 +14,7 @@
  */
 
 #include "momentum.hpp"  // for CriticalFlowResult
-#include "phasic_properties.hpp"
+#include "fluid_package.hpp"
 #include <cmath>
 #include <algorithm>
 
@@ -87,7 +87,7 @@ public:
      * @param c_floor  Minimum sound speed [m/s], default 1200 (prevents
      *                 collapse of c_hem in low-quality two-phase)
      */
-    explicit RansomTrapp(const PhasicProperties& phasic,
+    explicit RansomTrapp(const FluidPackage& phasic,
                          double x_trans = 0.10, double c_floor = 1200.0)
         : phasic_(phasic), x_trans_(x_trans), c_floor_(c_floor) {}
 
@@ -101,7 +101,7 @@ public:
         CriticalFlowResult result{};
 
         // Get saturation properties at break cell pressure (from C++ phasic)
-        double p_safe = std::clamp(p_cell, 700.0, 21.0e6);
+        double p_safe = std::clamp(p_cell, phasic_.p_min(), phasic_.p_max());
         auto pp = phasic_.evaluate_phasic(p_safe);
         double h_f   = pp.h_sat_l;
         double h_g   = pp.h_sat_v;
@@ -154,7 +154,7 @@ public:
     double x_trans() const { return x_trans_; }
 
 private:
-    const PhasicProperties& phasic_;
+    const FluidPackage& phasic_;
     double x_trans_;
     double c_floor_;
 };
