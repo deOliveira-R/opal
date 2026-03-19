@@ -16,12 +16,21 @@ model Pipe1D
   parameter Real D_h = D "Hydraulic diameter [m]";
   parameter Real V_cell = dx * A_flow "Cell volume [m^3]";
 
+  // Gravity
+  parameter Real g_axial = 0.0
+    "Gravity projection on pipe axis [m/s^2]. Positive opposes positive flow (upward pipe).";
+
   // Initial conditions
   parameter Real p_init = 10e6 "Initial pressure [Pa]";
   parameter Real h_init = 800e3 "Initial enthalpy [J/kg]";
 
   // Wall heat (per cell)
   parameter Real q_wall[N] = zeros(N) "Wall heat source per cell [W]";
+
+  // Generic source terms (per cell)
+  parameter Real S_mass[N] = zeros(N) "Mass source per cell [kg/s]";
+  parameter Real S_momentum[N + 1] = zeros(N + 1) "Momentum source per face [N]";
+  parameter Real S_energy[N] = zeros(N) "Energy source per cell [W]";
 
   // ═══════════════════════════════════════════════════════════════════
   // Replaceable medium — swap SimpleFluid ↔ Water at system level
@@ -105,25 +114,37 @@ equation
   // ─────────────────────────────────────────────────────────────────
   for i in 1:N loop
     V_cell * (drho_dp[i] * der(p[i]) + drho_dh[i] * der(h[i]))
-      = mdot[i] - mdot[i + 1];
+      = mdot[i] - mdot[i + 1] + S_mass[i];
   end for;
 
   // ─────────────────────────────────────────────────────────────────
-  // MOMENTUM (per face) — inertial with Darcy friction
+  // MOMENTUM (per face) — inertial with Darcy friction + gravity
+  //
+  //   (rho_face * dx / A) * d(mdot)/dt
+  //     = A * (p_left - p_right)
+  //     - f_D * dx / (2*D_h) * |mdot|*mdot / (rho_face * A^2)
+  //     - rho_face * g_axial * A * dx        [hydrostatic head]
+  //     + S_momentum                          [external body force]
   // ─────────────────────────────────────────────────────────────────
   (rho_face[1] * dx / A_flow) * der(mdot[1])
     = A_flow * (port_a.p - p[1])
-    - f_D * dx / (2 * D_h) * abs(mdot[1]) * mdot[1] / (rho_face[1] * A_flow^2);
+    - f_D * dx / (2 * D_h) * abs(mdot[1]) * mdot[1] / (rho_face[1] * A_flow^2)
+    - rho_face[1] * g_axial * A_flow * dx
+    + S_momentum[1];
 
   for i in 2:N loop
     (rho_face[i] * dx / A_flow) * der(mdot[i])
       = A_flow * (p[i - 1] - p[i])
-      - f_D * dx / (2 * D_h) * abs(mdot[i]) * mdot[i] / (rho_face[i] * A_flow^2);
+      - f_D * dx / (2 * D_h) * abs(mdot[i]) * mdot[i] / (rho_face[i] * A_flow^2)
+      - rho_face[i] * g_axial * A_flow * dx
+      + S_momentum[i];
   end for;
 
   (rho_face[N + 1] * dx / A_flow) * der(mdot[N + 1])
     = A_flow * (p[N] - port_b.p)
-    - f_D * dx / (2 * D_h) * abs(mdot[N + 1]) * mdot[N + 1] / (rho_face[N + 1] * A_flow^2);
+    - f_D * dx / (2 * D_h) * abs(mdot[N + 1]) * mdot[N + 1] / (rho_face[N + 1] * A_flow^2)
+    - rho_face[N + 1] * g_axial * A_flow * dx
+    + S_momentum[N + 1];
 
   // ─────────────────────────────────────────────────────────────────
   // ENERGY (per cell) — enthalpy form with pressure work
@@ -133,7 +154,8 @@ equation
       = mdot[i] * (h_face[i] - h[i])
       - mdot[i + 1] * (h_face[i + 1] - h[i])
       + V_cell * der(p[i])
-      + q_wall[i];
+      + q_wall[i]
+      + S_energy[i];
   end for;
 
   annotation(Documentation(info="<html>

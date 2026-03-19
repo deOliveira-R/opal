@@ -25,10 +25,21 @@ model Pipe1D_DriftFlux
   // Wall heat (per cell)
   parameter Real q_wall[N] = zeros(N) "Wall heat source per cell [W]";
 
+  // Gravity
+  parameter Real g_axial = 0.0
+    "Gravity projection on pipe axis [m/s^2]. Positive opposes positive flow (upward pipe).";
+
   // Closure parameters
   parameter Real H_i = 1e5 "Interfacial heat transfer coefficient [W/(m^3*K)]";
   parameter Real C_0 = 1.13 "Drift-flux distribution parameter [-]";
   parameter Real alpha_nucleation = 1e-3 "Nucleation onset void fraction [-]";
+
+  // Generic source terms (per cell/face)
+  parameter Real S_mass[N] = zeros(N) "Mass source per cell [kg/s]";
+  parameter Real S_momentum[N + 1] = zeros(N + 1) "Momentum source per face [N]";
+  parameter Real S_energy_l[N] = zeros(N) "Liquid energy source per cell [W]";
+  parameter Real S_energy_v[N] = zeros(N) "Vapour energy source per cell [W]";
+  parameter Real S_void[N] = zeros(N) "Vapour mass source per cell [kg/s]";
 
   // ═══════════════════════════════════════════════════════════════════
   // Replaceable medium
@@ -156,33 +167,38 @@ equation
 
   // ─────────────────────────────────────────────────────────────────
   // MASS CONSERVATION (per cell) — pressure linearisation
-  //   V * (drho_dp * der(p) + drho_dh * der(h_mix)) = mdot_in - mdot_out
+  //   V * (drho_dp * der(p) + drho_dh * der(h_mix)) = mdot_in - mdot_out + S_mass
   //   where h_mix = (1-α)*h_l + α*h_v
   // ─────────────────────────────────────────────────────────────────
   for i in 1:N loop
     V_cell * (drho_dp[i] * der(p[i])
             + drho_dh[i] * ((1 - alpha[i]) * der(h_l[i])
                           + alpha[i] * der(h_v[i])))
-      = mdot[i] - mdot[i + 1];
+      = mdot[i] - mdot[i + 1] + S_mass[i];
   end for;
 
   // ─────────────────────────────────────────────────────────────────
-  // MOMENTUM (per face) — inertial with Darcy friction
-  //   Same as HEM: mixture momentum, single velocity field
+  // MOMENTUM (per face) — inertial with Darcy friction + gravity
   // ─────────────────────────────────────────────────────────────────
   (rho_face[1] * dx / A_flow) * der(mdot[1])
     = A_flow * (port_a.p - p[1])
-    - f_D * dx / (2 * D_h) * abs(mdot[1]) * mdot[1] / (rho_face[1] * A_flow^2);
+    - f_D * dx / (2 * D_h) * abs(mdot[1]) * mdot[1] / (rho_face[1] * A_flow^2)
+    - rho_face[1] * g_axial * A_flow * dx
+    + S_momentum[1];
 
   for i in 2:N loop
     (rho_face[i] * dx / A_flow) * der(mdot[i])
       = A_flow * (p[i - 1] - p[i])
-      - f_D * dx / (2 * D_h) * abs(mdot[i]) * mdot[i] / (rho_face[i] * A_flow^2);
+      - f_D * dx / (2 * D_h) * abs(mdot[i]) * mdot[i] / (rho_face[i] * A_flow^2)
+      - rho_face[i] * g_axial * A_flow * dx
+      + S_momentum[i];
   end for;
 
   (rho_face[N + 1] * dx / A_flow) * der(mdot[N + 1])
     = A_flow * (p[N] - port_b.p)
-    - f_D * dx / (2 * D_h) * abs(mdot[N + 1]) * mdot[N + 1] / (rho_face[N + 1] * A_flow^2);
+    - f_D * dx / (2 * D_h) * abs(mdot[N + 1]) * mdot[N + 1] / (rho_face[N + 1] * A_flow^2)
+    - rho_face[N + 1] * g_axial * A_flow * dx
+    + S_momentum[N + 1];
 
   // ─────────────────────────────────────────────────────────────────
   // VOID FRACTION (per cell) — vapour mass transport
@@ -199,7 +215,8 @@ equation
            mdot[i + 1] * alpha[i]
          else
            mdot[i + 1] * (if i < N then alpha[i + 1] else alpha[i]))
-      + V_cell * Gamma[i];
+      + V_cell * Gamma[i]
+      + S_void[i];
   end for;
 
   // ─────────────────────────────────────────────────────────────────
@@ -222,7 +239,8 @@ equation
       + (1 - alpha[i]) * V_cell * der(p[i])
       + q_wall[i] * (1 - alpha[i])
       + q_i_l[i] * V_cell
-      - Gamma[i] * h_l[i] * V_cell;
+      - Gamma[i] * h_l[i] * V_cell
+      + S_energy_l[i];
   end for;
 
   // ─────────────────────────────────────────────────────────────────
@@ -245,7 +263,8 @@ equation
       + alpha[i] * V_cell * der(p[i])
       + q_wall[i] * alpha[i]
       + q_i_v[i] * V_cell
-      + Gamma[i] * h_v[i] * V_cell;
+      + Gamma[i] * h_v[i] * V_cell
+      + S_energy_v[i];
   end for;
 
   annotation(Documentation(info="<html>
