@@ -8,19 +8,29 @@ Architecture: "Option 4" — extract equations from OpenModelica, route to purpo
 
 ## Current Phase
 
-**Phase 2 — Two-phase solver.** Feasibility proven (Phase 0), single-phase solver built and verified (Phase 1). Now implementing property-dependent two-phase semi-implicit solver with IAPWS-IF97. See `docs/architecture.md` for full roadmap.
+**Phase 3 preparation.** Feasibility (Phase 0), single-phase solver (Phase 1), two-phase solver (Phase 2), and Modelica parity (Phase 2.5) complete. Edwards blowdown validated at 79.8% MAPE through the Modelica extraction pipeline. Now preparing for multi-component systems (Phase 3).
+
+## Cardinal Rule
+
+**ALL physics lives in Modelica.** The solver provides ONLY numerical methods (operator splitting, tridiagonal solve, Thomas algorithm). If a physics change is needed, edit the `.mo` files — never the solver. See `docs/architecture.md`.
 
 ## Repository Layout
 
 ```
 opal/
-├── feasibility/       # Phase 0: extraction tests — COMPLETE (has its own CLAUDE.md)
-├── solver/            # Custom solver backend (has its own CLAUDE.md)
-│   ├── single_phase/  #   Phase 1 C++ solver — COMPLETE
-│   ├── partitioner/   #   Equation routing (XML → grid) — COMPLETE
-│   └── tests/         #   8 solver tests + 36 partitioner tests
-├── library/           # OPAL Modelica component library (has its own CLAUDE.md)
-│   └── Media/         #   IAPWS-IF97 (Water.mo) + SimpleFluid.mo + tests
+├── library/           # OPAL Modelica component library — THE PHYSICS SOURCE
+│   ├── Pipes/         #   Pipe1D (HEM), Pipe1D_DriftFlux (5-eq)
+│   ├── Media/         #   PartialMedium, SimpleFluid, Water (IAPWS-IF97)
+│   ├── Boundary/      #   ClosedEnd, PressureSource, BreakSource, RampedBreak
+│   ├── Connectors/    #   FluidPort (stream connector)
+│   └── Numerics/      #   Limiters, CriticalFlow, TwoPhaseFriction
+├── solver/            # Extraction pipeline + numerical solvers
+│   ├── partitioner/   #   xml_reader, pipe1d_mapper, equation_classifier,
+│   │                  #   model_spec, extracted_solver, parameterized_5eq_solver
+│   ├── tests/         #   549 tests (330 C++ reference + 219 Modelica-side)
+│   ├── two_phase/     #   Compiled .so for C++ property evaluation + tests
+│   └── single_phase/  #   Compiled .so for Phase 1 tests
+├── feasibility/       # Phase 0: extraction tests — COMPLETE
 ├── diagnostics/       # AI failure diagnosis skill (has its own CLAUDE.md)
 ├── docs/              # Detailed architecture, physics, design docs
 │   ├── architecture.md
@@ -31,11 +41,19 @@ opal/
 │   ├── extraction_failure_modes.md
 │   ├── openmodelica_internals.md
 │   └── xs_format.md
-├── external/          # OpenModelica (submodule), Python venv, requirements.txt
+├── archive/           # C++ prototype solver — DO NOT EDIT (reference only)
+│   └── cpp_prototype/ #   Source for two_phase + single_phase C++ solvers
+├── external/          # OpenModelica, reference libraries, Python venv
 └── .claude/
     ├── agents/        #   QA agent, solver-architect agent
     └── commands/      #   /verify-iapws, /verify-solver, etc.
 ```
+
+## DO NOT EDIT
+
+- `archive/cpp_prototype/` — C++ solver source (frozen, reference only)
+- `solver/two_phase/*.so` — compiled C++ (for property evaluation + tests, do not recompile)
+- Any C++ file (.hpp, .cpp) — physics belongs in Modelica
 
 ## Build Path (Summary)
 
@@ -83,7 +101,7 @@ OPAL: independent/open, Modelica+C++, partitioned solver, multi-domain, real-tim
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **OPAL** (230754 symbols, 430614 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **OPAL** (1118 symbols, 2849 relationships, 28 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 
