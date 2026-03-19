@@ -40,18 +40,7 @@ def make_5eq_solver(N=10, dx=1.0, A=0.01, D_h=0.1, f_D=0.02,
     return solver, fluid, closures, model
 
 
-_step_time = 0.0  # module-level time tracker for step_bf migration
-
-def step_5eq(solver, p, alpha, h_l, h_v, mdot, bc, dt, q_wall=None):
-    """Run one 5-eq step via the BoundaryFace path (migrated from step_5eq)."""
-    global _step_time
-    import sys as _sys
-    _sys.path.insert(0, str(__import__('pathlib').Path(__file__).resolve().parent))
-    from bc_helpers import bc_from_legacy
-    bc_in, bc_out = bc_from_legacy(bc)
-    solver.step_bf(p, alpha, h_l, h_v, mdot, bc_in, bc_out,
-                   _step_time, dt, q_wall)
-    _step_time += dt
+# step_5eq imported from bc_helpers (uses BoundaryFace directly)
 
 
 # ---------------------------------------------------------------------------
@@ -162,7 +151,7 @@ class TestSinglePhaseLimit:
         # Small dt for CFL compliance
         dt = 5e-4
         for _ in range(5000):
-            step_5eq(solver, p, alpha, h_l, h_v, mdot, bc, dt)
+            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, dt)
 
         # All flows should be positive and roughly uniform
         assert np.all(mdot > 0), f"mdot = {mdot}"
@@ -199,7 +188,7 @@ class TestMassConservation5Eq:
 
         dt = 1e-4
         for _ in range(5000):
-            step_5eq(solver, p, alpha, h_l, h_v, mdot, bc, dt)
+            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, dt)
 
         # At steady state, all face flows should be equal (continuity)
         mdot_mean = np.mean(mdot)
@@ -236,7 +225,7 @@ class TestEnergyConservation5Eq:
 
         dt = 1e-4
         for _ in range(5000):
-            step_5eq(solver, p, alpha, h_l, h_v, mdot, bc, dt, q_wall)
+            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, dt, q_wall)
 
         # Liquid enthalpy should increase downstream
         assert np.all(np.diff(h_l) > 0), (
@@ -273,7 +262,7 @@ class TestVoidFractionEvolution:
 
         dt = 1e-4
         for _ in range(5000):
-            step_5eq(solver, p, alpha, h_l, h_v, mdot, bc, dt)
+            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, dt)
 
         # Void should grow from the initial seed due to flashing
         assert np.max(alpha) > 0.005, (
@@ -306,7 +295,7 @@ class TestVoidFractionEvolution:
 
         dt = 1e-4
         for _ in range(2000):
-            step_5eq(solver, p, alpha, h_l, h_v, mdot, bc, dt)
+            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, dt)
 
         # Void should decrease (condensation)
         assert np.mean(alpha) < alpha_init, (
@@ -351,7 +340,7 @@ class TestHEMLimit:
         h_v_5eq = np.full(N, 2800e3)
         mdot_5eq = np.zeros(N + 1)
         for _ in range(5000):
-            step_5eq(solver_5eq, p_5eq, alpha_5eq, h_l_5eq, h_v_5eq,
+            step_5eq_migrated(solver_5eq, p_5eq, alpha_5eq, h_l_5eq, h_v_5eq,
                      mdot_5eq, bc_5eq, dt)
 
         # Pressures should be close
@@ -380,7 +369,7 @@ class TestSingleCell5Eq:
         h_v = np.array([2800e3])
         mdot = np.zeros(2)
 
-        step_5eq(solver, p, alpha, h_l, h_v, mdot, bc, dt=1e-4)
+        step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, dt=1e-4)
         assert np.isfinite(p[0])
         assert np.isfinite(h_l[0])
         assert np.all(np.isfinite(mdot))
@@ -407,7 +396,7 @@ class TestReverseFlow5Eq:
         mdot = np.zeros(N + 1)
 
         for _ in range(5000):
-            step_5eq(solver, p, alpha, h_l, h_v, mdot, bc, dt=1e-4)
+            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, dt=1e-4)
 
         assert np.all(mdot < 0), f"Expected reverse flow, got mdot = {mdot}"
 
@@ -431,7 +420,7 @@ class TestInputValidation5Eq:
         mdot = np.zeros(6)
 
         with pytest.raises(Exception):
-            step_5eq(solver, p, alpha, h_l, h_v, mdot, bc, dt=-0.01)
+            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, dt=-0.01)
 
 
 # ---------------------------------------------------------------------------
@@ -462,7 +451,7 @@ class TestTransientMassConservation5Eq:
 
         # Run a few warm-up steps
         for _ in range(100):
-            step_5eq(solver, p, alpha, h_l, h_v, mdot, bc, dt)
+            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, dt)
 
         # Now check mass balance for one step
         def mixture_density(i):
@@ -471,7 +460,7 @@ class TestTransientMassConservation5Eq:
             return (1 - alpha[i]) * rl + alpha[i] * rv
 
         rho_old = [mixture_density(i) for i in range(N)]
-        step_5eq(solver, p, alpha, h_l, h_v, mdot, bc, dt)
+        step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, dt)
         rho_new = [mixture_density(i) for i in range(N)]
 
         for i in range(N):
@@ -513,7 +502,7 @@ class TestTransientEnergyConservation5Eq:
 
         # Warm up
         for _ in range(100):
-            step_5eq(solver, p, alpha, h_l, h_v, mdot, bc, dt, q_wall)
+            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, dt, q_wall)
 
         # Check: total stored energy change vs fluxes
         def total_energy():
@@ -527,7 +516,7 @@ class TestTransientEnergyConservation5Eq:
 
         E_old = total_energy()
         p_old = p.copy()
-        step_5eq(solver, p, alpha, h_l, h_v, mdot, bc, dt, q_wall)
+        step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, dt, q_wall)
         E_new = total_energy()
 
         dE = E_new - E_old
@@ -572,7 +561,7 @@ class TestSpatialConvergence5Eq:
             mdot = np.zeros(N + 1)
 
             for _ in range(5000):
-                step_5eq(solver, p, alpha, h_l, h_v, mdot, bc, dt)
+                step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, dt)
 
             # Error: deviation of mdot from its mean (should be uniform)
             err = np.std(mdot) / np.mean(mdot)
@@ -614,7 +603,7 @@ class TestPureVaporLimit:
 
         dt = 1e-4
         for _ in range(5000):
-            step_5eq(solver, p, alpha, h_l, h_v, mdot, bc, dt)
+            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, dt)
 
         assert np.all(np.isfinite(p)), f"NaN in pressure: {p}"
         assert np.all(np.isfinite(mdot)), f"NaN in mdot: {mdot}"
@@ -650,7 +639,7 @@ class TestDriftFluxSplit:
         # Run to quasi-steady with two-phase conditions
         dt = 1e-4
         for _ in range(3000):
-            step_5eq(solver, p, alpha, h_l, h_v, mdot, bc, dt)
+            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, dt)
 
         # All state should remain finite
         assert np.all(np.isfinite(p))
@@ -683,7 +672,7 @@ class TestDriftFluxSplit:
 
         dt = 1e-4
         for _ in range(3000):
-            step_5eq(solver, p, alpha, h_l, h_v, mdot, bc, dt)
+            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, dt)
 
         # With no slip and no interfacial HT, solution should be stable
         assert np.all(np.isfinite(alpha)), "NaN in alpha"
@@ -824,7 +813,7 @@ class TestPackUnpackRoundtrip:
         mdot = np.linspace(1.0, 1.1, N + 1)
 
         # Run one step to get a realistic state
-        step_5eq(solver, p, alpha, h_l, h_v, mdot, bc, 1e-4)
+        step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, 1e-4)
 
         # Use solve() which internally uses pack_state
         # The solve output layout should be consistent
@@ -884,7 +873,7 @@ class TestNucleation:
 
         dt = 1e-4
         for _ in range(500):
-            step_5eq(solver, p, alpha, h_l, h_v, mdot, bc, dt)
+            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, dt)
 
         # Nucleation should have created void from zero initial void.
         # Growth is slow because alpha_in=0 strips void at inlet,
@@ -923,7 +912,7 @@ class TestPhaseReappearance:
         dt = 1e-4
         # Run: subcooled inlet should condense vapor, bringing alpha down
         for _ in range(5000):
-            step_5eq(solver, p, alpha, h_l, h_v, mdot, bc, dt)
+            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, dt)
 
         # h_l should be finite everywhere (no stale values from phase absence)
         assert np.all(np.isfinite(h_l)), f"NaN in h_l: {h_l}"

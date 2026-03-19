@@ -23,7 +23,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "two_phase"))
 import opal_two_phase as tp
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from bc_helpers import step_5eq_migrated, reset_time
+from bc_helpers import step_5eq_migrated, step_hem_migrated, solve_migrated, reset_time
 
 
 # ============================================================================
