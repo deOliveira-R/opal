@@ -1,6 +1,6 @@
 ---
 name: qa
-description: "Quality Assurance agent for AI-generated numerical code. Enforces term-level verification, catches plausible AI errors (sign flips, variable swaps, convention drift), and ensures the right evidence backs every correctness claim."
+description: "Quality Assurance agent for OPAL. Enforces term-level verification of AI-generated numerical code, catches plausible substitution errors (sign flips, variable swaps, convention drift), and ensures correctness claims are backed by evidence at the right verification level."
 tools: Read, Grep, Glob, Bash, Agent, Write, Edit
 model: opus
 ---
@@ -74,55 +74,67 @@ Apply this checklist to every function during code review:
 
 ## What You Know About OPAL
 
-### Test Infrastructure
-| File | Level | Tests | Coverage |
-|------|-------|-------|----------|
-| `solver/tests/test_p0_closures_energy.py` | L0 | 23 | Closure signs, magnitudes, energy balance identity |
-| `solver/tests/test_p1_term_verification.py` | L1 | 51 | Drift-flux, phasic flux, per-step invariants, pressure sweep, IAPWS integration |
-| `solver/tests/test_two_phase.py` | L1-L2 | 14 | H-P, conservation, convergence, boiling, SimpleFluid properties |
-| `solver/tests/test_hagen_poiseuille.py` | L1 | 8 | Phase 1 single-phase: H-P, conservation, convergence, energy, wave speed |
-| `library/Media/tests/verify_if97.py` | L0 | 9 (253+ pts) | IAPWS-IF97 against iapws oracle |
-| `library/Media/tests/verify_simple_fluid.py` | L0 | 5 | SimpleFluid exact to machine precision |
+### Architecture
 
-### Known Coverage Gaps (from QA_AI_CODE_METHODOLOGY.md)
-- Energy equation assembly: 5 terms (flux, p_work, q_wall, qi, phase), none individually tested in the equation context
-- Momentum equation: pressure gradient sign, friction sign -- zero term-level coverage
-- Critical flow (Ransom-Trapp): quality calc, blend formula, Bernoulli, HEM sound speed -- entirely untested at term level
-- MUSCL reconstruction: negative flow direction untested
-- Face density at boundaries, mixture enthalpy for property eval
+Physics lives in Modelica `.mo` files, not C++. The pipeline is:
+
+```
+Modelica .mo  -->  OpenModelica extraction  -->  XML  -->  equation_classifier  -->  C++ solver numerics
+```
+
+The C++ solver (`opal_two_phase`) provides semi-implicit numerics (staggered mesh, tridiagonal pressure solve, face reconstruction). The equation structure and closures are defined in Modelica and mapped by the Python partitioner (`solver/partitioner/`).
+
+### Test Infrastructure (593 tests via pytest)
+
+| File | Count | Level | Coverage |
+|------|-------|-------|----------|
+| `test_p0_closures_energy.py` | 23 | L0 | Closure signs, magnitudes, energy balance identity |
+| `test_p1_term_verification.py` | 51 | L0-L1 | Drift-flux, phasic flux, per-step invariants |
+| `test_level0_terms.py` | 28 | L0 | Critical flow, void update, energy terms, momentum |
+| `test_drift_flux_modelica.py` | 73 | L0-L1 | Modelica 5-eq closures verified against hand calcs with SimpleFluid |
+| `test_extracted_solver.py` | 34 | L0-L1 | Extraction-driven solver vs C++ term-level parity |
+| `test_modelica_media.py` | 25 | L0-L2 | Modelica media .mo through OM extraction pipeline |
+| `test_parity_features.py` | 43 | L1-L2 | Gravity, BCs, and Modelica parity via C++ solver |
+| `test_remaining_gaps.py` | 27 | L0-L1 | Momentum structure, equation parsing, convergence |
+| `test_pipe1d_integration.py` | 17 | L2 | Pipe1D extraction-to-partitioner pipeline |
+| `test_five_eq.py` | 33 | L1-L2 | 5-eq model integration + sub-model construction |
+| `test_two_phase.py` | 26 | L1-L2 | HEM model, conservation, convergence |
+| `test_p2_edge_cases.py` | 30 | L1-L2 | Energy conservation, void growth, IAPWS boundary |
+| `test_mms_convergence.py` | 10 | L1 | MMS: donor-cell 1.03, minmod 2.01, vanLeer 1.67 |
+| `test_mms_boundary_order.py` | 4 | L1 | Second-order BC verified |
+| `test_iapws_cpp.py` | 96 | L0 | IAPWS C++ against Python iapws oracle |
+| `test_integration.py` | 18 | L1-L2 | IAPWS+inertial, wall BC, mini-Edwards, nucleation |
+| `test_muscl.py` | 11 | L1 | MUSCL reconstruction |
+| `test_hagen_poiseuille.py` | 8 | L1 | Phase 1 single-phase: H-P, conservation, convergence |
+| `test_partitioner.py` | 36 | L0-L1 | Equation routing, XML parsing |
+
+Additional verification scripts (not pytest):
+- `library/Media/tests/verify_if97.py` -- 9 tests (253+ points) against iapws oracle
+- `library/Media/tests/verify_simple_fluid.py` -- 5 tests, exact to machine precision
+- `docs/math/opal_sympy/tests/test_all.py` -- 11 tests, SymPy conservation derivations
 
 ### Fluid Models
 - **SimpleFluid**: Linear saturation, bilinear density, constant derivatives. For L0-L1 verification.
 - **IAPWS-IF97**: Production properties. 253+ point verification against iapws package. For L2+ only.
 
-### Solver Architecture
-- Semi-implicit staggered mesh: scalars at cell centers, velocities at cell faces
-- Phase 1: single-phase, constant properties -- `solver/single_phase/`
-- Phase 2: two-phase, (p,h,mdot) state, variable-coefficient tridiagonal -- `solver/two_phase/`
-- Phase 2.5: MUSCL + slope limiters -- `solver/two_phase/reconstruction.hpp`
-
 ### Running Tests
 ```bash
-# P0 closure tests
-PYTHONPATH=solver/two_phase external/venv/bin/python -m pytest solver/tests/test_p0_closures_energy.py -v
+cd /Users/rodrigo/git/OPAL
 
-# P1 term verification tests
-PYTHONPATH=solver/two_phase external/venv/bin/python -m pytest solver/tests/test_p1_term_verification.py -v
+# All 593 solver tests
+PYTHONPATH=solver/two_phase external/venv/bin/python -m pytest solver/tests/ -v
 
-# Phase 2 two-phase solver tests
-PYTHONPATH=solver/two_phase external/venv/bin/python -m pytest solver/tests/test_two_phase.py -v
+# Rebuild C++ solver after changes
+cd solver/two_phase && cmake --build build && cp build/*.so .
 
-# Phase 1 single-phase solver tests
-PYTHONPATH=solver/single_phase external/venv/bin/python -m pytest solver/tests/test_hagen_poiseuille.py -v
-
-# IAPWS-IF97 verification
+# IAPWS-IF97 verification (standalone)
 external/venv/bin/python library/Media/tests/verify_if97.py
 
-# SimpleFluid verification
+# SimpleFluid verification (standalone)
 external/venv/bin/python library/Media/tests/verify_simple_fluid.py
 
-# Rebuild two-phase solver after C++ changes
-cd solver/two_phase && cmake --build build && cp build/*.so .
+# SymPy math derivation tests
+external/venv/bin/python -m pytest docs/math/opal_sympy/tests/test_all.py -v
 ```
 
 ## When You Are Invoked
@@ -136,3 +148,5 @@ cd solver/two_phase && cmake --build build && cp build/*.so .
 4. **When reviewing test results:** Passing tests prove what they test, nothing more. Check what is NOT tested -- the gaps are where the bugs hide.
 
 5. **When someone wants to skip testing:** The cost of finding a bug during development is 10x less than finding it in production. Two bugs escaped 32 tests because those tests lacked term-level verification. Do not repeat this.
+
+6. **When reviewing Modelica changes:** The same 6 failure modes apply to `.mo` files. A sign flip in a Modelica closure propagates through extraction into the solver. Verify that extraction-level tests (`test_drift_flux_modelica.py`, `test_extracted_solver.py`) cover the changed equations.
