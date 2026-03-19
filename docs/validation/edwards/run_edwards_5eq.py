@@ -257,16 +257,14 @@ def step_edwards_5eq(p, alpha, h_l, h_v, mdot, dt):
     # The C++ update_transport handles nucleation onset, interfacial area,
     # drift-flux phasic split, phasic energy with enthalpy bounds, and
     # phase reappearance enthalpy reset. No Python reimplementation.
-    # Transport BC for the FiveEqModel (still uses legacy struct internally)
-    bc_5eq = tp.BoundaryConditions()
-    bc_5eq.p_in = p_init
-    bc_5eq.p_out = p_atm
-    bc_5eq.h_in = h_init
-    bc_5eq.h_l_in = h_init
-    bc_5eq.h_v_in = h_g_init
+    # Transport BC for the FiveEqModel
+    tbc_in = tp.FaceTransportBC()
+    tbc_in.h_l = h_init
+    tbc_in.h_v = h_g_init
+    tbc_in.h_mix = h_init
 
     model.update_transport(
-        p, p_old, alpha, h_l, h_v, mdot, bc_5eq,
+        p, p_old, alpha, h_l, h_v, mdot, tbc_in,
         N, dx, A_flow, D_h, f_D, dt)
 
     return p, alpha, h_l, h_v, mdot

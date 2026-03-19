@@ -30,7 +30,7 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "two_phase"))
 import opal_two_phase as tp
 sys.path.insert(0, os.path.dirname(__file__))
-from bc_helpers import step_hem_migrated, solve_migrated, reset_time
+from bc_helpers import step_hem, solve_hem, pressure_bcs, reset_time
 
 
 # ============================================================================
@@ -67,8 +67,8 @@ def make_solver(N=N_REF):
     """Create solver + fluid + BCs for standard test conditions."""
     fluid  = tp.SimpleFluidProperties()
     solver = tp.TwoPhaseSolver(N, DX, A_FLOW, D_H, F_D, fluid)
-    bc     = tp.TwoPhaseBCs(P_IN, P_OUT, H_IN)
-    return solver, fluid, bc
+    bc_in, bc_out = pressure_bcs(P_IN, P_OUT, H_IN)
+    return solver, fluid, bc_in, bc_out
 
 
 def sf_rho_ph(p, h):
@@ -99,7 +99,7 @@ class TestHagenPoiseuille:
         """At steady state, mdot is uniform and matches H-P prediction."""
         fluid  = tp.SimpleFluidProperties()
         solver = tp.TwoPhaseSolver(N, DX, A_FLOW, D_H, F_D, fluid)
-        bc     = tp.TwoPhaseBCs(P_IN, P_OUT, H_IN)
+        bc_in, bc_out = pressure_bcs(P_IN, P_OUT, H_IN)
         p, h, mdot = initial_state(N)
 
         # CFL for explicit enthalpy: dt < rho*V/mdot.
@@ -112,7 +112,7 @@ class TestHagenPoiseuille:
         n_steps = max(20000, int(20.0 / dt))  # at least 20 s of simulation
 
         # Run to steady state
-        hist = solve_migrated(solver, p, h, mdot, bc, dt, n_steps, n_steps)
+        hist = solve_hem(solver, p, h, mdot, bc_in, bc_out, dt, n_steps, n_steps)
         p_ss    = hist[-1, :N]
         mdot_ss = hist[-1, 2*N:]
 
@@ -135,9 +135,9 @@ class TestHagenPoiseuille:
     def test_linear_pressure_profile(self):
         """Steady-state pressure should be approximately linear."""
         N = 10
-        solver, fluid, bc = make_solver(N)
+        solver, fluid, bc_in, bc_out = make_solver(N)
         p, h, mdot = initial_state(N)
-        hist = solve_migrated(solver, p, h, mdot, bc, 1e-3, 20000, 20000)
+        hist = solve_hem(solver, p, h, mdot, bc_in, bc_out, 1e-3, 20000, 20000)
         p_ss = hist[-1, :N]
 
         # Linear interpolation between inlet and outlet
@@ -159,7 +159,7 @@ class TestMassConservation:
 
     def test_mass_balance(self):
         N = 5
-        solver, fluid, bc = make_solver(N)
+        solver, fluid, bc_in, bc_out = make_solver(N)
         p, h, mdot = initial_state(N)
         dt = 1e-3
 
@@ -167,7 +167,7 @@ class TestMassConservation:
         max_residual = 0.0
         for _ in range(1000):
             p_old = p.copy()
-            step_hem_migrated(solver, p, h, mdot, bc, dt)
+            step_hem(solver, p, h, mdot, bc_in, bc_out, dt)
 
             # Mass stored: sum_i V * rho_new_i
             # d(mass)/dt = mdot_in - mdot_out
@@ -197,11 +197,11 @@ class TestEnergyConservation:
     def test_energy_balance_steady(self):
         """At steady state: mdot*h_in = mdot*h_out (no wall heat, no dp/dt)."""
         N = 5
-        solver, fluid, bc = make_solver(N)
+        solver, fluid, bc_in, bc_out = make_solver(N)
         p, h, mdot = initial_state(N)
 
-        # Run to steady state (no wall heat → h should remain at h_in)
-        hist = solve_migrated(solver, p, h, mdot, bc, 1e-3, 20000, 20000)
+        # Run to steady state (no wall heat -> h should remain at h_in)
+        hist = solve_hem(solver, p, h, mdot, bc_in, bc_out, 1e-3, 20000, 20000)
         h_ss = hist[-1, N:2*N]
         mdot_ss = hist[-1, 2*N:]
 
@@ -216,13 +216,13 @@ class TestEnergyConservation:
         N = 10
         fluid  = tp.SimpleFluidProperties()
         solver = tp.TwoPhaseSolver(N, DX, A_FLOW, D_H, F_D, fluid)
-        bc     = tp.TwoPhaseBCs(P_IN, P_OUT, H_IN)
+        bc_in, bc_out = pressure_bcs(P_IN, P_OUT, H_IN)
         p, h, mdot = initial_state(N)
 
         # Apply 50 kW per cell (total 500 kW) — stay subcooled
         q_wall = np.full(N, 50.0e3)  # W per cell
 
-        hist = solve_migrated(solver, p, h, mdot, bc, 1e-3, 30000, 30000, q_wall)
+        hist = solve_hem(solver, p, h, mdot, bc_in, bc_out, 1e-3, 30000, 30000, q_wall)
         h_ss    = hist[-1, N:2*N]
         mdot_ss = hist[-1, 2*N:]
 
@@ -254,7 +254,7 @@ class TestConvergenceRate:
         N = 5
         fluid  = tp.SimpleFluidProperties()
         solver = tp.TwoPhaseSolver(N, DX, A_FLOW, D_H, F_D, fluid)
-        bc     = tp.TwoPhaseBCs(P_IN, P_OUT, H_IN)
+        bc_in, bc_out = pressure_bcs(P_IN, P_OUT, H_IN)
         q_wall = np.full(N, 1.0e6)  # strong heating for visible transient
 
         # Reference at very small dt
@@ -262,14 +262,14 @@ class TestConvergenceRate:
         dt_ref = 1e-7
         n_ref = int(T_end / dt_ref)
         p0, h0, mdot0 = initial_state(N)
-        hist_ref = solve_migrated(solver, p0, h0, mdot0, bc, dt_ref, n_ref, n_ref, q_wall)
+        hist_ref = solve_hem(solver, p0, h0, mdot0, bc_in, bc_out, dt_ref, n_ref, n_ref, q_wall)
         h_fine = hist_ref[-1, N]  # enthalpy of cell 0
 
         errors = []
         for dt in [1e-4, 5e-5, 2.5e-5]:
             n_steps = int(T_end / dt)
             p0, h0, mdot0 = initial_state(N)
-            hist = solve_migrated(solver, p0, h0, mdot0, bc, dt, n_steps, n_steps, q_wall)
+            hist = solve_hem(solver, p0, h0, mdot0, bc_in, bc_out, dt, n_steps, n_steps, q_wall)
             err = abs(hist[-1, N] - h_fine)
             errors.append(err)
 
@@ -290,19 +290,19 @@ class TestConvergenceRate:
 # ============================================================================
 
 class TestHeatedChannelBoiling:
-    """Subcooled inlet, uniform wall heat → boiling starts mid-channel."""
+    """Subcooled inlet, uniform wall heat -> boiling starts mid-channel."""
 
     def test_boiling_channel(self):
         """Verify enthalpy profile and mass/energy conservation with two-phase."""
         N = 10
         fluid  = tp.SimpleFluidProperties()
 
-        # High friction → low flow → wall heat causes boiling.
+        # High friction -> low flow -> wall heat causes boiling.
         # f_D=200, R_face ~ 13333 Pa/(kg/s), mdot ~ 0.7 kg/s
-        # q=10kW/cell → delta_h ~ 100kW/0.7 = 143 kJ/kg
+        # q=10kW/cell -> delta_h ~ 100kW/0.7 = 143 kJ/kg
         # h_out ~ 700+143 = 843 kJ/kg (into two-phase, h_f=800)
         solver = tp.TwoPhaseSolver(N, DX, A_FLOW, D_H, 200.0, fluid)
-        bc = tp.TwoPhaseBCs(P_IN, P_OUT, H_IN)
+        bc_in, bc_out = pressure_bcs(P_IN, P_OUT, H_IN)
         p, h, mdot = initial_state(N)
         q_wall = np.full(N, 10.0e3)  # 10 kW per cell, 100 kW total
 
@@ -311,7 +311,7 @@ class TestHeatedChannelBoiling:
         dt = 1e-3
         n_steps = 300000
         for chunk in range(3):
-            hist = solve_migrated(solver, p, h, mdot, bc, dt, n_steps // 3,
+            hist = solve_hem(solver, p, h, mdot, bc_in, bc_out, dt, n_steps // 3,
                                 n_steps // 3, q_wall)
             p    = hist[-1, :N].copy()
             h    = hist[-1, N:2*N].copy()
@@ -465,7 +465,7 @@ class TestLinearizedMassConservation:
         N = 5
         fluid = tp.SimpleFluidProperties()
         solver = tp.TwoPhaseSolver(N, DX, A_FLOW, D_H, F_D, fluid)
-        bc = tp.TwoPhaseBCs(P_IN, P_OUT, H_IN)
+        bc_in, bc_out = pressure_bcs(P_IN, P_OUT, H_IN)
         p, h, mdot = initial_state(N)
         dt = 1e-3
 
@@ -481,14 +481,14 @@ class TestLinearizedMassConservation:
             props = [fluid.evaluate(p[i], h[i]) for i in range(N)]
 
             # Face resistances (same as solver computes)
-            rho_in = fluid.evaluate(bc.p_in, bc.h_in).rho
+            rho_in = fluid.evaluate(P_IN, H_IN).rho
             R = [0.0] * (N + 1)
             R[0] = geom / (0.5 * (rho_in + props[0].rho))
             for i in range(1, N):
                 R[i] = geom / (0.5 * (props[i - 1].rho + props[i].rho))
             R[N] = geom / props[N - 1].rho
 
-            step_hem_migrated(solver, p, h, mdot, bc, dt)
+            step_hem(solver, p, h, mdot, bc_in, bc_out, dt)
 
             # Track the global flow scale for normalization
             flow_scale = max(flow_scale, abs(mdot[0]))
@@ -496,8 +496,8 @@ class TestLinearizedMassConservation:
             # Check tridiagonal residual cell-by-cell (absolute)
             for i in range(N):
                 alpha = V * props[i].drho_dp_h / dt
-                p_left  = bc.p_in if i == 0 else p[i - 1]
-                p_right = bc.p_out if i == N - 1 else p[i + 1]
+                p_left  = P_IN if i == 0 else p[i - 1]
+                p_right = P_OUT if i == N - 1 else p[i + 1]
                 mdot_l = (p_left - p[i]) / R[i]
                 mdot_r = (p[i] - p_right) / R[i + 1]
 
@@ -524,10 +524,10 @@ class TestReverseFlow:
         fluid = tp.SimpleFluidProperties()
         solver = tp.TwoPhaseSolver(N, DX, A_FLOW, D_H, F_D, fluid)
         # Reverse: p_out > p_in.  h_in is still the "inlet" BC enthalpy.
-        bc = tp.TwoPhaseBCs(P_OUT, P_IN, H_IN)
+        bc_in, bc_out = pressure_bcs(P_OUT, P_IN, H_IN)
         p, h, mdot = initial_state(N)
 
-        hist = solve_migrated(solver, p, h, mdot, bc, 1e-3, 20000, 20000)
+        hist = solve_hem(solver, p, h, mdot, bc_in, bc_out, 1e-3, 20000, 20000)
         mdot_ss = hist[-1, 2 * N:]
 
         # Flow should be negative (right to left)
@@ -547,13 +547,13 @@ class TestReverseFlow:
         # Reverse flow with high friction to keep flow low
         solver_hf = tp.TwoPhaseSolver(N, DX, A_FLOW, D_H, 200.0, fluid)
         # Reverse: p_out > p_in. Flow goes right-to-left.
-        bc = tp.TwoPhaseBCs(P_OUT, P_IN, H_IN)
+        bc_in, bc_out = pressure_bcs(P_OUT, P_IN, H_IN)
         p, h, mdot = initial_state(N)
 
         q_wall = np.full(N, 10.0e3)
         # Run to approach steady state
         for _ in range(3):
-            hist = solve_migrated(solver_hf, p, h, mdot, bc, 1e-3, 100000, 100000, q_wall)
+            hist = solve_hem(solver_hf, p, h, mdot, bc_in, bc_out, 1e-3, 100000, 100000, q_wall)
             p = hist[-1, :N].copy()
             h = hist[-1, N:2 * N].copy()
             mdot = hist[-1, 2 * N:].copy()
@@ -588,7 +588,7 @@ class TestSpatialConvergence:
             dx_local = L_total / N
             # Same pipe, same friction, more cells
             solver = tp.TwoPhaseSolver(N, dx_local, A_FLOW, D_H, F_D, fluid)
-            bc = tp.TwoPhaseBCs(P_IN, P_OUT, H_IN)
+            bc_in, bc_out = pressure_bcs(P_IN, P_OUT, H_IN)
 
             p = np.full(N, 0.5 * (P_IN + P_OUT))
             h = np.full(N, H_IN)
@@ -605,7 +605,7 @@ class TestSpatialConvergence:
             dt = min(1e-3, 0.3 * dt_cfl)
             n_steps = max(30000, int(30.0 / dt))
 
-            hist = solve_migrated(solver, p, h, mdot, bc, dt, n_steps, n_steps, q_wall)
+            hist = solve_hem(solver, p, h, mdot, bc_in, bc_out, dt, n_steps, n_steps, q_wall)
             h_ss = hist[-1, N:2 * N]
             mdot_ss = hist[-1, 2 * N:]
 
@@ -631,12 +631,12 @@ class TestSingleCell:
         N = 1
         fluid = tp.SimpleFluidProperties()
         solver = tp.TwoPhaseSolver(N, DX, A_FLOW, D_H, F_D, fluid)
-        bc = tp.TwoPhaseBCs(P_IN, P_OUT, H_IN)
+        bc_in, bc_out = pressure_bcs(P_IN, P_OUT, H_IN)
         p, h, mdot = initial_state(N)
         dt = 1e-3
 
         for _ in range(1000):
-            step_hem_migrated(solver, p, h, mdot, bc, dt)
+            step_hem(solver, p, h, mdot, bc_in, bc_out, dt)
 
         # At steady state: mdot[0] == mdot[1]
         assert abs(mdot[0] - mdot[1]) / abs(mdot[0]) < 1e-10, \
@@ -653,7 +653,7 @@ class TestSingleCell:
         # Use higher friction to reduce flow and relax CFL constraint
         f_D_high = 2.0
         solver = tp.TwoPhaseSolver(N, DX, A_FLOW, D_H, f_D_high, fluid)
-        bc = tp.TwoPhaseBCs(P_IN, P_OUT, H_IN)
+        bc_in, bc_out = pressure_bcs(P_IN, P_OUT, H_IN)
         p, h, mdot = initial_state(N)
         q_wall = np.array([50.0e3])
 
@@ -666,7 +666,7 @@ class TestSingleCell:
         dt = 0.3 * dt_cfl
         n_steps = int(30.0 / dt)
 
-        hist = solve_migrated(solver, p, h, mdot, bc, dt, n_steps, n_steps, q_wall)
+        hist = solve_hem(solver, p, h, mdot, bc_in, bc_out, dt, n_steps, n_steps, q_wall)
         h_ss = hist[-1, N:2 * N]
         mdot_ss = hist[-1, 2 * N:]
 
@@ -691,7 +691,7 @@ class TestSaturationCrossing:
         solver = tp.TwoPhaseSolver(N, DX, A_FLOW, D_H, 200.0, fluid)
         # Start very close to saturation
         h_init = 790.0e3  # just below h_f = 800 kJ/kg at p_ref
-        bc = tp.TwoPhaseBCs(P_IN, P_OUT, h_init)
+        bc_in, bc_out = pressure_bcs(P_IN, P_OUT, h_init)
         p = np.full(N, 0.5 * (P_IN + P_OUT))
         h = np.full(N, h_init)
         mdot = np.zeros(N + 1)
@@ -701,7 +701,7 @@ class TestSaturationCrossing:
 
         # Run and verify no NaN/Inf
         for chunk in range(3):
-            hist = solve_migrated(solver, p, h, mdot, bc, 1e-3, 100000, 100000, q_wall)
+            hist = solve_hem(solver, p, h, mdot, bc_in, bc_out, 1e-3, 100000, 100000, q_wall)
             p = hist[-1, :N].copy()
             h = hist[-1, N:2 * N].copy()
             mdot = hist[-1, 2 * N:].copy()
@@ -742,15 +742,15 @@ class TestInputValidation:
     def test_size_mismatch(self):
         fluid = tp.SimpleFluidProperties()
         solver = tp.TwoPhaseSolver(5, DX, A_FLOW, D_H, F_D, fluid)
-        bc = tp.TwoPhaseBCs(P_IN, P_OUT, H_IN)
+        bc_in, bc_out = pressure_bcs(P_IN, P_OUT, H_IN)
         # Wrong-sized arrays
         with pytest.raises(Exception):
-            step_hem_migrated(solver, np.zeros(3), np.zeros(5), np.zeros(6), bc, 1e-3)
+            step_hem(solver, np.zeros(3), np.zeros(5), np.zeros(6), bc_in, bc_out, 1e-3)
 
     def test_negative_dt(self):
         fluid = tp.SimpleFluidProperties()
         solver = tp.TwoPhaseSolver(5, DX, A_FLOW, D_H, F_D, fluid)
-        bc = tp.TwoPhaseBCs(P_IN, P_OUT, H_IN)
+        bc_in, bc_out = pressure_bcs(P_IN, P_OUT, H_IN)
         p, h, mdot = initial_state(5)
         with pytest.raises(Exception):
-            step_hem_migrated(solver, p, h, mdot, bc, -1e-3)
+            step_hem(solver, p, h, mdot, bc_in, bc_out, -1e-3)

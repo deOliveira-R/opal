@@ -20,7 +20,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "two_phase"))
 import opal_two_phase as tp
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from bc_helpers import step_5eq_migrated, step_hem_migrated, solve_migrated, reset_time
+from bc_helpers import step_5eq, step_hem, solve_hem, pressure_bcs, wall_pressure_bcs, reset_time
 
 
 # ============================================================================
@@ -224,14 +224,7 @@ class TestVaporEnthalpyFloor:
         N = 5
 
         pp = fluid.evaluate_phasic(10e6)
-        bc = tp.BoundaryConditions()
-        bc.bc_type_in = tp.BCType.PRESSURE
-        bc.bc_type_out = tp.BCType.PRESSURE
-        bc.p_in = 10e6
-        bc.p_out = 9.5e6
-        bc.h_in = pp.h_sat_l + 50e3  # slightly above saturation
-        bc.h_l_in = bc.h_in
-        bc.h_v_in = pp.h_sat_v
+        bc_in, bc_out = pressure_bcs(10e6, 9.5e6, pp.h_sat_l + 50e3, h_v=pp.h_sat_v)
 
         p = np.full(N, 10e6)
         alpha = np.full(N, 0.1)
@@ -241,7 +234,7 @@ class TestVaporEnthalpyFloor:
         dt = 1e-4
 
         for step in range(200):
-            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, dt)
+            step_5eq(solver, p, alpha, h_l, h_v, mdot, bc_in, bc_out, dt)
             for i in range(N):
                 pp_i = fluid.evaluate_phasic(p[i])
                 assert h_v[i] >= pp_i.h_sat_v - 1.0, (
@@ -255,11 +248,7 @@ class TestVaporEnthalpyFloor:
         N = 3
 
         pp = fluid.evaluate_phasic(10e6)
-        bc = tp.BoundaryConditions()
-        bc.bc_type_in = tp.BCType.PRESSURE
-        bc.bc_type_out = tp.BCType.PRESSURE
-        bc.p_in = 10e6; bc.p_out = 10e6
-        bc.h_in = pp.h_sat_l; bc.h_l_in = pp.h_sat_l; bc.h_v_in = pp.h_sat_v
+        bc_in, bc_out = pressure_bcs(10e6, 10e6, pp.h_sat_l, h_v=pp.h_sat_v)
 
         p = np.full(N, 10e6)
         alpha = np.full(N, 0.05)
@@ -267,7 +256,7 @@ class TestVaporEnthalpyFloor:
         h_v = np.full(N, pp.h_sat_v - 200e3)  # 200 kJ/kg below floor
         mdot = np.zeros(N + 1)
 
-        step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, 1e-4)
+        step_5eq(solver, p, alpha, h_l, h_v, mdot, bc_in, bc_out, 1e-4)
 
         for i in range(N):
             pp_i = fluid.evaluate_phasic(p[i])
@@ -289,12 +278,7 @@ class TestVaporDensityPositivity:
         N = 5
 
         pp = fluid.evaluate_phasic(10e6)
-        bc = tp.BoundaryConditions()
-        bc.bc_type_in = tp.BCType.PRESSURE
-        bc.bc_type_out = tp.BCType.PRESSURE
-        bc.p_in = 10e6; bc.p_out = 9.0e6
-        bc.h_in = pp.h_sat_l + 100e3  # superheated
-        bc.h_l_in = bc.h_in; bc.h_v_in = pp.h_sat_v
+        bc_in, bc_out = pressure_bcs(10e6, 9.0e6, pp.h_sat_l + 100e3, h_v=pp.h_sat_v)
 
         p = np.full(N, 10e6)
         alpha = np.full(N, 0.01)
@@ -303,7 +287,7 @@ class TestVaporDensityPositivity:
         mdot = np.zeros(N + 1)
 
         for step in range(500):
-            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, 1e-4)
+            step_5eq(solver, p, alpha, h_l, h_v, mdot, bc_in, bc_out, 1e-4)
             for i in range(N):
                 if alpha[i] > 1e-8:
                     rho_v = fluid.rho_vapor(p[i], h_v[i])
@@ -318,12 +302,7 @@ class TestVaporDensityPositivity:
         N = 5
 
         pp = fluid.evaluate_phasic(10e6)
-        bc = tp.BoundaryConditions()
-        bc.bc_type_in = tp.BCType.PRESSURE
-        bc.bc_type_out = tp.BCType.PRESSURE
-        bc.p_in = 10e6; bc.p_out = 9.5e6
-        bc.h_in = pp.h_sat_l - 50e3  # subcooled inlet
-        bc.h_l_in = bc.h_in; bc.h_v_in = pp.h_sat_v
+        bc_in, bc_out = pressure_bcs(10e6, 9.5e6, pp.h_sat_l - 50e3, h_v=pp.h_sat_v)
 
         p = np.full(N, 10e6)
         alpha = np.full(N, 0.3)  # start with vapor present
@@ -332,7 +311,7 @@ class TestVaporDensityPositivity:
         mdot = np.zeros(N + 1)
 
         for step in range(500):
-            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, 1e-4)
+            step_5eq(solver, p, alpha, h_l, h_v, mdot, bc_in, bc_out, 1e-4)
             for i in range(N):
                 if alpha[i] > 1e-8:
                     rho_v = fluid.rho_vapor(p[i], h_v[i])
@@ -355,12 +334,7 @@ class TestLiquidEnthalpyBounds:
         N = 3
 
         pp = fluid.evaluate_phasic(10e6)
-        bc = tp.BoundaryConditions()
-        bc.bc_type_in = tp.BCType.PRESSURE
-        bc.bc_type_out = tp.BCType.PRESSURE
-        bc.p_in = 10e6; bc.p_out = 9.5e6
-        bc.h_in = pp.h_sat_v - 10e3  # very high inlet enthalpy
-        bc.h_l_in = bc.h_in; bc.h_v_in = pp.h_sat_v
+        bc_in, bc_out = pressure_bcs(10e6, 9.5e6, pp.h_sat_v - 10e3, h_v=pp.h_sat_v)
 
         p = np.full(N, 10e6)
         alpha = np.full(N, 0.01)
@@ -372,7 +346,7 @@ class TestLiquidEnthalpyBounds:
         q_wall = np.full(N, 1e8)  # 100 MW/m3
 
         for step in range(100):
-            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, 1e-4, q_wall)
+            step_5eq(solver, p, alpha, h_l, h_v, mdot, bc_in, bc_out, 1e-4, q_wall)
             for i in range(N):
                 pp_i = fluid.evaluate_phasic(p[i])
                 assert h_l[i] <= pp_i.h_sat_v + 1.0, (
@@ -386,12 +360,7 @@ class TestLiquidEnthalpyBounds:
         N = 3
 
         pp = fluid.evaluate_phasic(10e6)
-        bc = tp.BoundaryConditions()
-        bc.bc_type_in = tp.BCType.PRESSURE
-        bc.bc_type_out = tp.BCType.PRESSURE
-        bc.p_in = 10e6; bc.p_out = 9.5e6
-        bc.h_in = 50e3  # very low enthalpy
-        bc.h_l_in = bc.h_in; bc.h_v_in = pp.h_sat_v
+        bc_in, bc_out = pressure_bcs(10e6, 9.5e6, 50e3, h_v=pp.h_sat_v)
 
         p = np.full(N, 10e6)
         alpha = np.full(N, 0.01)
@@ -403,7 +372,7 @@ class TestLiquidEnthalpyBounds:
         q_wall = np.full(N, -1e8)
 
         for step in range(100):
-            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, 1e-4, q_wall)
+            step_5eq(solver, p, alpha, h_l, h_v, mdot, bc_in, bc_out, 1e-4, q_wall)
             for i in range(N):
                 assert h_l[i] >= 1e4 - 1.0, (
                     f"step={step}, cell={i}: h_l={h_l[i]:.1f} < h_min=1e4"
@@ -431,11 +400,7 @@ class TestSuperheatedEnthalpyDirection:
         pp = fluid.evaluate_phasic(10e6)
         h_l_init = pp.h_sat_l + 100e3  # 100 kJ/kg above saturation
 
-        bc = tp.BoundaryConditions()
-        bc.bc_type_in = tp.BCType.PRESSURE
-        bc.bc_type_out = tp.BCType.PRESSURE
-        bc.p_in = 10e6; bc.p_out = 10e6  # equal pressure → minimal flow
-        bc.h_in = h_l_init; bc.h_l_in = h_l_init; bc.h_v_in = pp.h_sat_v
+        bc_in, bc_out = pressure_bcs(10e6, 10e6, h_l_init, h_v=pp.h_sat_v)
 
         p = np.full(N, 10e6)
         alpha = np.full(N, 0.1)  # two-phase present
@@ -444,7 +409,7 @@ class TestSuperheatedEnthalpyDirection:
         mdot = np.zeros(N + 1)
 
         for step in range(500):
-            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, 1e-4)
+            step_5eq(solver, p, alpha, h_l, h_v, mdot, bc_in, bc_out, 1e-4)
 
         # Interior cells (avoid boundary effects at cells 0 and N-1)
         for i in range(1, N - 1):
@@ -466,11 +431,7 @@ class TestSuperheatedEnthalpyDirection:
         pp = fluid.evaluate_phasic(10e6)
         h_l_init = pp.h_sat_l + 50e3
 
-        bc = tp.BoundaryConditions()
-        bc.bc_type_in = tp.BCType.PRESSURE
-        bc.bc_type_out = tp.BCType.PRESSURE
-        bc.p_in = 10e6; bc.p_out = 10e6
-        bc.h_in = h_l_init; bc.h_l_in = h_l_init; bc.h_v_in = pp.h_sat_v
+        bc_in, bc_out = pressure_bcs(10e6, 10e6, h_l_init, h_v=pp.h_sat_v)
 
         p = np.full(N, 10e6)
         alpha = np.full(N, 0.1)
@@ -479,7 +440,7 @@ class TestSuperheatedEnthalpyDirection:
         mdot = np.zeros(N + 1)
 
         for step in range(2000):
-            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, 1e-4)
+            step_5eq(solver, p, alpha, h_l, h_v, mdot, bc_in, bc_out, 1e-4)
 
         # h_l should be closer to h_sat_l than to initial value
         mid = N // 2
@@ -506,12 +467,12 @@ class TestIAPWSInvalidInput:
         p = 1.5e6
         pp = fluid.evaluate_phasic(p)
 
-        # Valid input: h_v = h_sat_v → should give positive rho_v
+        # Valid input: h_v = h_sat_v -> should give positive rho_v
         rho_valid = fluid.rho_vapor(p, pp.h_sat_v)
         assert rho_valid > 0, f"rho_vapor at saturation should be positive"
         assert rho_valid == pytest.approx(pp.rho_v, rel=0.01)
 
-        # Invalid input: h_v well below h_sat_v → non-physical
+        # Invalid input: h_v well below h_sat_v -> non-physical
         h_v_invalid = pp.h_sat_v - 250e3
         rho_invalid = fluid.rho_vapor(p, h_v_invalid)
         # The result is non-physical (negative or wildly wrong)

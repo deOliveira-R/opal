@@ -23,7 +23,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "two_phase"))
 import opal_two_phase as tp
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from bc_helpers import step_5eq_migrated, step_hem_migrated, solve_migrated, reset_time
+from bc_helpers import step_5eq, step_hem, solve_hem, pressure_bcs, wall_pressure_bcs, wall_wall_bcs, reset_time
 
 
 # ============================================================================
@@ -53,9 +53,7 @@ def make_state(T_l, T_sat, alpha=0.3, **kw):
 # ============================================================================
 
 class TestTightenedEnergyConservation:
-    """Energy change should be accountable: dE = boundary_flux + q_wall.
-    The old test allowed 10x of q_total, which masks 900% errors.
-    Here we compute the expected energy change from boundary fluxes."""
+    """Energy change should be accountable: dE = boundary_flux + q_wall."""
 
     def test_energy_balance_no_heat_subcooled(self):
         """No wall heat, subcooled flow: energy change = boundary enthalpy flux."""
@@ -68,10 +66,7 @@ class TestTightenedEnergyConservation:
                                     tp.DonorCell(), model, tp.InertialMomentum())
 
         h_sub = pp.h_sat_l - 100e3
-        bc = tp.BoundaryConditions()
-        bc.bc_type_in = tp.BCType.PRESSURE; bc.bc_type_out = tp.BCType.PRESSURE
-        bc.p_in = 10e6; bc.p_out = 9.5e6
-        bc.h_in = h_sub; bc.h_l_in = h_sub; bc.h_v_in = pp.h_sat_v
+        bc_in, bc_out = pressure_bcs(10e6, 9.5e6, h_sub, h_v=pp.h_sat_v)
 
         p = np.full(N, 10e6)
         alpha = np.full(N, 1e-8)
@@ -82,10 +77,10 @@ class TestTightenedEnergyConservation:
 
         # Run to approximate steady state
         for _ in range(2000):
-            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, dt)
+            step_5eq(solver, p, alpha, h_l, h_v, mdot, bc_in, bc_out, dt)
 
         # At steady state with uniform subcooled flow:
-        # dE/dt ≈ 0, boundary flux ≈ 0 (same h at inlet and outlet)
+        # dE/dt ~ 0, boundary flux ~ 0 (same h at inlet and outlet)
         # Verify: energy is not drifting
         def total_energy():
             E = 0.0
@@ -96,7 +91,7 @@ class TestTightenedEnergyConservation:
 
         E1 = total_energy()
         for _ in range(100):
-            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, dt)
+            step_5eq(solver, p, alpha, h_l, h_v, mdot, bc_in, bc_out, dt)
         E2 = total_energy()
 
         # Energy should not drift at steady state (< 0.1% of total)
@@ -105,10 +100,7 @@ class TestTightenedEnergyConservation:
         )
 
     def test_energy_balance_with_wall_heat(self):
-        """With wall heat and closed walls, energy should increase.
-        Closed-wall BCs cause pressure to adjust (compressibility),
-        so total energy change includes both q_wall and p*dV work.
-        We verify: (1) energy increases, (2) h_l increases monotonically."""
+        """With wall heat and closed walls, energy should increase."""
         fluid = tp.SimpleFluidProperties()
         pp = fluid.evaluate_phasic(10e6)
         closures = tp.DriftFluxClosures(H_i=0.0, C_0=1.0)
@@ -118,10 +110,7 @@ class TestTightenedEnergyConservation:
         solver = tp.TwoPhaseSolver(N, dx, A, D_h, f_D, fluid,
                                     tp.DonorCell(), model, tp.InertialMomentum())
 
-        bc = tp.BoundaryConditions()
-        bc.bc_type_in = tp.BCType.WALL; bc.bc_type_out = tp.BCType.WALL
-        bc.h_in = pp.h_sat_l - 100e3; bc.h_l_in = bc.h_in
-        bc.h_v_in = pp.h_sat_v
+        bc_in, bc_out = wall_wall_bcs(pp.h_sat_l - 100e3, pp.h_sat_v)
 
         p = np.full(N, 10e6)
         alpha = np.full(N, 1e-8)
@@ -132,7 +121,7 @@ class TestTightenedEnergyConservation:
         q_wall = np.full(N, 1e5)
 
         for _ in range(200):
-            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, 1e-4, q_wall)
+            step_5eq(solver, p, alpha, h_l, h_v, mdot, bc_in, bc_out, 1e-4, q_wall)
 
         # h_l should increase from heating
         for i in range(N):
@@ -164,10 +153,7 @@ class TestQuantitativeVoidGrowth:
 
         alpha_init = 0.1
         h_l_init = pp.h_sat_l + 200e3  # strongly superheated
-        bc = tp.BoundaryConditions()
-        bc.bc_type_in = tp.BCType.PRESSURE; bc.bc_type_out = tp.BCType.PRESSURE
-        bc.p_in = 10e6; bc.p_out = 10e6
-        bc.h_in = h_l_init; bc.h_l_in = h_l_init; bc.h_v_in = pp.h_sat_v
+        bc_in, bc_out = pressure_bcs(10e6, 10e6, h_l_init, h_v=pp.h_sat_v)
 
         p = np.array([10e6])
         alpha = np.array([alpha_init])
@@ -185,10 +171,9 @@ class TestQuantitativeVoidGrowth:
         Gamma_predicted = -q_i_l / h_fg
 
         # Run enough steps for the Gamma-driven growth to accumulate
-        # beyond initial transient from pressure adjustment.
         n_steps = 500
         for _ in range(n_steps):
-            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, dt)
+            step_5eq(solver, p, alpha, h_l, h_v, mdot, bc_in, bc_out, dt)
 
         # Gamma is positive (evaporation), so void must grow over time
         assert Gamma_predicted > 0, "Prediction: superheated should give Gamma > 0"
@@ -198,9 +183,7 @@ class TestQuantitativeVoidGrowth:
         )
 
     def test_flashing_produces_significant_void(self):
-        """Strengthened version of test_superheated_flashing.
-        After 5000 steps with H_i=1e6, superheated liquid should produce
-        substantial void (> 5%), not just > 0.5%."""
+        """Strengthened version of test_superheated_flashing."""
         fluid = tp.SimpleFluidProperties()
         pp = fluid.evaluate_phasic(10e6)
         closures = tp.DriftFluxClosures(H_i=1e6, C_0=1.0)
@@ -209,11 +192,7 @@ class TestQuantitativeVoidGrowth:
         solver = tp.TwoPhaseSolver(N, 1.0, 0.01, 0.1, 0.02, fluid,
                                     tp.DonorCell(), model, tp.InertialMomentum())
 
-        bc = tp.BoundaryConditions()
-        bc.bc_type_in = tp.BCType.PRESSURE; bc.bc_type_out = tp.BCType.PRESSURE
-        bc.p_in = 10.1e6; bc.p_out = 10e6
-        bc.h_in = pp.h_sat_l + 50e3
-        bc.h_l_in = bc.h_in; bc.h_v_in = pp.h_sat_v
+        bc_in, bc_out = pressure_bcs(10.1e6, 10e6, pp.h_sat_l + 50e3, h_v=pp.h_sat_v)
 
         p = np.full(N, 10e6)
         alpha = np.full(N, 0.01)
@@ -222,10 +201,8 @@ class TestQuantitativeVoidGrowth:
         mdot = np.zeros(N + 1)
 
         for _ in range(5000):
-            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, 1e-4)
+            step_5eq(solver, p, alpha, h_l, h_v, mdot, bc_in, bc_out, 1e-4)
 
-        # With advective washout, void growth is limited. Verify it's
-        # substantially above the initial 1% seed.
         assert np.max(alpha) > 0.012, (
             f"With H_i=1e6 and 50 kJ/kg superheat, void should grow above 1.2%: "
             f"max(alpha) = {np.max(alpha):.4f}"
@@ -237,22 +214,18 @@ class TestQuantitativeVoidGrowth:
 # ============================================================================
 
 class TestVgjExtremeDensity:
-    """Near critical point: rho_l ≈ rho_v → drho ≈ 0.
-    V_gj should remain finite due to the drho floor."""
+    """Near critical point: rho_l ~ rho_v -> drho ~ 0."""
 
     def test_near_critical_density(self):
-        """rho_l = rho_v: drho floored at 0.01, V_gj stays finite."""
         s = make_state(T_l=500, T_sat=500, alpha=0.3,
                        rho_l=350.0, rho_v=350.0, sigma=0.001)
         c = tp.DriftFluxClosures(H_i=1e5, C_0=1.13)
         d = c.drift_flux(s)
         assert np.isfinite(d.V_gj), "V_gj should be finite near critical"
         assert d.V_gj >= 0, "V_gj should be non-negative"
-        # V_gj should be very small (drho ≈ 0 → buoyancy ≈ 0)
         assert d.V_gj < 0.01, f"V_gj={d.V_gj} should be tiny near critical"
 
     def test_very_low_liquid_density(self):
-        """rho_l near zero (extreme): rho_l² floored at 1.0."""
         s = make_state(T_l=500, T_sat=500, alpha=0.3,
                        rho_l=0.5, rho_v=0.1, sigma=0.05)
         c = tp.DriftFluxClosures(H_i=1e5, C_0=1.13)
@@ -268,22 +241,19 @@ class TestHfgFloor:
     """h_fg < 1.0 is floored to 1.0 to prevent division by zero."""
 
     def test_near_zero_hfg(self):
-        """h_sat_l ≈ h_sat_v → h_fg floored, Gamma stays finite."""
         s = make_state(T_l=510, T_sat=500, alpha=0.3,
                        h_sat_l=2000e3, h_sat_v=2000e3 + 0.5)
         c = tp.DriftFluxClosures(H_i=1e5, C_0=1.0)
         r = c.compute(s)
-        assert np.isfinite(r.Gamma), "Gamma should be finite with h_fg ≈ 0"
+        assert np.isfinite(r.Gamma), "Gamma should be finite with h_fg ~ 0"
         assert np.isfinite(r.q_i_l)
 
     def test_equal_saturation_enthalpies(self):
-        """h_sat_l = h_sat_v exactly → h_fg = 0, floored to 1.0."""
         s = make_state(T_l=510, T_sat=500, alpha=0.3,
                        h_sat_l=2000e3, h_sat_v=2000e3)
         c = tp.DriftFluxClosures(H_i=1e5, C_0=1.0)
         r = c.compute(s)
         assert np.isfinite(r.Gamma)
-        # Gamma should be very large (H_i * a_i * dT / 1.0)
         assert abs(r.Gamma) > 1e4
 
 
@@ -295,8 +265,6 @@ class TestIAPWSBoundaryValidity:
     """Test IAPWS property functions at edge-of-validity inputs."""
 
     def test_rho_liquid_at_saturation(self):
-        """rho_liquid at h = h_sat_l should give rho_f.
-        Skip 20 MPa (near critical: Newton iteration less accurate)."""
         fluid = tp.IAPWSIF97Properties()
         for p_MPa in [1.0, 5.0, 10.0, 15.0]:
             p = p_MPa * 1e6
@@ -307,8 +275,6 @@ class TestIAPWSBoundaryValidity:
             )
 
     def test_rho_vapor_at_saturation(self):
-        """rho_vapor at h = h_sat_v should give rho_g.
-        Skip 20 MPa (near critical: Newton iteration less accurate)."""
         fluid = tp.IAPWSIF97Properties()
         for p_MPa in [1.0, 5.0, 10.0, 15.0]:
             p = p_MPa * 1e6
@@ -319,24 +285,19 @@ class TestIAPWSBoundaryValidity:
             )
 
     def test_rho_liquid_above_saturation(self):
-        """P2-8: rho_liquid with h_l > h_f (metastable superheated liquid).
-        Region 1 backward equation should still return physical density."""
         fluid = tp.IAPWSIF97Properties()
         pp = fluid.evaluate_phasic(5e6)
-        # 100 kJ/kg above saturation
         rho = fluid.rho_liquid(5e6, pp.h_sat_l + 100e3)
         assert rho > 0, f"rho_liquid should be positive even above saturation"
         assert rho < pp.rho_l, "Superheated liquid should be less dense"
 
     def test_T_liquid_above_saturation(self):
-        """T_liquid with h_l > h_f should give T > T_sat."""
         fluid = tp.IAPWSIF97Properties()
         pp = fluid.evaluate_phasic(5e6)
         T = fluid.T_liquid(5e6, pp.h_sat_l + 100e3)
         assert T > pp.T_sat, f"T_liquid above saturation: T={T:.1f} <= T_sat={pp.T_sat:.1f}"
 
     def test_iapws_high_pressure_R1(self):
-        """IAPWS Region 1 at high pressure (20 MPa, near ceiling)."""
         fluid = tp.IAPWSIF97Properties()
         pp = fluid.evaluate_phasic(20e6)
         rho = fluid.rho_liquid(20e6, pp.h_sat_l - 50e3)
@@ -350,14 +311,9 @@ class TestIAPWSBoundaryValidity:
 # ============================================================================
 
 class TestSimpleFluidExtremes:
-    """SimpleFluid rho_vapor can go negative for extreme h_v.
-    The solver must prevent such inputs via enthalpy clamping."""
-
     def test_rho_vapor_negative_at_extreme_hv(self):
-        """Document: SimpleFluid rho_vapor becomes negative for very high h_v."""
         fluid = tp.SimpleFluidProperties()
         pp = fluid.evaluate_phasic(10e6)
-        # Try increasingly high h_v until rho_vapor goes negative
         found_negative = False
         for h_v_factor in [1.5, 2.0, 3.0, 5.0, 10.0]:
             h_v = pp.h_sat_v * h_v_factor
@@ -365,8 +321,6 @@ class TestSimpleFluidExtremes:
             if rho <= 0:
                 found_negative = True
                 break
-        # This documents a known property of the linear model
-        # The solver's h_v clamp at 4 MJ/kg should prevent reaching this
 
 
 # ============================================================================
@@ -374,10 +328,7 @@ class TestSimpleFluidExtremes:
 # ============================================================================
 
 class TestZeroFlowRate:
-    """p_in = p_out → no driving pressure → zero flow at steady state."""
-
     def test_equal_pressure_zero_flow(self):
-        """With equal pressures and no heating, flow should be zero."""
         fluid = tp.SimpleFluidProperties()
         pp = fluid.evaluate_phasic(10e6)
         closures = tp.DriftFluxClosures(H_i=0.0, C_0=1.0)
@@ -386,11 +337,7 @@ class TestZeroFlowRate:
         solver = tp.TwoPhaseSolver(N, 1.0, 0.01, 0.1, 0.02, fluid,
                                     tp.DonorCell(), model, tp.InertialMomentum())
 
-        bc = tp.BoundaryConditions()
-        bc.bc_type_in = tp.BCType.PRESSURE; bc.bc_type_out = tp.BCType.PRESSURE
-        bc.p_in = 10e6; bc.p_out = 10e6
-        bc.h_in = pp.h_sat_l - 100e3; bc.h_l_in = bc.h_in
-        bc.h_v_in = pp.h_sat_v
+        bc_in, bc_out = pressure_bcs(10e6, 10e6, pp.h_sat_l - 100e3, h_v=pp.h_sat_v)
 
         p = np.full(N, 10e6)
         alpha = np.full(N, 1e-8)
@@ -399,7 +346,7 @@ class TestZeroFlowRate:
         mdot = np.zeros(N + 1)
 
         for _ in range(500):
-            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, 1e-4)
+            step_5eq(solver, p, alpha, h_l, h_v, mdot, bc_in, bc_out, 1e-4)
 
         assert np.all(np.abs(mdot) < 1e-6), (
             f"Zero dp should give zero flow, got max |mdot|={np.max(np.abs(mdot)):.2e}"
@@ -413,10 +360,7 @@ class TestZeroFlowRate:
 # ============================================================================
 
 class TestVerySmallAlpha:
-    """Solver should remain stable with extremely small alpha."""
-
     def test_alpha_1e10_stable(self):
-        """alpha = 1e-10: solver should not produce NaN."""
         fluid = tp.SimpleFluidProperties()
         pp = fluid.evaluate_phasic(10e6)
         closures = tp.DriftFluxClosures(H_i=1e5, C_0=1.0)
@@ -425,11 +369,7 @@ class TestVerySmallAlpha:
         solver = tp.TwoPhaseSolver(N, 1.0, 0.01, 0.1, 0.02, fluid,
                                     tp.DonorCell(), model, tp.InertialMomentum())
 
-        bc = tp.BoundaryConditions()
-        bc.bc_type_in = tp.BCType.PRESSURE; bc.bc_type_out = tp.BCType.PRESSURE
-        bc.p_in = 10e6; bc.p_out = 9.5e6
-        bc.h_in = pp.h_sat_l - 50e3; bc.h_l_in = bc.h_in
-        bc.h_v_in = pp.h_sat_v
+        bc_in, bc_out = pressure_bcs(10e6, 9.5e6, pp.h_sat_l - 50e3, h_v=pp.h_sat_v)
 
         p = np.full(N, 10e6)
         alpha = np.full(N, 1e-10)
@@ -438,7 +378,7 @@ class TestVerySmallAlpha:
         mdot = np.zeros(N + 1)
 
         for step in range(200):
-            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, 1e-4)
+            step_5eq(solver, p, alpha, h_l, h_v, mdot, bc_in, bc_out, 1e-4)
             assert np.all(np.isfinite(p)), f"NaN in p at step {step}"
             assert np.all(np.isfinite(alpha)), f"NaN in alpha at step {step}"
             assert np.all(np.isfinite(h_l)), f"NaN in h_l at step {step}"
@@ -451,12 +391,7 @@ class TestVerySmallAlpha:
 # ============================================================================
 
 class TestPressureWorkSign:
-    """p_work = (1-alpha) * V * dp/dt for liquid, alpha * V * dp/dt for vapor.
-    Pressurization (dp > 0) adds energy. Depressurization (dp < 0) removes.
-    Tests use WALL BCs with no flow and no interfacial transfer to isolate."""
-
     def test_pressurization_increases_enthalpy(self):
-        """Sudden pressurization should increase liquid enthalpy."""
         fluid = tp.SimpleFluidProperties()
         pp = fluid.evaluate_phasic(10e6)
         closures = tp.DriftFluxClosures(H_i=0.0, C_0=1.0)
@@ -465,11 +400,8 @@ class TestPressureWorkSign:
         solver = tp.TwoPhaseSolver(N, 1.0, 0.01, 0.1, 0.0, fluid,
                                     tp.DonorCell(), model, tp.InertialMomentum())
 
-        # Start at 10 MPa, outlet at 10.5 MPa → pressure will rise
-        bc = tp.BoundaryConditions()
-        bc.bc_type_in = tp.BCType.WALL; bc.bc_type_out = tp.BCType.PRESSURE
-        bc.p_out = 10.5e6
-        bc.h_in = pp.h_sat_l - 100e3; bc.h_l_in = bc.h_in; bc.h_v_in = pp.h_sat_v
+        # Start at 10 MPa, outlet at 10.5 MPa -> pressure will rise
+        bc_in, bc_out = wall_pressure_bcs(10.5e6, pp.h_sat_l - 100e3, h_v=pp.h_sat_v)
 
         p = np.array([10e6])
         alpha = np.array([1e-8])
@@ -479,7 +411,7 @@ class TestPressureWorkSign:
 
         h_l_before = h_l[0]
         for _ in range(50):
-            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, 1e-4)
+            step_5eq(solver, p, alpha, h_l, h_v, mdot, bc_in, bc_out, 1e-4)
 
         # Pressure should have risen toward 10.5 MPa
         assert p[0] > 10e6, "Pressure should rise"
@@ -490,7 +422,6 @@ class TestPressureWorkSign:
         )
 
     def test_depressurization_decreases_enthalpy(self):
-        """Sudden depressurization should decrease liquid enthalpy."""
         fluid = tp.SimpleFluidProperties()
         pp = fluid.evaluate_phasic(10e6)
         closures = tp.DriftFluxClosures(H_i=0.0, C_0=1.0)
@@ -499,11 +430,8 @@ class TestPressureWorkSign:
         solver = tp.TwoPhaseSolver(N, 1.0, 0.01, 0.1, 0.0, fluid,
                                     tp.DonorCell(), model, tp.InertialMomentum())
 
-        # Start at 10 MPa, outlet at 9.5 MPa → pressure will drop
-        bc = tp.BoundaryConditions()
-        bc.bc_type_in = tp.BCType.WALL; bc.bc_type_out = tp.BCType.PRESSURE
-        bc.p_out = 9.5e6
-        bc.h_in = pp.h_sat_l - 100e3; bc.h_l_in = bc.h_in; bc.h_v_in = pp.h_sat_v
+        # Start at 10 MPa, outlet at 9.5 MPa -> pressure will drop
+        bc_in, bc_out = wall_pressure_bcs(9.5e6, pp.h_sat_l - 100e3, h_v=pp.h_sat_v)
 
         p = np.array([10e6])
         alpha = np.array([1e-8])
@@ -513,7 +441,7 @@ class TestPressureWorkSign:
 
         h_l_before = h_l[0]
         for _ in range(50):
-            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, 1e-4)
+            step_5eq(solver, p, alpha, h_l, h_v, mdot, bc_in, bc_out, 1e-4)
 
         assert p[0] < 10e6, "Pressure should drop"
         assert h_l[0] < h_l_before, (
@@ -527,25 +455,17 @@ class TestPressureWorkSign:
 # ============================================================================
 
 class TestIAPWSNewtonConvergence:
-    """Verify that IAPWS T(p,h) Newton iteration converges for all
-    pressures in the solver's valid range."""
-
     @pytest.mark.parametrize("p_MPa", [0.1, 1.0, 5.0, 10.0, 15.0, 20.0])
     def test_T_liquid_roundtrip(self, p_MPa):
-        """T_ph_R1 should recover T from h_pT_R1 to high accuracy."""
         fluid = tp.IAPWSIF97Properties()
         p = p_MPa * 1e6
         pp = fluid.evaluate_phasic(p)
 
-        # Test at several subcooled temperatures
         for T_target in [pp.T_sat - 50, pp.T_sat - 10, pp.T_sat - 1]:
             if T_target < 273.15:
                 continue
-            h = fluid.evaluate(p, 0).rho  # dummy, use T_liquid instead
-            # Get h at (p, T) from a known subcooled state
-            h_sub = pp.h_sat_l - 50e3  # 50 kJ below saturation
+            h_sub = pp.h_sat_l - 50e3
             T_recovered = fluid.T_liquid(p, h_sub)
-            # Should be a reasonable subcooled temperature
             assert T_recovered < pp.T_sat, (
                 f"T_liquid({p_MPa} MPa, {h_sub/1e3:.0f} kJ/kg) = {T_recovered:.1f} "
                 f">= T_sat = {pp.T_sat:.1f}"
@@ -554,12 +474,11 @@ class TestIAPWSNewtonConvergence:
 
     @pytest.mark.parametrize("p_MPa", [0.1, 1.0, 5.0, 10.0, 15.0, 20.0])
     def test_T_vapor_roundtrip(self, p_MPa):
-        """T_ph_R2 should recover a physical vapor temperature."""
         fluid = tp.IAPWSIF97Properties()
         p = p_MPa * 1e6
         pp = fluid.evaluate_phasic(p)
 
-        h_sup = pp.h_sat_v + 50e3  # 50 kJ above saturation
+        h_sup = pp.h_sat_v + 50e3
         T_recovered = fluid.T_vapor(p, h_sup)
         assert T_recovered > pp.T_sat, (
             f"T_vapor({p_MPa} MPa, {h_sup/1e3:.0f} kJ/kg) = {T_recovered:.1f} "

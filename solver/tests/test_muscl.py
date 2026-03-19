@@ -21,7 +21,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "two_phase"))
 import opal_two_phase as tp
 import sys as _sys
 _sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent))
-from bc_helpers import step_hem_migrated, solve_migrated
+from bc_helpers import step_hem, solve_hem, pressure_bcs
 
 # ============================================================================
 # Shared setup
@@ -42,15 +42,15 @@ def make_solver(N, recon=None, f_D=F_D):
         solver = tp.TwoPhaseSolver(N, DX, A, D_H, f_D, fluid)
     else:
         solver = tp.TwoPhaseSolver(N, DX, A, D_H, f_D, fluid, recon)
-    bc = tp.TwoPhaseBCs(P_IN, P_OUT, H_IN)
-    return solver, fluid, bc
+    bc_in, bc_out = pressure_bcs(P_IN, P_OUT, H_IN)
+    return solver, fluid, bc_in, bc_out
 
 
-def run_to_steady(solver, bc, N, dt, n_steps, q_wall=None):
+def run_to_steady(solver, bc_in, bc_out, N, dt, n_steps, q_wall=None):
     p = np.full(N, 0.5 * (P_IN + P_OUT))
     h = np.full(N, H_IN)
     mdot = np.zeros(N + 1)
-    hist = solve_migrated(solver, p, h, mdot, bc, dt, n_steps, n_steps,
+    hist = solve_hem(solver, p, h, mdot, bc_in, bc_out, dt, n_steps, n_steps,
                         q_wall if q_wall is not None else None)
     return hist
 
@@ -69,7 +69,7 @@ class TestBackwardsCompatibility:
         solver_default = tp.TwoPhaseSolver(N, DX, A, D_H, F_D, fluid)
         solver_dc = tp.TwoPhaseSolver(N, DX, A, D_H, F_D, fluid, tp.DonorCell())
 
-        bc = tp.TwoPhaseBCs(P_IN, P_OUT, H_IN)
+        bc_in, bc_out = pressure_bcs(P_IN, P_OUT, H_IN)
         dt = 5e-4
         n_steps = 5000
 
@@ -77,10 +77,10 @@ class TestBackwardsCompatibility:
         h0 = np.full(N, H_IN)
         mdot0 = np.zeros(N + 1)
 
-        hist_default = solve_migrated(solver_default, 
-            p0.copy(), h0.copy(), mdot0.copy(), bc, dt, n_steps, n_steps)
-        hist_dc = solve_migrated(solver_dc, 
-            p0.copy(), h0.copy(), mdot0.copy(), bc, dt, n_steps, n_steps)
+        hist_default = solve_hem(solver_default,
+            p0.copy(), h0.copy(), mdot0.copy(), bc_in, bc_out, dt, n_steps, n_steps)
+        hist_dc = solve_hem(solver_dc,
+            p0.copy(), h0.copy(), mdot0.copy(), bc_in, bc_out, dt, n_steps, n_steps)
 
         np.testing.assert_array_equal(hist_default, hist_dc,
             err_msg="Default constructor must equal explicit DonorCell")
@@ -93,7 +93,7 @@ class TestBackwardsCompatibility:
         solver_default = tp.TwoPhaseSolver(N, DX, A, D_H, F_D, fluid)
         solver_dc = tp.TwoPhaseSolver(N, DX, A, D_H, F_D, fluid, tp.DonorCell())
 
-        bc = tp.TwoPhaseBCs(P_IN, P_OUT, H_IN)
+        bc_in, bc_out = pressure_bcs(P_IN, P_OUT, H_IN)
         q_wall = np.full(N, 50.0e3)
         dt = 5e-4
         n_steps = 5000
@@ -102,10 +102,10 @@ class TestBackwardsCompatibility:
         h0 = np.full(N, H_IN)
         mdot0 = np.zeros(N + 1)
 
-        hist_default = solve_migrated(solver_default, 
-            p0.copy(), h0.copy(), mdot0.copy(), bc, dt, n_steps, n_steps, q_wall)
-        hist_dc = solve_migrated(solver_dc, 
-            p0.copy(), h0.copy(), mdot0.copy(), bc, dt, n_steps, n_steps, q_wall)
+        hist_default = solve_hem(solver_default,
+            p0.copy(), h0.copy(), mdot0.copy(), bc_in, bc_out, dt, n_steps, n_steps, q_wall)
+        hist_dc = solve_hem(solver_dc,
+            p0.copy(), h0.copy(), mdot0.copy(), bc_in, bc_out, dt, n_steps, n_steps, q_wall)
 
         np.testing.assert_array_equal(hist_default, hist_dc)
 
@@ -129,10 +129,10 @@ class TestMUSCLSharperProfiles:
         L_total = 5.0
         dx_local = L_total / N
         fluid = tp.SimpleFluidProperties()
-        # High friction → low flow → strong enthalpy gradient
+        # High friction -> low flow -> strong enthalpy gradient
         f_D_high = 2.0
         solver = tp.TwoPhaseSolver(N, dx_local, A, D_H, f_D_high, fluid, recon)
-        bc = tp.TwoPhaseBCs(P_IN, P_OUT, H_IN)
+        bc_in, bc_out = pressure_bcs(P_IN, P_OUT, H_IN)
         q_per_cell = 10.0e3  # 10 kW per cell
 
         rho_approx = 756.0
@@ -147,7 +147,7 @@ class TestMUSCLSharperProfiles:
         h = np.full(N, H_IN)
         mdot = np.zeros(N + 1)
 
-        hist = solve_migrated(solver, p, h, mdot, bc, dt, n_steps, n_steps, q_wall)
+        hist = solve_hem(solver, p, h, mdot, bc_in, bc_out, dt, n_steps, n_steps, q_wall)
         h_ss = hist[-1, N:2*N]
         mdot_ss = hist[-1, 2*N:]
 
@@ -192,7 +192,7 @@ class TestTVD:
         N = 20
         fluid = tp.SimpleFluidProperties()
         solver = tp.TwoPhaseSolver(N, DX, A, D_H, F_D, fluid, recon)
-        bc = tp.TwoPhaseBCs(P_IN, P_OUT, H_IN)
+        bc_in, bc_out = pressure_bcs(P_IN, P_OUT, H_IN)
 
         p = np.full(N, 0.5 * (P_IN + P_OUT))
         h_low, h_high = 690.0e3, 710.0e3
@@ -202,7 +202,7 @@ class TestTVD:
         # Run a few thousand steps with CFL-safe dt
         dt = 3e-4
         for _ in range(2000):
-            step_hem_migrated(solver, p, h, mdot, bc, dt)
+            step_hem(solver, p, h, mdot, bc_in, bc_out, dt)
 
             # Check TVD: no value outside [h_low, h_high]
             h_min = np.min(h)
@@ -230,7 +230,7 @@ class TestBoundaryStencil:
         fluid = tp.SimpleFluidProperties()
         # Higher friction for small N to relax CFL
         solver = tp.TwoPhaseSolver(N, DX, A, D_H, 2.0, fluid, recon)
-        bc = tp.TwoPhaseBCs(P_IN, P_OUT, H_IN)
+        bc_in, bc_out = pressure_bcs(P_IN, P_OUT, H_IN)
 
         p = np.full(N, 0.5 * (P_IN + P_OUT))
         h = np.full(N, H_IN)
@@ -242,7 +242,7 @@ class TestBoundaryStencil:
         dt_cfl = rho_approx * DX * A / abs(mdot_approx)
         dt = 0.3 * dt_cfl
 
-        hist = solve_migrated(solver, p, h, mdot, bc, dt, 10000, 10000)
+        hist = solve_hem(solver, p, h, mdot, bc_in, bc_out, dt, 10000, 10000)
 
         assert np.all(np.isfinite(hist[-1])), \
             f"N={N}: non-finite values in final state"
@@ -269,7 +269,7 @@ class TestMassConservationMUSCL:
         N = 5
         fluid = tp.SimpleFluidProperties()
         solver = tp.TwoPhaseSolver(N, DX, A, D_H, F_D, fluid, recon)
-        bc = tp.TwoPhaseBCs(P_IN, P_OUT, H_IN)
+        bc_in, bc_out = pressure_bcs(P_IN, P_OUT, H_IN)
 
         p = np.full(N, 0.5 * (P_IN + P_OUT))
         h = np.full(N, H_IN)
@@ -286,20 +286,20 @@ class TestMassConservationMUSCL:
             p_old = p.copy()
             props = [fluid.evaluate(p[i], h[i]) for i in range(N)]
 
-            rho_in = fluid.evaluate(bc.p_in, bc.h_in).rho
+            rho_in = fluid.evaluate(P_IN, H_IN).rho
             R = [0.0] * (N + 1)
             R[0] = geom / (0.5 * (rho_in + props[0].rho))
             for i in range(1, N):
                 R[i] = geom / (0.5 * (props[i-1].rho + props[i].rho))
             R[N] = geom / props[N-1].rho
 
-            step_hem_migrated(solver, p, h, mdot, bc, dt)
+            step_hem(solver, p, h, mdot, bc_in, bc_out, dt)
             flow_scale = max(flow_scale, abs(mdot[0]))
 
             for i in range(N):
                 alpha = V * props[i].drho_dp_h / dt
-                p_left  = bc.p_in if i == 0 else p[i-1]
-                p_right = bc.p_out if i == N-1 else p[i+1]
+                p_left  = P_IN if i == 0 else p[i-1]
+                p_right = P_OUT if i == N-1 else p[i+1]
                 mdot_l = (p_left - p[i]) / R[i]
                 mdot_r = (p[i] - p_right) / R[i+1]
                 lhs = alpha * (p[i] - p_old[i])

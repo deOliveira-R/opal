@@ -31,7 +31,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "two_phase"))
 import opal_two_phase as tp
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from bc_helpers import step_5eq_migrated, step_hem_migrated, solve_migrated, reset_time
+from bc_helpers import step_5eq, step_hem, solve_hem, pressure_bcs, wall_pressure_bcs, wall_wall_bcs, reset_time
 
 
 # ============================================================================
@@ -52,13 +52,7 @@ def make_5eq_solver(N=1, fluid=None, H_i=1e6, p_ref=10e6):
 
 def equal_pressure_bc(fluid, p, h_l, h_v, alpha=0.0):
     """BCs that produce zero flow: p_in = p_out."""
-    bc = tp.BoundaryConditions()
-    bc.bc_type_in = tp.BCType.PRESSURE
-    bc.bc_type_out = tp.BCType.PRESSURE
-    bc.p_in = p; bc.p_out = p
-    bc.h_in = h_l; bc.h_l_in = h_l; bc.h_v_in = h_v
-    bc.alpha_in = alpha
-    return bc
+    return pressure_bcs(p, p, h_l, h_v=h_v, alpha=alpha)
 
 
 # ============================================================================
@@ -66,11 +60,10 @@ def equal_pressure_bc(fluid, p, h_l, h_v, alpha=0.0):
 # ============================================================================
 
 class TestRansomTrappQuality:
-    """M10: Quality calculation x = (h_mix - h_f) / h_fg.
-    AI could: use h_g instead of h_f, swap numerator/denominator."""
+    """M10: Quality calculation x = (h_mix - h_f) / h_fg."""
 
     def test_subcooled_quality_zero(self):
-        """h_mix < h_f → x = 0."""
+        """h_mix < h_f -> x = 0."""
         fluid = tp.SimpleFluidProperties()
         pp = fluid.evaluate_phasic(10e6)
         cf = tp.RansomTrapp(fluid, x_trans=0.10)
@@ -87,7 +80,7 @@ class TestRansomTrappQuality:
         assert r.mdot_crit >= 0.99 * mdot_expected
 
     def test_saturated_vapor_quality_one(self):
-        """h_mix >= h_g → x = 1, fully two-phase: G_crit = G_hem."""
+        """h_mix >= h_g -> x = 1, fully two-phase: G_crit = G_hem."""
         fluid = tp.SimpleFluidProperties()
         pp = fluid.evaluate_phasic(10e6)
         cf = tp.RansomTrapp(fluid, x_trans=0.10)
@@ -102,7 +95,7 @@ class TestRansomTrappQuality:
         assert r.mdot_crit == pytest.approx(mdot_hem, rel=0.01)
 
     def test_midpoint_quality(self):
-        """h_mix = (h_f + h_g)/2 → x = 0.5, above x_trans → G_hem."""
+        """h_mix = (h_f + h_g)/2 -> x = 0.5, above x_trans -> G_hem."""
         fluid = tp.SimpleFluidProperties()
         pp = fluid.evaluate_phasic(10e6)
         cf = tp.RansomTrapp(fluid, x_trans=0.10)
@@ -118,8 +111,7 @@ class TestRansomTrappQuality:
 
 
 class TestRansomTrappBernoulli:
-    """M12: G_sub = sqrt(2 * rho_f * (p_cell - p_back)).
-    AI could: forget factor of 2, use rho_v, wrong sign on dp."""
+    """M12: G_sub = sqrt(2 * rho_f * (p_cell - p_back))."""
 
     def test_bernoulli_exact(self):
         """Verify G_sub at known state against hand calculation."""
@@ -132,17 +124,8 @@ class TestRansomTrappBernoulli:
         G_sub = np.sqrt(2.0 * rho_f * (p_cell - p_back))
 
         h_sub = pp.h_sat_l - 200e3
-        # Use large rho and small drho_dp_h to make G_hem small → G_crit = G_sub
+        # Use large rho and small drho_dp_h to make G_hem small -> G_crit = G_sub
         r = cf.evaluate(p_cell, h_sub, 800.0, 1e-9, p_back, 0.01, 1.0, 1e6)
-
-        # c_hem = sqrt(1/(800*1e-9)) = sqrt(1.25e6) ~ 1118 → G_hem = 800*1118 ~ 894k
-        # G_sub = sqrt(2 * rho_f * 9.9e6) where rho_f ~ 760
-        # G_sub = sqrt(2 * 760 * 9.9e6) = sqrt(1.5e10) ~ 122k
-        # So G_hem >> G_sub and max gives G_hem.
-        # Let's use a case where G_sub dominates: very high rho_f, small dp.
-        # Actually with the max(G_crit, G_hem) floor, G_crit >= G_hem always.
-        # The blend only matters for the blend region itself.
-        # Test the blend instead.
 
     def test_zero_dp_gives_zero_gsub(self):
         """When p_cell = p_back, G_sub = 0."""
@@ -152,7 +135,6 @@ class TestRansomTrappBernoulli:
         pp = fluid.evaluate_phasic(10e6)
         # Subcooled: x=0
         h_sub = pp.h_sat_l - 200e3
-        # drho_dp_h = 0 → c_hem = c_floor = 1200, G_hem = 800*1200 = 960000
         r = cf.evaluate(10e6, h_sub, 800.0, 0.0, 10e6, 0.01, 1.0, 0.0)
 
         # G_sub = sqrt(2*rho_f*0) = 0, but G_crit = max(blend, G_hem) >= G_hem > 0
@@ -173,8 +155,7 @@ class TestRansomTrappBernoulli:
 
 
 class TestRansomTrappHEMSoundSpeed:
-    """M13: c_hem = sqrt(1/(rho * drho_dp_h)).
-    AI could: forget 1/, use rho² instead of rho, wrong sqrt argument."""
+    """M13: c_hem = sqrt(1/(rho * drho_dp_h))."""
 
     def test_c_hem_exact(self):
         """Verify c_hem against hand calculation for known rho, drho_dp_h."""
@@ -186,14 +167,14 @@ class TestRansomTrappHEMSoundSpeed:
         G_hem_expected = rho * c_hem_expected
 
         pp = fluid.evaluate_phasic(10e6)
-        h_mix = pp.h_sat_v + 100e3  # x > x_trans → G_crit = G_hem
+        h_mix = pp.h_sat_v + 100e3  # x > x_trans -> G_crit = G_hem
         r = cf.evaluate(10e6, h_mix, rho, drho_dp_h, 1e5, 0.01, 1.0, 1e6)
 
         mdot_expected = 1.0 * 0.01 * G_hem_expected
         assert r.mdot_crit == pytest.approx(mdot_expected, rel=0.01)
 
     def test_c_hem_floor_when_drho_negative(self):
-        """drho_dp_h <= 0 → c_hem = c_floor = 1200 m/s."""
+        """drho_dp_h <= 0 -> c_hem = c_floor = 1200 m/s."""
         fluid = tp.SimpleFluidProperties()
         cf = tp.RansomTrapp(fluid, x_trans=0.10, c_floor=1200.0)
 
@@ -208,9 +189,7 @@ class TestRansomTrappHEMSoundSpeed:
 
 
 class TestRansomTrappBlend:
-    """M11: Quality-blended critical flux.
-    At x=0: G_crit = G_sub. At x=x_trans: G_crit = G_hem.
-    AI could: invert blend, swap G_sub and G_hem."""
+    """M11: Quality-blended critical flux."""
 
     def test_blend_at_x_zero(self):
         """At x=0 (subcooled), blend = 0, G_crit = G_sub (before max floor)."""
@@ -218,7 +197,7 @@ class TestRansomTrappBlend:
         pp = fluid.evaluate_phasic(10e6)
         cf = tp.RansomTrapp(fluid, x_trans=0.10)
 
-        h_mix = pp.h_sat_l - 1e3  # just below h_f → x=0
+        h_mix = pp.h_sat_l - 1e3  # just below h_f -> x=0
         p_cell = 10e6; p_back = 5e6; rho = 750.0; drho_dp_h = 1e-6
         r = cf.evaluate(p_cell, h_mix, rho, drho_dp_h, p_back, 0.01, 1.0, 1e6)
 
@@ -253,15 +232,15 @@ class TestRansomTrappBlend:
         cf = tp.RansomTrapp(fluid, x_trans=0.10)
 
         h_sub = pp.h_sat_l - 100e3
-        # Forward flow exceeding critical → choked
+        # Forward flow exceeding critical -> choked
         r_fwd = cf.evaluate(10e6, h_sub, 800.0, 1e-6, 1e5, 0.01, 1.0, 1e8)
         assert r_fwd.is_choked, "Forward flow exceeding critical should choke"
 
-        # Reverse flow → NOT choked
+        # Reverse flow -> NOT choked
         r_rev = cf.evaluate(10e6, h_sub, 800.0, 1e-6, 1e5, 0.01, 1.0, -1e8)
         assert not r_rev.is_choked, "Reverse flow should not choke"
 
-        # Forward flow below critical → NOT choked
+        # Forward flow below critical -> NOT choked
         r_low = cf.evaluate(10e6, h_sub, 800.0, 1e-6, 1e5, 0.01, 1.0, 0.001)
         assert not r_low.is_choked, "Forward flow below critical should not choke"
 
@@ -272,15 +251,14 @@ class TestRansomTrappBlend:
 
 class TestVoidFractionUpdateExact:
     """Verify alpha_new = (alpha_old * rho_v_old + dt * Gamma) / rho_v_new
-    for a single cell with zero flow (no advection).
-    AI could: forget dt, wrong rho_v (old vs new), missing V term."""
+    for a single cell with zero flow (no advection)."""
 
     def test_single_cell_void_growth(self):
         """Single cell, zero flow: alpha grows purely from Gamma."""
         fluid = tp.SimpleFluidProperties()
         pp = fluid.evaluate_phasic(10e6)
 
-        # Superheated liquid → Gamma > 0 → void should grow
+        # Superheated liquid -> Gamma > 0 -> void should grow
         H_i = 1e6
         closures = tp.DriftFluxClosures(H_i=H_i, C_0=1.0, alpha_nucleation=0.0)
         model = tp.FiveEqModel(fluid, closures)
@@ -292,7 +270,7 @@ class TestVoidFractionUpdateExact:
         h_l_init = pp.h_sat_l + 50e3  # superheated
         p_val = 10e6
 
-        bc = equal_pressure_bc(fluid, p_val, h_l_init, pp.h_sat_v, alpha_init)
+        bc_in, bc_out = equal_pressure_bc(fluid, p_val, h_l_init, pp.h_sat_v, alpha_init)
         p = np.array([p_val])
         alpha = np.array([alpha_init])
         h_l = np.array([h_l_init])
@@ -313,7 +291,7 @@ class TestVoidFractionUpdateExact:
         # With zero flow: alpha_rho_v_new = alpha_old * rv_old + dt * Gamma
         alpha_rho_v_predicted = alpha_init * rv_old + dt * Gamma
 
-        step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, dt)
+        step_5eq(solver, p, alpha, h_l, h_v, mdot, bc_in, bc_out, dt)
 
         # The predicted value should be close, accounting for:
         # - rv_new may differ from rv_old due to pressure change
@@ -330,7 +308,7 @@ class TestVoidFractionUpdateExact:
         assert alpha[0] > alpha_init, "Superheated liquid: alpha should grow"
 
     def test_single_cell_void_condensation(self):
-        """Subcooled liquid: Gamma < 0 → alpha should decrease."""
+        """Subcooled liquid: Gamma < 0 -> alpha should decrease."""
         fluid = tp.SimpleFluidProperties()
         pp = fluid.evaluate_phasic(10e6)
 
@@ -343,14 +321,14 @@ class TestVoidFractionUpdateExact:
         alpha_init = 0.3
         h_l_init = pp.h_sat_l - 50e3  # subcooled
 
-        bc = equal_pressure_bc(fluid, 10e6, h_l_init, pp.h_sat_v, alpha_init)
+        bc_in, bc_out = equal_pressure_bc(fluid, 10e6, h_l_init, pp.h_sat_v, alpha_init)
         p = np.array([10e6])
         alpha = np.array([alpha_init])
         h_l = np.array([h_l_init])
         h_v = np.array([pp.h_sat_v])
         mdot = np.zeros(2)
 
-        step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, 1e-4)
+        step_5eq(solver, p, alpha, h_l, h_v, mdot, bc_in, bc_out, 1e-4)
         assert alpha[0] < alpha_init, "Subcooled liquid: alpha should decrease"
 
 
@@ -359,13 +337,10 @@ class TestVoidFractionUpdateExact:
 # ============================================================================
 
 class TestPhaseChangeEnthalpyTerms:
-    """Verify phase_l = -Gamma * h_l * V and phase_v = +Gamma * h_v * V.
-    Evaporation (Gamma > 0): liquid loses enthalpy, vapor gains.
-    AI could: flip the signs, forget the V, use h_sat instead of h_l."""
+    """Verify phase_l = -Gamma * h_l * V and phase_v = +Gamma * h_v * V."""
 
     def test_evaporation_cools_liquid(self):
-        """M1: With evaporation (Gamma > 0), h_l should decrease.
-        Isolate by: zero flow, zero wall heat, only interfacial transfer."""
+        """M1: With evaporation (Gamma > 0), h_l should decrease."""
         fluid = tp.SimpleFluidProperties()
         pp = fluid.evaluate_phasic(10e6)
 
@@ -376,8 +351,8 @@ class TestPhaseChangeEnthalpyTerms:
         solver = tp.TwoPhaseSolver(N, dx, A, D_h, f_D, fluid,
                                     tp.DonorCell(), model, tp.InertialMomentum())
 
-        h_l_init = pp.h_sat_l + 100e3  # superheated → Gamma > 0
-        bc = equal_pressure_bc(fluid, 10e6, h_l_init, pp.h_sat_v, 0.2)
+        h_l_init = pp.h_sat_l + 100e3  # superheated -> Gamma > 0
+        bc_in, bc_out = equal_pressure_bc(fluid, 10e6, h_l_init, pp.h_sat_v, 0.2)
 
         p = np.array([10e6])
         alpha = np.array([0.2])
@@ -387,7 +362,7 @@ class TestPhaseChangeEnthalpyTerms:
 
         # Run multiple steps to accumulate the effect
         for _ in range(100):
-            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, 1e-4)
+            step_5eq(solver, p, alpha, h_l, h_v, mdot, bc_in, bc_out, 1e-4)
 
         assert h_l[0] < h_l_init, (
             f"Evaporation should cool liquid: h_l={h_l[0]/1e3:.1f} >= "
@@ -405,8 +380,8 @@ class TestPhaseChangeEnthalpyTerms:
         solver = tp.TwoPhaseSolver(N, dx, A, D_h, f_D, fluid,
                                     tp.DonorCell(), model, tp.InertialMomentum())
 
-        h_l_init = pp.h_sat_l - 100e3  # subcooled → Gamma < 0
-        bc = equal_pressure_bc(fluid, 10e6, h_l_init, pp.h_sat_v, 0.2)
+        h_l_init = pp.h_sat_l - 100e3  # subcooled -> Gamma < 0
+        bc_in, bc_out = equal_pressure_bc(fluid, 10e6, h_l_init, pp.h_sat_v, 0.2)
 
         p = np.array([10e6])
         alpha = np.array([0.2])
@@ -415,7 +390,7 @@ class TestPhaseChangeEnthalpyTerms:
         mdot = np.zeros(2)
 
         for _ in range(100):
-            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, 1e-4)
+            step_5eq(solver, p, alpha, h_l, h_v, mdot, bc_in, bc_out, 1e-4)
 
         assert h_l[0] > h_l_init, (
             f"Condensation should heat liquid toward T_sat: h_l={h_l[0]/1e3:.1f} <= "
@@ -435,7 +410,7 @@ class TestPhaseChangeEnthalpyTerms:
                                     tp.DonorCell(), model, tp.InertialMomentum())
 
         h_l_init = pp.h_sat_l + 100e3
-        bc = equal_pressure_bc(fluid, 10e6, h_l_init, pp.h_sat_v, 0.2)
+        bc_in, bc_out = equal_pressure_bc(fluid, 10e6, h_l_init, pp.h_sat_v, 0.2)
 
         p = np.array([10e6])
         alpha = np.array([0.2])
@@ -444,7 +419,7 @@ class TestPhaseChangeEnthalpyTerms:
         mdot = np.zeros(2)
 
         for _ in range(100):
-            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, 1e-4)
+            step_5eq(solver, p, alpha, h_l, h_v, mdot, bc_in, bc_out, 1e-4)
 
         # h_v should be at or above h_sat_v (the floor prevents going below)
         pp_new = fluid.evaluate_phasic(p[0])
@@ -456,8 +431,7 @@ class TestPhaseChangeEnthalpyTerms:
 # ============================================================================
 
 class TestAdvectiveFluxSign:
-    """Verify advective flux moves enthalpy in the correct direction.
-    AI could: drop the minus sign between inlet and outlet terms."""
+    """Verify advective flux moves enthalpy in the correct direction."""
 
     def test_hot_inlet_heats_downstream(self):
         """Hot fluid at inlet should increase h_l in downstream cells."""
@@ -473,10 +447,7 @@ class TestAdvectiveFluxSign:
         h_cold = pp.h_sat_l - 100e3
         h_hot = pp.h_sat_l - 20e3
 
-        bc = tp.BoundaryConditions()
-        bc.bc_type_in = tp.BCType.PRESSURE; bc.bc_type_out = tp.BCType.PRESSURE
-        bc.p_in = 10e6; bc.p_out = 9.5e6
-        bc.h_in = h_hot; bc.h_l_in = h_hot; bc.h_v_in = pp.h_sat_v
+        bc_in, bc_out = pressure_bcs(10e6, 9.5e6, h_hot, h_v=pp.h_sat_v)
 
         p = np.full(N, 10e6)
         alpha = np.full(N, 1e-8)
@@ -485,7 +456,7 @@ class TestAdvectiveFluxSign:
         mdot = np.zeros(N + 1)
 
         for _ in range(500):
-            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, 1e-4)
+            step_5eq(solver, p, alpha, h_l, h_v, mdot, bc_in, bc_out, 1e-4)
 
         # Cell 0 (nearest inlet) should be warmest, monotonically decreasing
         assert h_l[0] > h_cold, "Inlet cell should be heated by hot inlet"
@@ -502,11 +473,10 @@ class TestAdvectiveFluxSign:
 # ============================================================================
 
 class TestWallHeatSplit:
-    """q_wall_l = q_total * (1 - alpha), q_wall_v = q_total * alpha.
-    AI could: swap (1-alpha) and alpha."""
+    """q_wall_l = q_total * (1 - alpha), q_wall_v = q_total * alpha."""
 
     def test_all_liquid_gets_all_heat(self):
-        """alpha ≈ 0: all wall heat goes to liquid."""
+        """alpha ~ 0: all wall heat goes to liquid."""
         fluid = tp.SimpleFluidProperties()
         pp = fluid.evaluate_phasic(10e6)
 
@@ -517,21 +487,21 @@ class TestWallHeatSplit:
                                     tp.DonorCell(), model, tp.InertialMomentum())
 
         h_l_init = pp.h_sat_l - 200e3
-        bc = equal_pressure_bc(fluid, 10e6, h_l_init, pp.h_sat_v, 0.0)
+        bc_in, bc_out = equal_pressure_bc(fluid, 10e6, h_l_init, pp.h_sat_v, 0.0)
 
         p = np.array([10e6])
         alpha = np.array([1e-8])
         h_l = np.array([h_l_init])
         h_v = np.array([pp.h_sat_v])
         mdot = np.zeros(2)
-        q_wall = np.array([1e7])  # 10 MW/m³
+        q_wall = np.array([1e7])  # 10 MW/m^3
 
         h_l_before = h_l[0]
-        step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, 1e-4, q_wall)
+        step_5eq(solver, p, alpha, h_l, h_v, mdot, bc_in, bc_out, 1e-4, q_wall)
 
         # Liquid should gain most of the heat
         assert h_l[0] > h_l_before, "Liquid should be heated by wall"
-        # h_v should barely change (alpha ≈ 0 → vapor gets ≈ 0% of heat)
+        # h_v should barely change (alpha ~ 0 -> vapor gets ~ 0% of heat)
         assert h_v[0] == pytest.approx(pp.h_sat_v, rel=0.01)
 
     def test_high_void_vapor_gets_most_heat(self):
@@ -545,7 +515,7 @@ class TestWallHeatSplit:
         solver = tp.TwoPhaseSolver(N, dx, A, D_h, f_D, fluid,
                                     tp.DonorCell(), model, tp.InertialMomentum())
 
-        bc = equal_pressure_bc(fluid, 10e6, pp.h_sat_l, pp.h_sat_v, 0.9)
+        bc_in, bc_out = equal_pressure_bc(fluid, 10e6, pp.h_sat_l, pp.h_sat_v, 0.9)
 
         p = np.array([10e6])
         alpha = np.array([0.9])
@@ -555,7 +525,7 @@ class TestWallHeatSplit:
         q_wall = np.array([1e7])
 
         h_v_before = h_v[0]
-        step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, 1e-4, q_wall)
+        step_5eq(solver, p, alpha, h_l, h_v, mdot, bc_in, bc_out, 1e-4, q_wall)
 
         # Vapor should gain most of the heat
         assert h_v[0] > h_v_before, "Vapor should be heated when alpha=0.9"
@@ -567,11 +537,10 @@ class TestWallHeatSplit:
 
 class TestMomentumPressureDirection:
     """mdot_new = mdot_old + beta*(p_left - p_right) - dt*fric.
-    Flow goes from high pressure to low pressure.
-    AI could: write p_right - p_left (reversed)."""
+    Flow goes from high pressure to low pressure."""
 
     def test_flow_from_high_to_low_pressure(self):
-        """Higher inlet pressure → positive flow toward outlet."""
+        """Higher inlet pressure -> positive flow toward outlet."""
         fluid = tp.SimpleFluidProperties()
         pp = fluid.evaluate_phasic(10e6)
         closures = tp.DriftFluxClosures(H_i=0.0, C_0=1.0)
@@ -580,11 +549,7 @@ class TestMomentumPressureDirection:
         solver = tp.TwoPhaseSolver(N, 0.5, 0.01, 0.1, 0.02, fluid,
                                     tp.DonorCell(), model, tp.InertialMomentum())
 
-        bc = tp.BoundaryConditions()
-        bc.bc_type_in = tp.BCType.PRESSURE; bc.bc_type_out = tp.BCType.PRESSURE
-        bc.p_in = 10e6; bc.p_out = 9e6
-        bc.h_in = pp.h_sat_l - 100e3
-        bc.h_l_in = bc.h_in; bc.h_v_in = pp.h_sat_v
+        bc_in, bc_out = pressure_bcs(10e6, 9e6, pp.h_sat_l - 100e3, h_v=pp.h_sat_v)
 
         p = np.full(N, 10e6)
         alpha = np.full(N, 1e-8)
@@ -593,14 +558,14 @@ class TestMomentumPressureDirection:
         mdot = np.zeros(N + 1)
 
         for _ in range(200):
-            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, 1e-4)
+            step_5eq(solver, p, alpha, h_l, h_v, mdot, bc_in, bc_out, 1e-4)
 
         # All interior flows should be positive (left to right)
         for i in range(1, N):
             assert mdot[i] > 0, f"mdot[{i}]={mdot[i]} should be positive"
 
     def test_reversed_pressure_gives_negative_flow(self):
-        """Lower inlet pressure → negative flow (right to left)."""
+        """Lower inlet pressure -> negative flow (right to left)."""
         fluid = tp.SimpleFluidProperties()
         pp = fluid.evaluate_phasic(10e6)
         closures = tp.DriftFluxClosures(H_i=0.0, C_0=1.0)
@@ -609,11 +574,7 @@ class TestMomentumPressureDirection:
         solver = tp.TwoPhaseSolver(N, 0.5, 0.01, 0.1, 0.02, fluid,
                                     tp.DonorCell(), model, tp.InertialMomentum())
 
-        bc = tp.BoundaryConditions()
-        bc.bc_type_in = tp.BCType.PRESSURE; bc.bc_type_out = tp.BCType.PRESSURE
-        bc.p_in = 9e6; bc.p_out = 10e6  # reversed
-        bc.h_in = pp.h_sat_l - 100e3
-        bc.h_l_in = bc.h_in; bc.h_v_in = pp.h_sat_v
+        bc_in, bc_out = pressure_bcs(9e6, 10e6, pp.h_sat_l - 100e3, h_v=pp.h_sat_v)
 
         p = np.full(N, 10e6)
         alpha = np.full(N, 1e-8)
@@ -622,7 +583,7 @@ class TestMomentumPressureDirection:
         mdot = np.zeros(N + 1)
 
         for _ in range(200):
-            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, 1e-4)
+            step_5eq(solver, p, alpha, h_l, h_v, mdot, bc_in, bc_out, 1e-4)
 
         for i in range(1, N):
             assert mdot[i] < 0, f"mdot[{i}]={mdot[i]} should be negative"
@@ -634,21 +595,17 @@ class TestMomentumPressureDirection:
 
 class TestMomentumSteadyStateEquivalence:
     """At steady state, inertial and algebraic momentum must give the same
-    flow rate for the same pressure drop. AI could: have a factor error in
-    one but not the other."""
+    flow rate for the same pressure drop."""
 
     def test_same_steady_state_flow(self):
-        """Both momentum models produce the same steady-state mdot.
-        Use legacy HEM interface (semi-implicit enthalpy) to avoid the
-        5-eq explicit enthalpy CFL limit that prevents the inertial model
-        from reaching algebraic steady state."""
+        """Both momentum models produce the same steady-state mdot."""
         fluid = tp.SimpleFluidProperties()
         pp = fluid.evaluate_phasic(10e6)
         N = 5; dx = 1.0; A = 0.01; D_h = 0.1; f_D = 0.02
         h_sub = pp.h_sat_l - 100e3
 
         # Small dp (1 kPa) to keep velocity subsonic so inertial can converge
-        legacy_bc = tp.TwoPhaseBCs(p_in=10e6, p_out=10e6 - 1000.0, h_in=h_sub)
+        bc_in, bc_out = pressure_bcs(10e6, 10e6 - 1000.0, h_sub)
 
         # Algebraic: instant steady state
         solver_alg = tp.TwoPhaseSolver(N, dx, A, D_h, f_D, fluid,
@@ -656,23 +613,22 @@ class TestMomentumSteadyStateEquivalence:
                                         tp.AlgebraicMomentum(), None)
         p = np.full(N, 10e6); h = np.full(N, h_sub); mdot = np.zeros(N + 1)
         for _ in range(2000):
-            step_hem_migrated(solver_alg, p, h, mdot, legacy_bc, 1e-4)
+            step_hem(solver_alg, p, h, mdot, bc_in, bc_out, 1e-4)
         mdot_alg = mdot[N // 2]
         assert mdot_alg > 0, "Algebraic should give positive flow"
 
         # Inertial: check that flow is positive and INCREASING toward
-        # algebraic value. Full convergence requires ~750k steps (impractical),
-        # so we verify the approach direction instead.
+        # algebraic value.
         solver_inr = tp.TwoPhaseSolver(N, dx, A, D_h, f_D, fluid,
                                         tp.DonorCell(), tp.HEMModel(),
                                         tp.InertialMomentum(), None)
         p = np.full(N, 10e6); h = np.full(N, h_sub); mdot = np.zeros(N + 1)
         for _ in range(1000):
-            step_hem_migrated(solver_inr, p, h, mdot, legacy_bc, 1e-4)
+            step_hem(solver_inr, p, h, mdot, bc_in, bc_out, 1e-4)
         mdot_early = mdot[N // 2]
 
         for _ in range(4000):
-            step_hem_migrated(solver_inr, p, h, mdot, legacy_bc, 1e-4)
+            step_hem(solver_inr, p, h, mdot, bc_in, bc_out, 1e-4)
         mdot_late = mdot[N // 2]
 
         # Flow should be positive and increasing (approaching algebraic)
@@ -692,8 +648,7 @@ class TestMomentumSteadyStateEquivalence:
 # ============================================================================
 
 class TestFaceDensityBoundaries:
-    """Verify face density at walls and pressure boundaries.
-    AI could: use wrong cell index at boundaries."""
+    """Verify face density at walls and pressure boundaries."""
 
     def test_wall_bc_face_uses_first_cell(self):
         """With WALL BC at inlet and known initial state,
@@ -706,11 +661,7 @@ class TestFaceDensityBoundaries:
         solver = tp.TwoPhaseSolver(N, 0.5, 0.01, 0.1, 0.02, fluid,
                                     tp.DonorCell(), model, tp.InertialMomentum())
 
-        bc = tp.BoundaryConditions()
-        bc.bc_type_in = tp.BCType.WALL
-        bc.bc_type_out = tp.BCType.PRESSURE
-        bc.p_out = 9e6
-        bc.h_in = pp.h_sat_l - 100e3; bc.h_l_in = bc.h_in; bc.h_v_in = pp.h_sat_v
+        bc_in, bc_out = wall_pressure_bcs(9e6, pp.h_sat_l - 100e3, h_v=pp.h_sat_v)
 
         p = np.full(N, 10e6)
         alpha = np.full(N, 1e-8)
@@ -719,7 +670,7 @@ class TestFaceDensityBoundaries:
         mdot = np.zeros(N + 1)
 
         for _ in range(100):
-            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, 1e-4)
+            step_5eq(solver, p, alpha, h_l, h_v, mdot, bc_in, bc_out, 1e-4)
 
         # Wall BC: mdot[0] = 0 always
         assert mdot[0] == pytest.approx(0.0, abs=1e-15)
@@ -732,8 +683,7 @@ class TestFaceDensityBoundaries:
 # ============================================================================
 
 class TestMixtureEnthalpyCalculation:
-    """h_mix = (1-alpha)*h_l + alpha*h_v for property evaluation.
-    AI could: swap (1-alpha) and alpha."""
+    """h_mix = (1-alpha)*h_l + alpha*h_v for property evaluation."""
 
     def test_mixture_enthalpy_single_phase_liquid(self):
         """alpha = 0: h_mix = h_l, density should match liquid density."""
@@ -758,8 +708,7 @@ class TestMixtureEnthalpyCalculation:
             fluid.rho_vapor(10e6, pp.h_sat_v + 50e3), rel=0.01)
 
     def test_mixture_enthalpy_asymmetric(self):
-        """alpha = 0.9: h_mix should be dominated by h_v.
-        If (1-alpha) and alpha are swapped, h_mix would be dominated by h_l."""
+        """alpha = 0.9: h_mix should be dominated by h_v."""
         fluid = tp.SimpleFluidProperties()
         pp = fluid.evaluate_phasic(10e6)
         h_l = pp.h_sat_l
@@ -784,7 +733,7 @@ class TestMixtureEnthalpyCalculation:
 
 class TestMUSCLNegativeFlow:
     """MUSCL reconstruction for negative flow should use downstream cell
-    as upwind. AI could: use same branch as positive flow."""
+    as upwind."""
 
     def test_muscl_positive_vs_negative_flow(self):
         """With reversed pressure, MUSCL should still produce stable results."""
@@ -798,11 +747,7 @@ class TestMUSCLNegativeFlow:
             solver = tp.TwoPhaseSolver(N, 0.3, 0.01, 0.1, 0.02, fluid,
                                         recon, model, tp.InertialMomentum())
 
-            bc = tp.BoundaryConditions()
-            bc.bc_type_in = tp.BCType.PRESSURE; bc.bc_type_out = tp.BCType.PRESSURE
-            bc.p_in = 9e6; bc.p_out = 10e6  # reversed: flow goes right to left
-            bc.h_in = pp.h_sat_l - 100e3; bc.h_l_in = bc.h_in
-            bc.h_v_in = pp.h_sat_v
+            bc_in, bc_out = pressure_bcs(9e6, 10e6, pp.h_sat_l - 100e3, h_v=pp.h_sat_v)
 
             p = np.full(N, 10e6)
             alpha = np.full(N, 1e-8)
@@ -811,7 +756,7 @@ class TestMUSCLNegativeFlow:
             mdot = np.zeros(N + 1)
 
             for _ in range(500):
-                step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, 1e-4)
+                step_5eq(solver, p, alpha, h_l, h_v, mdot, bc_in, bc_out, 1e-4)
 
             assert np.all(np.isfinite(p)), "MUSCL with negative flow: NaN in p"
             assert np.all(np.isfinite(h_l)), "MUSCL with negative flow: NaN in h_l"
@@ -825,10 +770,15 @@ class TestMUSCLNegativeFlow:
 
 class TestInletBoundaryEnthalpy:
     """The 5-eq liquid inlet should use bc.h_l_in, not bc.h_in.
-    This tests the MEDIUM-4 fix."""
+    This tests the MEDIUM-4 fix.
+
+    Note: With direct BoundaryFace construction, h_l is always explicit
+    in PressureFace(p, h_l, h_v, alpha). There is no ambiguity between
+    h_in and h_l_in — the test verifies that the PressureFace h_l value
+    is what the solver actually uses for liquid inlet advection."""
 
     def test_h_l_in_differs_from_h_in(self):
-        """When h_l_in != h_in, the solver should use h_l_in for liquid."""
+        """When PressureFace is constructed with hot h_l, solver uses it."""
         fluid = tp.SimpleFluidProperties()
         pp = fluid.evaluate_phasic(10e6)
         closures = tp.DriftFluxClosures(H_i=0.0, C_0=1.0)
@@ -841,13 +791,8 @@ class TestInletBoundaryEnthalpy:
         h_l_cold = pp.h_sat_l - 200e3
         h_l_hot = pp.h_sat_l - 20e3
 
-        # Set h_l_in = hot, h_in = cold (they differ!)
-        bc = tp.BoundaryConditions()
-        bc.bc_type_in = tp.BCType.PRESSURE; bc.bc_type_out = tp.BCType.PRESSURE
-        bc.p_in = 10e6; bc.p_out = 9.5e6
-        bc.h_in = h_l_cold      # mixture enthalpy (for HEM compat)
-        bc.h_l_in = h_l_hot     # liquid-specific enthalpy (5-eq should use this)
-        bc.h_v_in = pp.h_sat_v
+        # Construct PressureFace with hot h_l
+        bc_in, bc_out = pressure_bcs(10e6, 9.5e6, h_l_hot, h_v=pp.h_sat_v)
 
         p = np.full(N, 10e6)
         alpha = np.full(N, 1e-8)
@@ -856,10 +801,10 @@ class TestInletBoundaryEnthalpy:
         mdot = np.zeros(N + 1)
 
         for _ in range(1000):
-            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, 1e-4)
+            step_5eq(solver, p, alpha, h_l, h_v, mdot, bc_in, bc_out, 1e-4)
 
-        # Cell 0 should be heated toward h_l_in (hot), not h_in (cold)
+        # Cell 0 should be heated toward h_l_in (hot)
         assert h_l[0] > h_l_cold + 50e3, (
             f"h_l[0]={h_l[0]/1e3:.1f} kJ/kg — should approach h_l_in="
-            f"{h_l_hot/1e3:.1f}, not h_in={h_l_cold/1e3:.1f}"
+            f"{h_l_hot/1e3:.1f}"
         )

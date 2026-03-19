@@ -10,7 +10,7 @@ Approach:
   2. Compute source terms by substituting into the continuous PDEs
   3. Run the solver to steady state with these sources
   4. Measure L2 error vs the manufactured solution
-  5. Repeat at N = 10, 20, 40, 80 — verify error ∝ dx^p (p ≥ 1)
+  5. Repeat at N = 10, 20, 40, 80 — verify error ~ dx^p (p >= 1)
 
 This test would catch:
   - Sign flips in ANY term (source terms won't compensate)
@@ -27,7 +27,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "two_phase"))
 import opal_two_phase as tp
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from bc_helpers import step_5eq_migrated, step_hem_migrated, solve_migrated, reset_time
+from bc_helpers import step_5eq, step_hem, solve_hem, pressure_bcs, wall_wall_bcs, reset_time
 
 
 # ============================================================================
@@ -55,7 +55,7 @@ def rho_mfg(p, h):
 
 # Pipe parameters
 L_pipe = 5.0    # pipe length [m]
-A_flow = 0.01   # flow area [m²]
+A_flow = 0.01   # flow area [m^2]
 D_h    = 0.1    # hydraulic diameter [m]
 
 # Base state (subcooled, Region 1)
@@ -97,44 +97,18 @@ def dmdot_dx(x):
 # ============================================================================
 # MMS source terms from the continuous PDEs (steady state)
 # ============================================================================
-#
-# Steady-state continuity: (1/A) * dmdot/dz = S_mass
-# Steady-state momentum:   dp/dz + friction = S_momentum
-#                          (friction = f_D/(2*D_h) * |mdot|*mdot / (rho*A²))
-# Steady-state energy:     (mdot/(rho*A)) * (drho_dp*dp/dz + drho_dh*dh/dz) * h
-#                          + mdot * dh/dz = A * S_energy
-#
-# For the semi-implicit scheme:
-#   Pressure eq (from continuity): mass conservation is satisfied implicitly
-#   So S_mass goes into the pressure RHS, S_momentum into the velocity update,
-#   and S_energy into the enthalpy update.
-#
-# With zero friction (f_D = 0):
-#   S_momentum = dp/dz  (just the pressure gradient the flow must overcome)
-#   S_mass = (1/A) * dmdot/dz
-#   S_energy: from the enthalpy equation
-#     ρ*V*dh/dt + mdot*(h_face_out - h) - mdot*(h_face_in - h) = V*dp/dt + q_wall + S_e*V
-#   At steady state (dh/dt = dp/dt = 0, q_wall = 0):
-#     mdot_in*(h_face_in - h) - mdot_out*(h_face_out - h) = -S_e*V
-#   In continuous form: d(mdot*h)/dz = A*S_energy  (adding the mass source contribution)
-#   → S_energy = (1/A) * d(mdot*h)/dz = (1/A) * (mdot*dh/dz + h*dmdot/dz)
 
 def S_mass_exact(x):
-    """Mass source [kg/(m³·s)] to sustain the manufactured continuity."""
+    """Mass source [kg/(m^3*s)] to sustain the manufactured continuity."""
     return (1.0 / A_flow) * dmdot_dx(x)
 
 def S_momentum_exact(x):
-    """Momentum source [N/m³] = pressure gradient the manufactured flow requires.
-    With f_D=0: S_mom = dp/dz (absorb the manufactured pressure gradient)."""
+    """Momentum source [N/m^3] = pressure gradient the manufactured flow requires."""
     return dp_dx(x)
 
 def S_energy_exact(x):
-    """Energy source [W/m³] to sustain the manufactured enthalpy profile.
-    The solver uses the ADVECTIVE enthalpy form: ρv·∂h/∂z (not conservative
-    d(ρvh)/dz). The mass conservation part (h·dmdot/dz) is handled implicitly
-    by the pressure solve. So the energy source matches the advective form."""
+    """Energy source [W/m^3] to sustain the manufactured enthalpy profile."""
     mdot = mdot_exact(x)
-    # Advective form: (mdot/A) * dh/dz = S_energy
     return (mdot / A_flow) * dh_dx(x)
 
 
@@ -144,44 +118,11 @@ def S_energy_exact(x):
 
 def run_mms_hem(N, n_steps=5000, dt=1e-4):
     """Run HEM solver with MMS sources, return L2 errors."""
-    dx = L_pipe / N
-    f_D = 0.0  # zero friction (absorbed into momentum source)
-
-    fluid = tp.SimpleFluidProperties()
-    solver = tp.TwoPhaseSolver(N, dx, A_flow, D_h, f_D, fluid)
-
-    # Cell centers and face positions
-    x_c = np.array([(i + 0.5) * dx for i in range(N)])
-    x_f = np.array([i * dx for i in range(N + 1)])
-
-    # Initialize with manufactured solution
-    p = p_exact(x_c).copy()
-    h = h_exact(x_c).copy()
-    mdot = mdot_exact(x_f).copy()
-
-    # BCs from manufactured solution at boundaries
-    bc = tp.TwoPhaseBCs(p_in=p_exact(0.0), p_out=p_exact(L_pipe), h_in=h_exact(0.0))
-
-    # Wall heat = 0 (energy source via SourceTerms instead)
-    # But legacy step doesn't accept SourceTerms. Use the new step_5eq instead.
-    # Actually, HEM legacy step doesn't have source support. Let me use the
-    # 5-eq interface with alpha=0 (subcooled, reduces to HEM).
     return run_mms_5eq_subcooled(N, n_steps, dt)
 
 
 def run_mms_5eq_subcooled(N, n_steps=5000, dt=1e-4, recon=None):
-    """Run 5-eq solver in subcooled regime with MMS energy source.
-
-    Strategy: Use a pressure-driven flow (p_in > p_out) with the algebraic
-    momentum model, which gives instant steady-state pressure and flow.
-    The MMS test then verifies the ENTHALPY transport — the manufactured
-    h(x) profile is sustained by an energy source S_energy = (mdot/A)*dh/dx.
-    The convergence rate of h towards h_exact measures the spatial accuracy
-    of the advection scheme (donor-cell or MUSCL).
-
-    Pressure and flow are NOT manufactured — they come from the solver's own
-    resistance-based model. Only the enthalpy is manufactured.
-    """
+    """Run 5-eq solver in subcooled regime with MMS energy source."""
     if recon is None:
         recon = tp.DonorCell()
 
@@ -198,20 +139,12 @@ def run_mms_5eq_subcooled(N, n_steps=5000, dt=1e-4, recon=None):
     x_c = np.array([(i + 0.5) * dx for i in range(N)])
 
     # BCs: tiny pressure drop for moderate flow velocity (~1 m/s)
-    # v = dp/(f_D * L/(2*D_h) * rho) ≈ dp / (0.02 * 5/(2*0.1) * 750) = dp / 375
-    # Want v ~ 1 m/s → dp ~ 375 Pa; use 500 Pa
     dp_drive = 500.0  # 500 Pa driving pressure
-    bc = tp.BoundaryConditions()
-    bc.bc_type_in = tp.BCType.PRESSURE
-    bc.bc_type_out = tp.BCType.PRESSURE
-    bc.p_in = p0 + dp_drive / 2
-    bc.p_out = p0 - dp_drive / 2
-    bc.h_in = float(h_exact(0.0))
-    bc.h_l_in = float(h_exact(0.0))
-    bc.h_v_in = pp.h_sat_v
+    bc_in, bc_out = pressure_bcs(p0 + dp_drive / 2, p0 - dp_drive / 2,
+                                  float(h_exact(0.0)), h_v=pp.h_sat_v)
 
     # Initialize: pressure linear between BCs, enthalpy from manufactured
-    p = np.linspace(bc.p_in, bc.p_out, N)
+    p = np.linspace(p0 + dp_drive / 2, p0 - dp_drive / 2, N)
     alpha = np.full(N, 1e-10)
     h_l = h_exact(x_c).copy()
     h_v = np.full(N, pp.h_sat_v)
@@ -219,12 +152,9 @@ def run_mms_5eq_subcooled(N, n_steps=5000, dt=1e-4, recon=None):
 
     # First, let pressure/flow reach steady state WITHOUT energy source
     for _ in range(2000):
-        step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, dt)
+        step_5eq(solver, p, alpha, h_l, h_v, mdot, bc_in, bc_out, dt)
 
     # Get the steady-state flow at each cell center for the energy source.
-    # The flow varies slightly along the pipe because density depends on
-    # the manufactured h(x) — using a single average would create an O(1)
-    # source error that doesn't converge with mesh refinement.
     mdot_cell = np.array([0.5 * (mdot[i] + mdot[i + 1]) for i in range(N)])
 
     # Energy source: (mdot_local/A)*dh/dz at each cell center
@@ -235,7 +165,7 @@ def run_mms_5eq_subcooled(N, n_steps=5000, dt=1e-4, recon=None):
     # Re-initialize enthalpy and run with energy source to steady state
     h_l[:] = h_exact(x_c)
     for _ in range(n_steps):
-        step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, dt, None, src)
+        step_5eq(solver, p, alpha, h_l, h_v, mdot, bc_in, bc_out, dt, None, src)
 
     # Compute L2 error for enthalpy only
     h_ref = h_exact(x_c)
@@ -271,13 +201,10 @@ def convergence_rate(errors):
 # ============================================================================
 
 class TestMMSConvergenceHEM:
-    """MMS convergence for subcooled (HEM-like) single-phase flow.
-    Verifies the pressure solve + momentum + energy transport converge
-    at the expected rate (≥ 1st order for donor-cell upwind)."""
+    """MMS convergence for subcooled (HEM-like) single-phase flow."""
 
     def test_mms_sources_are_correct(self):
-        """Sanity: verify MMS source functions satisfy the PDE analytically.
-        At any x, the continuous PDE with sources should hold exactly."""
+        """Sanity: verify MMS source functions satisfy the PDE analytically."""
         x_test = np.array([0.5, 1.0, 2.0, 3.5, 4.5])
 
         for x in x_test:
@@ -294,9 +221,7 @@ class TestMMSConvergenceHEM:
             assert lhs_energy == pytest.approx(S_energy_exact(x), rel=1e-12)
 
     def test_mms_convergence_enthalpy(self):
-        """Enthalpy error should decrease as O(dx^p) with p >= 0.8.
-        This is the core MMS test: verifies the donor-cell advection scheme
-        for enthalpy transport converges at first order."""
+        """Enthalpy error should decrease as O(dx^p) with p >= 0.8."""
         mesh_sizes = [10, 20, 40]
         errors = []
 
@@ -310,7 +235,7 @@ class TestMMSConvergenceHEM:
         rate = convergence_rate(errors)
         print(f"  Enthalpy convergence rate: {rate:.2f}")
         assert rate > 0.8, (
-            f"Enthalpy convergence rate {rate:.2f} < 0.8 (expected ≥ 1.0 for donor-cell)"
+            f"Enthalpy convergence rate {rate:.2f} < 0.8 (expected >= 1.0 for donor-cell)"
         )
 
     def test_fine_mesh_small_error(self):
@@ -323,8 +248,7 @@ class TestMMSSourceTermInjection:
     """Verify that source terms actually affect the solution."""
 
     def test_mass_source_changes_pressure(self):
-        """A mass source should change the pressure field.
-        Requires InertialMomentum (algebraic ignores source terms)."""
+        """A mass source should change the pressure field."""
         fluid = tp.SimpleFluidProperties()
         pp = fluid.evaluate_phasic(10e6)
         closures = tp.DriftFluxClosures(H_i=0.0, C_0=1.0)
@@ -333,30 +257,24 @@ class TestMMSSourceTermInjection:
         solver = tp.TwoPhaseSolver(N, dx, A_flow, D_h, 0.0, fluid,
                                     tp.DonorCell(), model, tp.InertialMomentum())
 
-        bc = tp.BoundaryConditions()
-        bc.bc_type_in = tp.BCType.PRESSURE; bc.bc_type_out = tp.BCType.PRESSURE
-        bc.p_in = 10e6; bc.p_out = 10e6
-        bc.h_in = 700e3; bc.h_l_in = 700e3; bc.h_v_in = pp.h_sat_v
+        bc_in, bc_out = pressure_bcs(10e6, 10e6, 700e3, h_v=pp.h_sat_v)
 
         # Without source
         p1 = np.full(N, 10e6); a1 = np.full(N, 1e-10)
         h_l1 = np.full(N, 700e3); h_v1 = np.full(N, pp.h_sat_v)
         mdot1 = np.zeros(N + 1)
         for _ in range(500):
-            step_5eq_migrated(solver, p1, a1, h_l1, h_v1, mdot1, bc, 1e-4)
+            step_5eq(solver, p1, a1, h_l1, h_v1, mdot1, bc_in, bc_out, 1e-4)
 
         # With mass source (should pressurize)
         p2 = np.full(N, 10e6); a2 = np.full(N, 1e-10)
         h_l2 = np.full(N, 700e3); h_v2 = np.full(N, pp.h_sat_v)
         mdot2 = np.zeros(N + 1)
         src = tp.SourceTerms()
-        src.mass = [10.0] * N  # 10 kg/(m³·s) mass injection
+        src.mass = [10.0] * N  # 10 kg/(m^3*s) mass injection
         for _ in range(500):
-            step_5eq_migrated(solver, p2, a2, h_l2, h_v2, mdot2, bc, 1e-4, None, src)
+            step_5eq(solver, p2, a2, h_l2, h_v2, mdot2, bc_in, bc_out, 1e-4, None, src)
 
-        # With algebraic momentum and equal-p BCs, mass source creates outflow
-        # through boundaries. The steady-state pressure interior should differ
-        # from the no-source case. Check that at least interior pressures changed.
         p_diff = np.max(np.abs(p2 - p1))
         assert p_diff > 10, (
             f"Mass source should affect pressure field: max|dp|={p_diff:.1f} Pa"
@@ -372,21 +290,18 @@ class TestMMSSourceTermInjection:
         solver = tp.TwoPhaseSolver(N, dx, A_flow, D_h, 0.0, fluid,
                                     tp.DonorCell(), model, tp.InertialMomentum())
 
-        bc = tp.BoundaryConditions()
-        bc.bc_type_in = tp.BCType.PRESSURE; bc.bc_type_out = tp.BCType.PRESSURE
-        bc.p_in = 10e6; bc.p_out = 10e6  # equal pressures
-        bc.h_in = 700e3; bc.h_l_in = 700e3; bc.h_v_in = pp.h_sat_v
+        bc_in, bc_out = pressure_bcs(10e6, 10e6, 700e3, h_v=pp.h_sat_v)
 
         p = np.full(N, 10e6); alpha = np.full(N, 1e-10)
         h_l = np.full(N, 700e3); h_v = np.full(N, pp.h_sat_v)
         mdot = np.zeros(N + 1)
 
-        # Uniform positive momentum source → should drive flow
+        # Uniform positive momentum source -> should drive flow
         src = tp.SourceTerms()
         src.momentum = [1e5] * (N + 1)  # 100 kPa/m body force (like gravity)
 
         for _ in range(500):
-            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, 1e-4, None, src)
+            step_5eq(solver, p, alpha, h_l, h_v, mdot, bc_in, bc_out, 1e-4, None, src)
 
         # With equal pressures + positive momentum source, flow should be positive
         assert np.mean(mdot[1:-1]) > 0.1, (
@@ -403,9 +318,7 @@ class TestMMSSourceTermInjection:
         solver = tp.TwoPhaseSolver(N, dx, A_flow, D_h, 0.0, fluid,
                                     tp.DonorCell(), model, tp.InertialMomentum())
 
-        bc = tp.BoundaryConditions()
-        bc.bc_type_in = tp.BCType.WALL; bc.bc_type_out = tp.BCType.WALL
-        bc.h_in = 700e3; bc.h_l_in = 700e3; bc.h_v_in = pp.h_sat_v
+        bc_in, bc_out = wall_wall_bcs(700e3, pp.h_sat_v)
 
         p = np.full(N, 10e6); alpha = np.full(N, 1e-10)
         h_l = np.full(N, 700e3); h_v = np.full(N, pp.h_sat_v)
@@ -413,16 +326,14 @@ class TestMMSSourceTermInjection:
 
         h_l_init = h_l[1]
         src = tp.SourceTerms()
-        src.energy_l = [1e6] * N  # 1 MW/m³
+        src.energy_l = [1e6] * N  # 1 MW/m^3
 
         for _ in range(100):
-            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, 1e-4, None, src)
+            step_5eq(solver, p, alpha, h_l, h_v, mdot, bc_in, bc_out, 1e-4, None, src)
 
-        # S_energy_l = 1e6 W/m³, 100 steps at dt=1e-4:
-        # Δh = dt * S_e * n_steps / ρ = 1e-4 * 1e6 * 100 / 750 ≈ 13 J/kg
         assert h_l[1] > h_l_init + 5, (
             f"Energy source should heat liquid: h_l={h_l[1]:.1f}, "
-            f"initial={h_l_init:.1f} (expected Δh ≈ 13 J/kg)"
+            f"initial={h_l_init:.1f} (expected dh ~ 13 J/kg)"
         )
 
 
@@ -431,19 +342,15 @@ class TestMMSSourceTermInjection:
 # ============================================================================
 
 class TestMMSConvergenceMUSCL:
-    """MMS convergence for MUSCL reconstruction schemes.
-    Second-order TVD should give convergence rate > 1.5 (between 1st and 2nd
-    order due to limiter activation at the sinusoidal extrema)."""
+    """MMS convergence for MUSCL reconstruction schemes."""
 
     @pytest.mark.parametrize("recon_name,recon", [
         ("minmod", tp.MUSCL_Minmod()),
         ("vanLeer", tp.MUSCL_VanLeer()),
     ])
     def test_muscl_convergence_rate(self, recon_name, recon):
-        """MUSCL convergence rate from coarse-mesh pair (N=10→20) should be
-        near second order (> 1.5). At finer meshes, a non-discretization error
-        floor (frozen source term, TVD extremum clipping) reduces the apparent
-        rate. The coarse-mesh pair is where discretization error dominates."""
+        """MUSCL convergence rate from coarse-mesh pair (N=10->20) should be
+        near second order (> 1.5)."""
         mesh_sizes = [10, 20, 40]
         errors = []
 
@@ -461,12 +368,12 @@ class TestMMSConvergenceMUSCL:
             rates.append(r)
             print(f"  {recon_name} N={int(L_pipe/dx1)}->{int(L_pipe/dx2)}: rate = {r:.2f}")
 
-        # The coarsest pair (10→20) gives the cleanest rate
+        # The coarsest pair (10->20) gives the cleanest rate
         rate_coarse = rates[0]
         print(f"  {recon_name} coarse-pair rate: {rate_coarse:.2f}")
         assert rate_coarse > 1.5, (
             f"MUSCL {recon_name} coarse-pair rate {rate_coarse:.2f} < 1.5 "
-            f"(expected ≈ 2.0 for second-order, > 1.5 with TVD limiter)"
+            f"(expected ~ 2.0 for second-order, > 1.5 with TVD limiter)"
         )
 
     @pytest.mark.parametrize("recon_name,recon", [

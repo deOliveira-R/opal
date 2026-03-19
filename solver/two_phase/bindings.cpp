@@ -7,8 +7,10 @@
  * Exposes:
  *   opal_two_phase.SimpleFluidProperties()
  *   opal_two_phase.IAPWSIF97Properties()
- *   opal_two_phase.TwoPhaseBCs(p_in, p_out, h_in)
- *   opal_two_phase.BoundaryConditions()
+ *   opal_two_phase.PressureFace(p, h_l, h_v, alpha)
+ *   opal_two_phase.WallFace(h_l, h_v)
+ *   opal_two_phase.BreakFace(p_back, C_d, h_l, h_v)
+ *   opal_two_phase.RampedBreak(p_back, C_d_final, t_open, h_l, h_v)
  *   opal_two_phase.HEMModel()
  *   opal_two_phase.TwoPhaseSolver(N, dx, A_flow, D_h, f_D, fluid, [recon], [model])
  *     .step(p, h, mdot, bc, dt, q_wall=None)
@@ -139,6 +141,14 @@ PYBIND11_MODULE(opal_two_phase, m) {
         .def_readonly("cp_v",        &PhasicProps::cp_v)
         .def_readonly("sigma",       &PhasicProps::sigma);
 
+    // FaceTransportBC struct (for update_transport) -------------------------
+    py::class_<FaceTransportBC>(m, "FaceTransportBC")
+        .def(py::init<>())
+        .def_readwrite("h_l",    &FaceTransportBC::h_l)
+        .def_readwrite("h_v",    &FaceTransportBC::h_v)
+        .def_readwrite("h_mix",  &FaceTransportBC::h_mix)
+        .def_readwrite("alpha",  &FaceTransportBC::alpha);
+
     // InterfacialState struct (input to closures) --------------------------
     py::class_<InterfacialState>(m, "InterfacialState")
         .def(py::init<>())
@@ -207,7 +217,7 @@ PYBIND11_MODULE(opal_two_phase, m) {
                py::array_t<double> h_l,
                py::array_t<double> h_v,
                py::array_t<double> mdot,
-               const BoundaryConditions& bc,
+               const FaceTransportBC& tbc_in,
                int N, double dx, double A_flow, double D_h, double f_D,
                double dt,
                py::object q_wall_obj)
@@ -224,13 +234,6 @@ PYBIND11_MODULE(opal_two_phase, m) {
                 std::vector<FluidProps> props(N);
                 static const DonorCell default_recon;
 
-                // Convert legacy BC → FaceTransportBC
-                FaceTransportBC tbc_in;
-                tbc_in.h_l   = (bc.h_l_in != 0.0) ? bc.h_l_in : bc.h_in;
-                tbc_in.h_v   = bc.h_v_in;
-                tbc_in.h_mix = bc.h_in;
-                tbc_in.alpha = bc.alpha_in;
-
                 if (q_wall_obj.is_none()) {
                     self.update_transport(
                         state, p_old_vec, tbc_in, mesh, props, default_recon, dt, nullptr);
@@ -246,7 +249,7 @@ PYBIND11_MODULE(opal_two_phase, m) {
             },
             py::arg("p"), py::arg("p_old"),
             py::arg("alpha"), py::arg("h_l"), py::arg("h_v"),
-            py::arg("mdot"), py::arg("bc"),
+            py::arg("mdot"), py::arg("tbc_in"),
             py::arg("N"), py::arg("dx"), py::arg("A_flow"),
             py::arg("D_h"), py::arg("f_D"),
             py::arg("dt"),
@@ -281,11 +284,7 @@ PYBIND11_MODULE(opal_two_phase, m) {
                 return d;
             });
 
-    // BCType enum -----------------------------------------------------------
-    py::enum_<BCType>(m, "BCType")
-        .value("PRESSURE", BCType::PRESSURE)
-        .value("WALL",     BCType::WALL)
-        .value("BREAK",    BCType::BREAK);
+    // BCType REMOVED — replaced by FacePressureBC::Type (DIRICHLET/ZERO_FLUX)
 
     // SourceTerms -----------------------------------------------------------
     py::class_<SourceTerms>(m, "SourceTerms")
@@ -297,20 +296,7 @@ PYBIND11_MODULE(opal_two_phase, m) {
         .def_readwrite("momentum",  &SourceTerms::momentum)
         .def("empty", &SourceTerms::empty);
 
-    // BoundaryConditions ---------------------------------------------------
-    py::class_<BoundaryConditions>(m, "BoundaryConditions")
-        .def(py::init<>())
-        .def_readwrite("p_in",     &BoundaryConditions::p_in)
-        .def_readwrite("p_out",    &BoundaryConditions::p_out)
-        .def_readwrite("h_in",     &BoundaryConditions::h_in)
-        .def_readwrite("h_l_in",   &BoundaryConditions::h_l_in)
-        .def_readwrite("h_v_in",   &BoundaryConditions::h_v_in)
-        .def_readwrite("alpha_in", &BoundaryConditions::alpha_in)
-        .def_readwrite("v_l_in",   &BoundaryConditions::v_l_in)
-        .def_readwrite("v_v_in",   &BoundaryConditions::v_v_in)
-        .def_readwrite("bc_type_in",  &BoundaryConditions::bc_type_in)
-        .def_readwrite("bc_type_out", &BoundaryConditions::bc_type_out)
-        .def_readwrite("break_area_fraction", &BoundaryConditions::break_area_fraction);
+    // BoundaryConditions REMOVED — replaced by BoundaryFace hierarchy
 
     // BoundaryFace hierarchy -----------------------------------------------
     py::class_<BoundaryFace>(m, "BoundaryFace");
@@ -371,19 +357,7 @@ PYBIND11_MODULE(opal_two_phase, m) {
              py::keep_alive<1, 2>(),  // keeps phasic alive
              "Ransom-Trapp critical flow with internal saturation lookup");
 
-    // TwoPhaseBCs (legacy) -------------------------------------------------
-    py::class_<TwoPhaseBCs>(m, "TwoPhaseBCs")
-        .def(py::init<double, double, double>(),
-             py::arg("p_in"), py::arg("p_out"), py::arg("h_in"),
-             "Boundary conditions: inlet/outlet pressure [Pa], inlet enthalpy [J/kg]")
-        .def_readwrite("p_in",  &TwoPhaseBCs::p_in)
-        .def_readwrite("p_out", &TwoPhaseBCs::p_out)
-        .def_readwrite("h_in",  &TwoPhaseBCs::h_in)
-        .def("__repr__", [](const TwoPhaseBCs& bc) {
-            return "<TwoPhaseBCs p_in=" + std::to_string(bc.p_in) +
-                   " p_out=" + std::to_string(bc.p_out) +
-                   " h_in=" + std::to_string(bc.h_in) + ">";
-        });
+    // TwoPhaseBCs REMOVED — replaced by BoundaryFace hierarchy
 
     // TwoPhaseSolver --------------------------------------------------------
     py::class_<TwoPhaseSolver>(m, "TwoPhaseSolver")

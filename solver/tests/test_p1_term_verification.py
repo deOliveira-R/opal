@@ -26,7 +26,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "two_phase"))
 import opal_two_phase as tp
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from bc_helpers import step_5eq_migrated, step_hem_migrated, solve_migrated, reset_time
+from bc_helpers import step_5eq, step_hem, solve_hem, pressure_bcs, wall_pressure_bcs, wall_wall_bcs, wall_break_bcs, reset_time
 
 
 # ============================================================================
@@ -63,15 +63,15 @@ class TestInterfacialArea:
 
     @pytest.mark.parametrize("alpha,expected_a_i", [
         (0.0,    0.0),           # zero: both branches give 0
-        (0.001,  0.001 * 4 * 0.999),  # low: 4α(1-α) > α
+        (0.001,  0.001 * 4 * 0.999),  # low: 4alpha(1-alpha) > alpha
         (0.01,   4 * 0.01 * 0.99),    # still parabolic dominates
         (0.1,    4 * 0.1 * 0.9),      # = 0.36
         (0.25,   4 * 0.25 * 0.75),    # = 0.75
         (0.5,    1.0),                  # maximum of parabola
         (0.75,   4 * 0.75 * 0.25),    # symmetric with 0.25
-        (0.9,    0.9),                  # high: α > 4α(1-α) = 0.36
-        (0.99,   0.99),                 # α branch dominates
-        (1.0,    1.0),                  # full vapor: α = 1
+        (0.9,    0.9),                  # high: alpha > 4alpha(1-alpha) = 0.36
+        (0.99,   0.99),                 # alpha branch dominates
+        (1.0,    1.0),                  # full vapor: alpha = 1
     ])
     def test_interfacial_area_exact(self, alpha, expected_a_i):
         """a_i matches hand calculation at specific alpha."""
@@ -157,8 +157,8 @@ class TestNucleationOnset:
 # ============================================================================
 
 class TestDriftFluxVgj:
-    """V_gj = 1.41 * [σ·g·Δρ/ρ_l²]^0.25 * 4α(1-α).
-    AI could: forget the 4α(1-α) scaling, use wrong exponent, wrong g."""
+    """V_gj = 1.41 * [sigma*g*drho/rho_l^2]^0.25 * 4alpha(1-alpha).
+    AI could: forget the 4alpha(1-alpha) scaling, use wrong exponent, wrong g."""
 
     def test_vgj_zero_at_alpha_zero(self):
         """V_gj = 0 when alpha = 0 (no vapor phase)."""
@@ -175,7 +175,7 @@ class TestDriftFluxVgj:
         assert d.V_gj == pytest.approx(0.0, abs=1e-15)
 
     def test_vgj_max_at_alpha_half(self):
-        """V_gj is maximized at alpha = 0.5 (4α(1-α) = 1)."""
+        """V_gj is maximized at alpha = 0.5 (4alpha(1-alpha) = 1)."""
         c = tp.DriftFluxClosures(H_i=1e5, C_0=1.13)
 
         s_half = make_state(T_l=500, T_sat=500, alpha=0.5)
@@ -307,11 +307,11 @@ class TestPostStepInvariants:
     If any AI-introduced error violates conservation or bounds,
     these catch it immediately — not after 10000 steps."""
 
-    def _run_and_check(self, solver, fluid, N, bc, p, alpha, h_l, h_v, mdot,
+    def _run_and_check(self, solver, fluid, N, bc_in, bc_out, p, alpha, h_l, h_v, mdot,
                        dt, n_steps, desc=""):
         """Run n_steps, checking ALL invariants after EACH step."""
         for step in range(n_steps):
-            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, dt)
+            step_5eq(solver, p, alpha, h_l, h_v, mdot, bc_in, bc_out, dt)
 
             ctx = f"[{desc} step={step}]"
 
@@ -364,11 +364,7 @@ class TestPostStepInvariants:
                                     tp.DonorCell(), model, tp.InertialMomentum())
 
         pp = fluid.evaluate_phasic(10e6)
-        bc = tp.BoundaryConditions()
-        bc.bc_type_in = tp.BCType.PRESSURE; bc.bc_type_out = tp.BCType.PRESSURE
-        bc.p_in = 10e6; bc.p_out = 9.5e6
-        bc.h_in = pp.h_sat_l - 100e3; bc.h_l_in = bc.h_in
-        bc.h_v_in = pp.h_sat_v
+        bc_in, bc_out = pressure_bcs(10e6, 9.5e6, pp.h_sat_l - 100e3, h_v=pp.h_sat_v)
 
         p = np.full(N, 10e6)
         alpha = np.full(N, 1e-6)
@@ -376,7 +372,7 @@ class TestPostStepInvariants:
         h_v = np.full(N, pp.h_sat_v)
         mdot = np.zeros(N + 1)
 
-        self._run_and_check(solver, fluid, N, bc, p, alpha, h_l, h_v, mdot,
+        self._run_and_check(solver, fluid, N, bc_in, bc_out, p, alpha, h_l, h_v, mdot,
                            1e-4, 500, "subcooled")
 
     def test_two_phase_flow(self):
@@ -389,11 +385,7 @@ class TestPostStepInvariants:
                                     tp.DonorCell(), model, tp.InertialMomentum())
 
         pp = fluid.evaluate_phasic(10e6)
-        bc = tp.BoundaryConditions()
-        bc.bc_type_in = tp.BCType.PRESSURE; bc.bc_type_out = tp.BCType.PRESSURE
-        bc.p_in = 10e6; bc.p_out = 9.5e6
-        bc.h_in = pp.h_sat_l; bc.h_l_in = pp.h_sat_l
-        bc.h_v_in = pp.h_sat_v; bc.alpha_in = 0.2
+        bc_in, bc_out = pressure_bcs(10e6, 9.5e6, pp.h_sat_l, h_v=pp.h_sat_v, alpha=0.2)
 
         p = np.full(N, 10e6)
         alpha = np.full(N, 0.2)
@@ -401,11 +393,11 @@ class TestPostStepInvariants:
         h_v = np.full(N, pp.h_sat_v)
         mdot = np.zeros(N + 1)
 
-        self._run_and_check(solver, fluid, N, bc, p, alpha, h_l, h_v, mdot,
+        self._run_and_check(solver, fluid, N, bc_in, bc_out, p, alpha, h_l, h_v, mdot,
                            1e-4, 500, "two-phase")
 
     def test_heated_boiling(self):
-        """Subcooled inlet with wall heating → boiling."""
+        """Subcooled inlet with wall heating -> boiling."""
         fluid = tp.SimpleFluidProperties()
         closures = tp.DriftFluxClosures(H_i=1e6, C_0=1.0)
         model = tp.FiveEqModel(fluid, closures)
@@ -414,20 +406,16 @@ class TestPostStepInvariants:
                                     tp.DonorCell(), model, tp.InertialMomentum())
 
         pp = fluid.evaluate_phasic(10e6)
-        bc = tp.BoundaryConditions()
-        bc.bc_type_in = tp.BCType.PRESSURE; bc.bc_type_out = tp.BCType.PRESSURE
-        bc.p_in = 10e6; bc.p_out = 9.5e6
-        bc.h_in = pp.h_sat_l - 50e3; bc.h_l_in = bc.h_in
-        bc.h_v_in = pp.h_sat_v
+        bc_in, bc_out = pressure_bcs(10e6, 9.5e6, pp.h_sat_l - 50e3, h_v=pp.h_sat_v)
 
         p = np.full(N, 10e6)
         alpha = np.full(N, 1e-6)
         h_l = np.full(N, pp.h_sat_l - 50e3)
         h_v = np.full(N, pp.h_sat_v)
         mdot = np.zeros(N + 1)
-        q_wall = np.full(N, 5e6)  # 5 MW/m³ heating
+        q_wall = np.full(N, 5e6)  # 5 MW/m^3 heating
 
-        self._run_and_check(solver, fluid, N, bc, p, alpha, h_l, h_v, mdot,
+        self._run_and_check(solver, fluid, N, bc_in, bc_out, p, alpha, h_l, h_v, mdot,
                            1e-4, 500, "heated-boiling")
 
     def test_depressurization(self):
@@ -440,11 +428,7 @@ class TestPostStepInvariants:
                                     tp.DonorCell(), model, tp.InertialMomentum())
 
         pp = fluid.evaluate_phasic(15e6)
-        bc = tp.BoundaryConditions()
-        bc.bc_type_in = tp.BCType.WALL; bc.bc_type_out = tp.BCType.PRESSURE
-        bc.p_out = 1e6  # sudden low pressure
-        bc.h_in = pp.h_sat_l + 50e3; bc.h_l_in = bc.h_in
-        bc.h_v_in = pp.h_sat_v
+        bc_in, bc_out = wall_pressure_bcs(1e6, pp.h_sat_l + 50e3, h_v=pp.h_sat_v)
 
         p = np.full(N, 15e6)
         alpha = np.full(N, 1e-6)
@@ -452,7 +436,7 @@ class TestPostStepInvariants:
         h_v = np.full(N, pp.h_sat_v)
         mdot = np.zeros(N + 1)
 
-        self._run_and_check(solver, fluid, N, bc, p, alpha, h_l, h_v, mdot,
+        self._run_and_check(solver, fluid, N, bc_in, bc_out, p, alpha, h_l, h_v, mdot,
                            5e-5, 1000, "depressurization")
 
     def test_condensation(self):
@@ -465,11 +449,7 @@ class TestPostStepInvariants:
                                     tp.DonorCell(), model, tp.InertialMomentum())
 
         pp = fluid.evaluate_phasic(10e6)
-        bc = tp.BoundaryConditions()
-        bc.bc_type_in = tp.BCType.PRESSURE; bc.bc_type_out = tp.BCType.PRESSURE
-        bc.p_in = 10e6; bc.p_out = 9.5e6
-        bc.h_in = pp.h_sat_l - 100e3; bc.h_l_in = bc.h_in
-        bc.h_v_in = pp.h_sat_v; bc.alpha_in = 0.0
+        bc_in, bc_out = pressure_bcs(10e6, 9.5e6, pp.h_sat_l - 100e3, h_v=pp.h_sat_v)
 
         p = np.full(N, 10e6)
         alpha = np.full(N, 0.8)  # mostly steam
@@ -477,7 +457,7 @@ class TestPostStepInvariants:
         h_v = np.full(N, pp.h_sat_v)
         mdot = np.zeros(N + 1)
 
-        self._run_and_check(solver, fluid, N, bc, p, alpha, h_l, h_v, mdot,
+        self._run_and_check(solver, fluid, N, bc_in, bc_out, p, alpha, h_l, h_v, mdot,
                            1e-4, 500, "condensation")
 
 
@@ -486,16 +466,10 @@ class TestPostStepInvariants:
 # ============================================================================
 
 class TestMixtureConservation:
-    """Mass conservation tests for a semi-implicit operator-split scheme.
-    The scheme has O(dt) splitting error, so per-step conservation isn't exact.
-    Instead we verify:
-    1. Steady-state flows are uniform (catches face indexing bugs)
-    2. Conservation error improves with dt refinement (convergence)
-    AI could: double-count a flux, forget outlet, use wrong face index."""
+    """Mass conservation tests for a semi-implicit operator-split scheme."""
 
     def test_steady_state_uniform_flow(self):
-        """At steady state, all face flows should be equal (mass balance).
-        If an AI uses wrong face index, this catches it immediately."""
+        """At steady state, all face flows should be equal (mass balance)."""
         fluid = tp.SimpleFluidProperties()
         closures = tp.DriftFluxClosures(H_i=1e5, C_0=1.0)
         model = tp.FiveEqModel(fluid, closures)
@@ -504,11 +478,7 @@ class TestMixtureConservation:
                                     tp.DonorCell(), model, tp.InertialMomentum())
 
         pp = fluid.evaluate_phasic(10e6)
-        bc = tp.BoundaryConditions()
-        bc.bc_type_in = tp.BCType.PRESSURE; bc.bc_type_out = tp.BCType.PRESSURE
-        bc.p_in = 10e6; bc.p_out = 9.5e6
-        bc.h_in = pp.h_sat_l - 50e3; bc.h_l_in = bc.h_in
-        bc.h_v_in = pp.h_sat_v
+        bc_in, bc_out = pressure_bcs(10e6, 9.5e6, pp.h_sat_l - 50e3, h_v=pp.h_sat_v)
 
         p = np.full(N, 10e6)
         alpha = np.full(N, 1e-6)  # subcooled (no phase change)
@@ -518,7 +488,7 @@ class TestMixtureConservation:
 
         # Run to approximate steady state
         for step in range(2000):
-            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, 1e-4)
+            step_5eq(solver, p, alpha, h_l, h_v, mdot, bc_in, bc_out, 1e-4)
 
         # All face flows should be nearly equal at steady state
         mdot_avg = np.mean(mdot)
@@ -528,8 +498,7 @@ class TestMixtureConservation:
             )
 
     def test_wall_bc_zero_inlet_flow(self):
-        """With WALL BC at inlet, mdot[0] must be exactly zero.
-        Catches wrong BC application at inlet face."""
+        """With WALL BC at inlet, mdot[0] must be exactly zero."""
         fluid = tp.SimpleFluidProperties()
         closures = tp.DriftFluxClosures(H_i=1e5, C_0=1.0)
         model = tp.FiveEqModel(fluid, closures)
@@ -538,11 +507,7 @@ class TestMixtureConservation:
                                     tp.DonorCell(), model, tp.InertialMomentum())
 
         pp = fluid.evaluate_phasic(10e6)
-        bc = tp.BoundaryConditions()
-        bc.bc_type_in = tp.BCType.WALL  # closed end
-        bc.bc_type_out = tp.BCType.PRESSURE
-        bc.p_out = 5e6
-        bc.h_in = pp.h_sat_l; bc.h_l_in = pp.h_sat_l; bc.h_v_in = pp.h_sat_v
+        bc_in, bc_out = wall_pressure_bcs(5e6, pp.h_sat_l, h_v=pp.h_sat_v)
 
         p = np.full(N, 10e6)
         alpha = np.full(N, 1e-6)
@@ -551,7 +516,7 @@ class TestMixtureConservation:
         mdot = np.zeros(N + 1)
 
         for step in range(100):
-            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, 1e-4)
+            step_5eq(solver, p, alpha, h_l, h_v, mdot, bc_in, bc_out, 1e-4)
             assert mdot[0] == pytest.approx(0.0, abs=1e-15), (
                 f"step {step}: mdot[0]={mdot[0]}, should be 0 with WALL BC"
             )
@@ -562,11 +527,10 @@ class TestMixtureConservation:
 # ============================================================================
 
 class TestPhaseAbsentReset:
-    """When a phase is absent (m_k < 1e-12), its enthalpy resets to saturation.
-    AI could: reset to wrong saturation value, or forget the reset entirely."""
+    """When a phase is absent (m_k < 1e-12), its enthalpy resets to saturation."""
 
     def test_vapor_absent_resets_h_v_to_h_sat_v(self):
-        """With alpha ≈ 0, h_v should be h_sat_v(p) exactly."""
+        """With alpha = 0, h_v should be h_sat_v(p) exactly."""
         fluid = tp.SimpleFluidProperties()
         closures = tp.DriftFluxClosures(H_i=1e5, C_0=1.0)
         model = tp.FiveEqModel(fluid, closures)
@@ -575,11 +539,7 @@ class TestPhaseAbsentReset:
                                     tp.DonorCell(), model, tp.InertialMomentum())
 
         pp = fluid.evaluate_phasic(10e6)
-        bc = tp.BoundaryConditions()
-        bc.bc_type_in = tp.BCType.PRESSURE; bc.bc_type_out = tp.BCType.PRESSURE
-        bc.p_in = 10e6; bc.p_out = 10e6
-        bc.h_in = pp.h_sat_l - 100e3; bc.h_l_in = bc.h_in
-        bc.h_v_in = pp.h_sat_v
+        bc_in, bc_out = pressure_bcs(10e6, 10e6, pp.h_sat_l - 100e3, h_v=pp.h_sat_v)
 
         p = np.full(N, 10e6)
         alpha = np.full(N, 0.0)  # no vapor
@@ -587,7 +547,7 @@ class TestPhaseAbsentReset:
         h_v = np.full(N, pp.h_sat_v + 500e3)  # intentionally wrong
         mdot = np.zeros(N + 1)
 
-        step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, 1e-4)
+        step_5eq(solver, p, alpha, h_l, h_v, mdot, bc_in, bc_out, 1e-4)
 
         for i in range(N):
             pp_i = fluid.evaluate_phasic(p[i])
@@ -596,7 +556,7 @@ class TestPhaseAbsentReset:
             )
 
     def test_liquid_absent_resets_h_l_to_h_sat_l(self):
-        """With alpha ≈ 1, h_l should be h_sat_l(p) exactly."""
+        """With alpha = 1, h_l should be h_sat_l(p) exactly."""
         fluid = tp.SimpleFluidProperties()
         closures = tp.DriftFluxClosures(H_i=1e5, C_0=1.0)
         model = tp.FiveEqModel(fluid, closures)
@@ -605,11 +565,7 @@ class TestPhaseAbsentReset:
                                     tp.DonorCell(), model, tp.InertialMomentum())
 
         pp = fluid.evaluate_phasic(10e6)
-        bc = tp.BoundaryConditions()
-        bc.bc_type_in = tp.BCType.PRESSURE; bc.bc_type_out = tp.BCType.PRESSURE
-        bc.p_in = 10e6; bc.p_out = 10e6
-        bc.h_in = pp.h_sat_v; bc.h_l_in = pp.h_sat_l
-        bc.h_v_in = pp.h_sat_v; bc.alpha_in = 1.0
+        bc_in, bc_out = pressure_bcs(10e6, 10e6, pp.h_sat_l, h_v=pp.h_sat_v, alpha=1.0)
 
         p = np.full(N, 10e6)
         alpha = np.full(N, 1.0)  # all vapor
@@ -617,7 +573,7 @@ class TestPhaseAbsentReset:
         h_v = np.full(N, pp.h_sat_v)
         mdot = np.zeros(N + 1)
 
-        step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, 1e-4)
+        step_5eq(solver, p, alpha, h_l, h_v, mdot, bc_in, bc_out, 1e-4)
 
         for i in range(N):
             pp_i = fluid.evaluate_phasic(p[i])
@@ -631,9 +587,7 @@ class TestPhaseAbsentReset:
 # ============================================================================
 
 class TestPressureSweep:
-    """Run the solver at multiple pressures. AI code often works at the
-    development pressure (10 MPa) but fails at others due to hardcoded
-    constants or invalid property ranges."""
+    """Run the solver at multiple pressures."""
 
     @pytest.mark.parametrize("p_MPa", [1.0, 3.0, 5.0, 7.0, 10.0, 15.0, 20.0])
     def test_two_phase_stable_at_pressure(self, p_MPa):
@@ -647,11 +601,7 @@ class TestPressureSweep:
                                     tp.DonorCell(), model, tp.InertialMomentum())
 
         pp = fluid.evaluate_phasic(p_Pa)
-        bc = tp.BoundaryConditions()
-        bc.bc_type_in = tp.BCType.PRESSURE; bc.bc_type_out = tp.BCType.PRESSURE
-        bc.p_in = p_Pa; bc.p_out = p_Pa * 0.95
-        bc.h_in = pp.h_sat_l; bc.h_l_in = pp.h_sat_l
-        bc.h_v_in = pp.h_sat_v; bc.alpha_in = 0.1
+        bc_in, bc_out = pressure_bcs(p_Pa, p_Pa * 0.95, pp.h_sat_l, h_v=pp.h_sat_v, alpha=0.1)
 
         p = np.full(N, p_Pa)
         alpha = np.full(N, 0.1)
@@ -660,7 +610,7 @@ class TestPressureSweep:
         mdot = np.zeros(N + 1)
 
         for step in range(200):
-            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, 1e-4)
+            step_5eq(solver, p, alpha, h_l, h_v, mdot, bc_in, bc_out, 1e-4)
 
         assert np.all(np.isfinite(p)), f"NaN in p at {p_MPa} MPa"
         assert np.all(np.isfinite(alpha)), f"NaN in alpha at {p_MPa} MPa"
@@ -674,8 +624,7 @@ class TestPressureSweep:
 # ============================================================================
 
 class TestIAPWSAtSolverStates:
-    """Run 5-eq solver with IAPWS and verify properties stay valid.
-    This is the exact combination that produced the bug."""
+    """Run 5-eq solver with IAPWS and verify properties stay valid."""
 
     def test_iapws_5eq_invariants(self):
         """Full 5-eq + IAPWS: all invariants hold for 200 steps."""
@@ -687,11 +636,7 @@ class TestIAPWSAtSolverStates:
                                     tp.DonorCell(), model, tp.InertialMomentum())
 
         pp = fluid.evaluate_phasic(7e6)
-        bc = tp.BoundaryConditions()
-        bc.bc_type_in = tp.BCType.PRESSURE; bc.bc_type_out = tp.BCType.PRESSURE
-        bc.p_in = 7e6; bc.p_out = 5e6
-        bc.h_in = pp.h_sat_l - 50e3; bc.h_l_in = bc.h_in
-        bc.h_v_in = pp.h_sat_v
+        bc_in, bc_out = pressure_bcs(7e6, 5e6, pp.h_sat_l - 50e3, h_v=pp.h_sat_v)
 
         p = np.full(N, 7e6)
         alpha = np.full(N, 0.01)
@@ -700,7 +645,7 @@ class TestIAPWSAtSolverStates:
         mdot = np.zeros(N + 1)
 
         for step in range(200):
-            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, 5e-5)
+            step_5eq(solver, p, alpha, h_l, h_v, mdot, bc_in, bc_out, 5e-5)
 
             assert np.all(np.isfinite(p)), f"NaN in p at step {step}"
             assert np.all(np.isfinite(alpha)), f"NaN in alpha at step {step}"
@@ -733,14 +678,7 @@ class TestIAPWSAtSolverStates:
                                                    c_floor=1200.0))
 
         pp = fluid.evaluate_phasic(7e6)
-        bc = tp.BoundaryConditions()
-        bc.bc_type_in = tp.BCType.WALL
-        bc.bc_type_out = tp.BCType.BREAK
-        bc.p_out = 101325.0
-        bc.break_area_fraction = 0.3
-        bc.h_in = pp.h_sat_l - 200e3
-        bc.h_l_in = bc.h_in
-        bc.h_v_in = pp.h_sat_v
+        bc_in, bc_out = wall_break_bcs(101325.0, 0.3, pp.h_sat_l - 200e3, h_v=pp.h_sat_v)
 
         p = np.full(N, 7e6)
         alpha = np.full(N, 1e-6)
@@ -749,7 +687,7 @@ class TestIAPWSAtSolverStates:
         mdot = np.zeros(N + 1)
 
         for step in range(2000):
-            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, 5e-5)
+            step_5eq(solver, p, alpha, h_l, h_v, mdot, bc_in, bc_out, 5e-5)
 
             if step % 100 == 0:
                 assert np.all(np.isfinite(p)), f"NaN in p at step {step}"

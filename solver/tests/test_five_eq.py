@@ -21,7 +21,7 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import opal_two_phase as tp
-from bc_helpers import step_5eq_migrated, step_hem_migrated, solve_migrated
+from bc_helpers import step_5eq, step_hem, solve_hem, pressure_bcs, reset_time
 
 
 # ---------------------------------------------------------------------------
@@ -134,13 +134,7 @@ class TestSinglePhaseLimit:
 
         p_in, p_out = 10.1e6, 10.0e6
         h_in = 700e3
-        bc = tp.BoundaryConditions()
-        bc.p_in = p_in
-        bc.p_out = p_out
-        bc.h_in = h_in
-        bc.h_l_in = h_in
-        bc.h_v_in = 2800e3
-        bc.alpha_in = 0.0
+        bc_in, bc_out = pressure_bcs(p_in, p_out, h_in, h_v=2800e3)
 
         p = np.linspace(p_in, p_out, N)
         alpha = np.zeros(N)
@@ -151,7 +145,7 @@ class TestSinglePhaseLimit:
         # Small dt for CFL compliance
         dt = 5e-4
         for _ in range(5000):
-            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, dt)
+            step_5eq(solver, p, alpha, h_l, h_v, mdot, bc_in, bc_out, dt)
 
         # All flows should be positive and roughly uniform
         assert np.all(mdot > 0), f"mdot = {mdot}"
@@ -174,11 +168,7 @@ class TestMassConservation5Eq:
         N = 5
         solver, fluid, _, _ = make_5eq_solver(N=N, C_0=1.0)
 
-        bc = tp.BoundaryConditions()
-        bc.p_in = 10.1e6
-        bc.p_out = 10.0e6
-        bc.h_in = 700e3
-        bc.h_v_in = 2800e3
+        bc_in, bc_out = pressure_bcs(10.1e6, 10.0e6, 700e3, h_v=2800e3)
 
         p = np.linspace(10.1e6, 10.0e6, N)
         alpha = np.zeros(N)
@@ -188,7 +178,7 @@ class TestMassConservation5Eq:
 
         dt = 1e-4
         for _ in range(5000):
-            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, dt)
+            step_5eq(solver, p, alpha, h_l, h_v, mdot, bc_in, bc_out, dt)
 
         # At steady state, all face flows should be equal (continuity)
         mdot_mean = np.mean(mdot)
@@ -209,11 +199,7 @@ class TestEnergyConservation5Eq:
         N = 5
         solver, _, _, _ = make_5eq_solver(N=N, C_0=1.0)
 
-        bc = tp.BoundaryConditions()
-        bc.p_in = 10.1e6
-        bc.p_out = 10.0e6
-        bc.h_in = 700e3
-        bc.h_v_in = 2800e3
+        bc_in, bc_out = pressure_bcs(10.1e6, 10.0e6, 700e3, h_v=2800e3)
 
         p = np.full(N, 10.05e6)
         alpha = np.zeros(N)
@@ -225,7 +211,7 @@ class TestEnergyConservation5Eq:
 
         dt = 1e-4
         for _ in range(5000):
-            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, dt, q_wall)
+            step_5eq(solver, p, alpha, h_l, h_v, mdot, bc_in, bc_out, dt, q_wall)
 
         # Liquid enthalpy should increase downstream
         assert np.all(np.diff(h_l) > 0), (
@@ -247,12 +233,7 @@ class TestVoidFractionEvolution:
         N = 5
         solver, fluid, _, _ = make_5eq_solver(N=N, H_i=1e6, C_0=1.0)
 
-        bc = tp.BoundaryConditions()
-        bc.p_in = 10.1e6
-        bc.p_out = 10.0e6
-        bc.h_in = 850e3  # superheated: h_sat_l = 800e3 at 10 MPa
-        bc.h_v_in = 2800e3
-        bc.alpha_in = 0.01  # match initial void to avoid stripping at inlet
+        bc_in, bc_out = pressure_bcs(10.1e6, 10.0e6, 850e3, h_v=2800e3, alpha=0.01)
 
         p = np.full(N, 10.05e6)
         alpha = np.full(N, 0.01)  # small initial void seed
@@ -262,7 +243,7 @@ class TestVoidFractionEvolution:
 
         dt = 1e-4
         for _ in range(5000):
-            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, dt)
+            step_5eq(solver, p, alpha, h_l, h_v, mdot, bc_in, bc_out, dt)
 
         # Void should grow from the initial seed due to flashing
         assert np.max(alpha) > 0.005, (
@@ -280,11 +261,7 @@ class TestVoidFractionEvolution:
         N = 5
         solver, _, _, _ = make_5eq_solver(N=N, H_i=1e6, C_0=1.0)
 
-        bc = tp.BoundaryConditions()
-        bc.p_in = 10.1e6
-        bc.p_out = 10.0e6
-        bc.h_in = 700e3  # subcooled
-        bc.h_v_in = 2800e3
+        bc_in, bc_out = pressure_bcs(10.1e6, 10.0e6, 700e3, h_v=2800e3)
 
         p = np.full(N, 10.05e6)
         alpha_init = 0.1
@@ -295,7 +272,7 @@ class TestVoidFractionEvolution:
 
         dt = 1e-4
         for _ in range(2000):
-            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, dt)
+            step_5eq(solver, p, alpha, h_l, h_v, mdot, bc_in, bc_out, dt)
 
         # Void should decrease (condensation)
         assert np.mean(alpha) < alpha_init, (
@@ -313,7 +290,7 @@ class TestHEMLimit:
         """Large H_i + no slip → should approach HEM steady-state pressure."""
         N = 5
         p_in, p_out, h_in = 10.1e6, 10.0e6, 700e3
-        bc_legacy = tp.TwoPhaseBCs(p_in, p_out, h_in)
+        bc_in_hem, bc_out_hem = pressure_bcs(p_in, p_out, h_in)
         dt = 1e-4
 
         # HEM solver
@@ -323,16 +300,11 @@ class TestHEMLimit:
         h_hem = np.full(N, h_in)
         mdot_hem = np.zeros(N + 1)
         for _ in range(5000):
-            step_hem_migrated(solver_hem, p_hem, h_hem, mdot_hem, bc_legacy, dt)
+            step_hem(solver_hem, p_hem, h_hem, mdot_hem, bc_in_hem, bc_out_hem, dt)
 
         # 5-eq solver with large H_i (fast equilibrium), no slip
         solver_5eq, _, _, _ = make_5eq_solver(N=N, H_i=1e8, C_0=1.0)
-        bc_5eq = tp.BoundaryConditions()
-        bc_5eq.p_in = p_in
-        bc_5eq.p_out = p_out
-        bc_5eq.h_in = h_in
-        bc_5eq.h_l_in = h_in
-        bc_5eq.h_v_in = 2800e3
+        bc_in_5eq, bc_out_5eq = pressure_bcs(p_in, p_out, h_in, h_v=2800e3)
 
         p_5eq = np.linspace(p_in, p_out, N)
         alpha_5eq = np.zeros(N)
@@ -340,8 +312,8 @@ class TestHEMLimit:
         h_v_5eq = np.full(N, 2800e3)
         mdot_5eq = np.zeros(N + 1)
         for _ in range(5000):
-            step_5eq_migrated(solver_5eq, p_5eq, alpha_5eq, h_l_5eq, h_v_5eq,
-                     mdot_5eq, bc_5eq, dt)
+            step_5eq(solver_5eq, p_5eq, alpha_5eq, h_l_5eq, h_v_5eq,
+                     mdot_5eq, bc_in_5eq, bc_out_5eq, dt)
 
         # Pressures should be close
         np.testing.assert_allclose(p_5eq, p_hem, rtol=0.01)
@@ -357,11 +329,7 @@ class TestHEMLimit:
 class TestSingleCell5Eq:
     def test_n1_runs(self):
         solver, _, _, _ = make_5eq_solver(N=1, C_0=1.0)
-        bc = tp.BoundaryConditions()
-        bc.p_in = 10.1e6
-        bc.p_out = 10.0e6
-        bc.h_in = 700e3
-        bc.h_v_in = 2800e3
+        bc_in, bc_out = pressure_bcs(10.1e6, 10.0e6, 700e3, h_v=2800e3)
 
         p = np.array([10e6])
         alpha = np.array([0.0])
@@ -369,7 +337,7 @@ class TestSingleCell5Eq:
         h_v = np.array([2800e3])
         mdot = np.zeros(2)
 
-        step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, dt=1e-4)
+        step_5eq(solver, p, alpha, h_l, h_v, mdot, bc_in, bc_out, dt=1e-4)
         assert np.isfinite(p[0])
         assert np.isfinite(h_l[0])
         assert np.all(np.isfinite(mdot))
@@ -383,11 +351,7 @@ class TestReverseFlow5Eq:
     def test_reverse_flow_steady(self):
         N = 5
         solver, _, _, _ = make_5eq_solver(N=N, C_0=1.0)
-        bc = tp.BoundaryConditions()
-        bc.p_in = 10.0e6
-        bc.p_out = 10.1e6
-        bc.h_in = 700e3
-        bc.h_v_in = 2800e3
+        bc_in, bc_out = pressure_bcs(10.0e6, 10.1e6, 700e3, h_v=2800e3)
 
         p = np.full(N, 10.05e6)
         alpha = np.zeros(N)
@@ -396,7 +360,7 @@ class TestReverseFlow5Eq:
         mdot = np.zeros(N + 1)
 
         for _ in range(5000):
-            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, dt=1e-4)
+            step_5eq(solver, p, alpha, h_l, h_v, mdot, bc_in, bc_out, dt=1e-4)
 
         assert np.all(mdot < 0), f"Expected reverse flow, got mdot = {mdot}"
 
@@ -408,10 +372,7 @@ class TestReverseFlow5Eq:
 class TestInputValidation5Eq:
     def test_negative_dt(self):
         solver, _, _, _ = make_5eq_solver(N=5, C_0=1.0)
-        bc = tp.BoundaryConditions()
-        bc.p_in = 10.1e6
-        bc.p_out = 10.0e6
-        bc.h_in = 700e3
+        bc_in, bc_out = pressure_bcs(10.1e6, 10.0e6, 700e3)
 
         p = np.full(5, 10e6)
         alpha = np.zeros(5)
@@ -420,7 +381,7 @@ class TestInputValidation5Eq:
         mdot = np.zeros(6)
 
         with pytest.raises(Exception):
-            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, dt=-0.01)
+            step_5eq(solver, p, alpha, h_l, h_v, mdot, bc_in, bc_out, dt=-0.01)
 
 
 # ---------------------------------------------------------------------------
@@ -434,12 +395,7 @@ class TestTransientMassConservation5Eq:
         N = 5
         solver, fluid, _, _ = make_5eq_solver(N=N, C_0=1.0)
 
-        bc = tp.BoundaryConditions()
-        bc.p_in = 10.1e6
-        bc.p_out = 10.0e6
-        bc.h_in = 700e3
-        bc.h_l_in = 700e3
-        bc.h_v_in = 2800e3
+        bc_in, bc_out = pressure_bcs(10.1e6, 10.0e6, 700e3, h_v=2800e3)
 
         p = np.full(N, 10.05e6)
         alpha = np.zeros(N)
@@ -451,7 +407,7 @@ class TestTransientMassConservation5Eq:
 
         # Run a few warm-up steps
         for _ in range(100):
-            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, dt)
+            step_5eq(solver, p, alpha, h_l, h_v, mdot, bc_in, bc_out, dt)
 
         # Now check mass balance for one step
         def mixture_density(i):
@@ -460,7 +416,7 @@ class TestTransientMassConservation5Eq:
             return (1 - alpha[i]) * rl + alpha[i] * rv
 
         rho_old = [mixture_density(i) for i in range(N)]
-        step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, dt)
+        step_5eq(solver, p, alpha, h_l, h_v, mdot, bc_in, bc_out, dt)
         rho_new = [mixture_density(i) for i in range(N)]
 
         for i in range(N):
@@ -483,12 +439,7 @@ class TestTransientEnergyConservation5Eq:
         N = 5
         solver, fluid, _, _ = make_5eq_solver(N=N, C_0=1.0, H_i=0.0)
 
-        bc = tp.BoundaryConditions()
-        bc.p_in = 10.1e6
-        bc.p_out = 10.0e6
-        bc.h_in = 700e3
-        bc.h_l_in = 700e3
-        bc.h_v_in = 2800e3
+        bc_in, bc_out = pressure_bcs(10.1e6, 10.0e6, 700e3, h_v=2800e3)
 
         p = np.full(N, 10.05e6)
         alpha = np.zeros(N)
@@ -502,7 +453,7 @@ class TestTransientEnergyConservation5Eq:
 
         # Warm up
         for _ in range(100):
-            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, dt, q_wall)
+            step_5eq(solver, p, alpha, h_l, h_v, mdot, bc_in, bc_out, dt, q_wall)
 
         # Check: total stored energy change vs fluxes
         def total_energy():
@@ -516,7 +467,7 @@ class TestTransientEnergyConservation5Eq:
 
         E_old = total_energy()
         p_old = p.copy()
-        step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, dt, q_wall)
+        step_5eq(solver, p, alpha, h_l, h_v, mdot, bc_in, bc_out, dt, q_wall)
         E_new = total_energy()
 
         dE = E_new - E_old
@@ -547,12 +498,7 @@ class TestSpatialConvergence5Eq:
         for N in [5, 10, 20]:
             dx = 4.0 / N
             solver, _, _, _ = make_5eq_solver(N=N, dx=dx, C_0=1.0)
-            bc = tp.BoundaryConditions()
-            bc.p_in = p_in
-            bc.p_out = p_out
-            bc.h_in = h_in
-            bc.h_l_in = h_in
-            bc.h_v_in = 2800e3
+            bc_in, bc_out = pressure_bcs(p_in, p_out, h_in, h_v=2800e3)
 
             p = np.linspace(p_in, p_out, N)
             alpha = np.zeros(N)
@@ -561,7 +507,7 @@ class TestSpatialConvergence5Eq:
             mdot = np.zeros(N + 1)
 
             for _ in range(5000):
-                step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, dt)
+                step_5eq(solver, p, alpha, h_l, h_v, mdot, bc_in, bc_out, dt)
 
             # Error: deviation of mdot from its mean (should be uniform)
             err = np.std(mdot) / np.mean(mdot)
@@ -583,17 +529,11 @@ class TestSpatialConvergence5Eq:
 
 class TestPureVaporLimit:
     def test_all_vapor_steady_state(self):
-        """All-vapor flow (alpha≈1) should reach steady state."""
+        """All-vapor flow (alpha~1) should reach steady state."""
         N = 5
         solver, fluid, _, _ = make_5eq_solver(N=N, C_0=1.0)
 
-        bc = tp.BoundaryConditions()
-        bc.p_in = 10.1e6
-        bc.p_out = 10.0e6
-        bc.h_in = 2900e3  # superheated vapor
-        bc.h_l_in = 800e3
-        bc.h_v_in = 2900e3
-        bc.alpha_in = 0.999
+        bc_in, bc_out = pressure_bcs(10.1e6, 10.0e6, 800e3, h_v=2900e3, alpha=0.999)
 
         p = np.full(N, 10.05e6)
         alpha = np.full(N, 0.999)
@@ -603,7 +543,7 @@ class TestPureVaporLimit:
 
         dt = 1e-4
         for _ in range(5000):
-            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, dt)
+            step_5eq(solver, p, alpha, h_l, h_v, mdot, bc_in, bc_out, dt)
 
         assert np.all(np.isfinite(p)), f"NaN in pressure: {p}"
         assert np.all(np.isfinite(mdot)), f"NaN in mdot: {mdot}"
@@ -622,13 +562,7 @@ class TestDriftFluxSplit:
         N = 5
         solver, fluid, _, _ = make_5eq_solver(N=N, C_0=1.13)
 
-        bc = tp.BoundaryConditions()
-        bc.p_in = 10.1e6
-        bc.p_out = 10.0e6
-        bc.h_in = 850e3
-        bc.h_l_in = 850e3
-        bc.h_v_in = 2800e3
-        bc.alpha_in = 0.1
+        bc_in, bc_out = pressure_bcs(10.1e6, 10.0e6, 850e3, h_v=2800e3, alpha=0.1)
 
         p = np.full(N, 10.05e6)
         alpha = np.full(N, 0.1)
@@ -639,7 +573,7 @@ class TestDriftFluxSplit:
         # Run to quasi-steady with two-phase conditions
         dt = 1e-4
         for _ in range(3000):
-            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, dt)
+            step_5eq(solver, p, alpha, h_l, h_v, mdot, bc_in, bc_out, dt)
 
         # All state should remain finite
         assert np.all(np.isfinite(p))
@@ -656,13 +590,7 @@ class TestDriftFluxSplit:
         N = 5
         solver, fluid, _, _ = make_5eq_solver(N=N, C_0=1.0, H_i=0.0)
 
-        bc = tp.BoundaryConditions()
-        bc.p_in = 10.1e6
-        bc.p_out = 10.0e6
-        bc.h_in = 850e3
-        bc.h_l_in = 850e3
-        bc.h_v_in = 2800e3
-        bc.alpha_in = 0.3
+        bc_in, bc_out = pressure_bcs(10.1e6, 10.0e6, 850e3, h_v=2800e3, alpha=0.3)
 
         p = np.full(N, 10.05e6)
         alpha = np.full(N, 0.3)
@@ -672,7 +600,7 @@ class TestDriftFluxSplit:
 
         dt = 1e-4
         for _ in range(3000):
-            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, dt)
+            step_5eq(solver, p, alpha, h_l, h_v, mdot, bc_in, bc_out, dt)
 
         # With no slip and no interfacial HT, solution should be stable
         assert np.all(np.isfinite(alpha)), "NaN in alpha"
@@ -694,12 +622,7 @@ class TestMUSCL5Eq:
         recon = tp.MUSCL_Minmod()
         solver = tp.TwoPhaseSolver(N, 1.0, 0.01, 0.1, 0.02, fluid, recon, model)
 
-        bc = tp.BoundaryConditions()
-        bc.p_in = 10.1e6
-        bc.p_out = 10.0e6
-        bc.h_in = 700e3
-        bc.h_l_in = 700e3
-        bc.h_v_in = 2800e3
+        bc_in, bc_out = pressure_bcs(10.1e6, 10.0e6, 700e3, h_v=2800e3)
 
         p = np.linspace(10.1e6, 10.0e6, N)
         alpha = np.zeros(N)
@@ -709,7 +632,7 @@ class TestMUSCL5Eq:
 
         dt = 1e-4
         for _ in range(2000):
-            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, dt)
+            step_5eq(solver, p, alpha, h_l, h_v, mdot, bc_in, bc_out, dt)
 
         assert np.all(np.isfinite(p))
         assert np.all(np.isfinite(h_l))
@@ -724,12 +647,7 @@ class TestMUSCL5Eq:
         recon = tp.MUSCL_VanLeer()
         solver = tp.TwoPhaseSolver(N, 1.0, 0.01, 0.1, 0.02, fluid, recon, model)
 
-        bc = tp.BoundaryConditions()
-        bc.p_in = 10.1e6
-        bc.p_out = 10.0e6
-        bc.h_in = 700e3
-        bc.h_l_in = 700e3
-        bc.h_v_in = 2800e3
+        bc_in, bc_out = pressure_bcs(10.1e6, 10.0e6, 700e3, h_v=2800e3)
 
         p = np.linspace(10.1e6, 10.0e6, N)
         alpha = np.zeros(N)
@@ -739,7 +657,7 @@ class TestMUSCL5Eq:
 
         dt = 1e-4
         for _ in range(2000):
-            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, dt)
+            step_5eq(solver, p, alpha, h_l, h_v, mdot, bc_in, bc_out, dt)
 
         assert np.all(np.isfinite(p))
         assert np.all(np.isfinite(h_l))
@@ -760,13 +678,13 @@ class TestMakeStateCompat:
         N = 3
         solver = tp.TwoPhaseSolver(N, 1.0, 0.01, 0.1, 0.02, fluid,
                                    tp.DonorCell(), model)
-        bc = tp.TwoPhaseBCs(10.1e6, 10.0e6, 700e3)
+        bc_in, bc_out = pressure_bcs(10.1e6, 10.0e6, 700e3)
         p = np.full(N, 10e6)
         h = np.full(N, 700e3)  # subcooled (h_f=800e3)
         mdot = np.zeros(N + 1)
 
-        # Legacy step converts h → (alpha, h_l, h_v) via make_state
-        step_hem_migrated(solver, p, h, mdot, bc, 1e-4)
+        # Legacy step converts h -> (alpha, h_l, h_v) via make_state
+        step_hem(solver, p, h, mdot, bc_in, bc_out, 1e-4)
         assert np.all(np.isfinite(p))
         assert np.all(np.isfinite(h))
 
@@ -779,12 +697,12 @@ class TestMakeStateCompat:
         N = 3
         solver = tp.TwoPhaseSolver(N, 1.0, 0.01, 0.1, 0.02, fluid,
                                    tp.DonorCell(), model)
-        bc = tp.TwoPhaseBCs(10.1e6, 10.0e6, 1800e3)  # two-phase
+        bc_in, bc_out = pressure_bcs(10.1e6, 10.0e6, 1800e3)
         p = np.full(N, 10e6)
         h = np.full(N, 1800e3)  # between h_f=800e3 and h_g=2800e3
         mdot = np.zeros(N + 1)
 
-        step_hem_migrated(solver, p, h, mdot, bc, 1e-4)
+        step_hem(solver, p, h, mdot, bc_in, bc_out, 1e-4)
         assert np.all(np.isfinite(p))
         assert np.all(np.isfinite(h))
 
@@ -795,16 +713,11 @@ class TestMakeStateCompat:
 
 class TestPackUnpackRoundtrip:
     def test_5eq_state_roundtrip(self):
-        """pack_state → unpack_state should recover original state."""
+        """pack_state -> unpack_state should recover original state."""
         N = 5
         solver, fluid, _, model = make_5eq_solver(N=N, C_0=1.0)
 
-        bc = tp.BoundaryConditions()
-        bc.p_in = 10.1e6
-        bc.p_out = 10.0e6
-        bc.h_in = 700e3
-        bc.h_l_in = 700e3
-        bc.h_v_in = 2800e3
+        bc_in, bc_out = pressure_bcs(10.1e6, 10.0e6, 700e3, h_v=2800e3)
 
         p = np.linspace(10.1e6, 10.0e6, N)
         alpha = np.full(N, 0.05)
@@ -813,7 +726,7 @@ class TestPackUnpackRoundtrip:
         mdot = np.linspace(1.0, 1.1, N + 1)
 
         # Run one step to get a realistic state
-        step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, 1e-4)
+        step_5eq(solver, p, alpha, h_l, h_v, mdot, bc_in, bc_out, 1e-4)
 
         # Use solve() which internally uses pack_state
         # The solve output layout should be consistent
@@ -832,13 +745,13 @@ class TestPackUnpackRoundtrip:
         N = 5
         fluid = tp.SimpleFluidProperties()
         solver = tp.TwoPhaseSolver(N, 1.0, 0.01, 0.1, 0.02, fluid)
-        bc = tp.TwoPhaseBCs(10.1e6, 10.0e6, 700e3)
+        bc_in, bc_out = pressure_bcs(10.1e6, 10.0e6, 700e3)
 
         p = np.full(N, 10e6)
         h = np.full(N, 700e3)
         mdot = np.zeros(N + 1)
 
-        hist = solve_migrated(solver, p, h, mdot, bc, 1e-4, 10, stride=5)
+        hist = solve_hem(solver, p, h, mdot, bc_in, bc_out, 1e-4, 10, stride=5)
         assert hist.shape[1] == 3 * N + 1
         assert hist.shape[0] == 2  # 10 steps / stride 5 = 2 snapshots
 
@@ -851,19 +764,13 @@ class TestNucleation:
     """Verify nucleation onset in C++ closures."""
 
     def test_nucleation_creates_void_from_superheat(self):
-        """Superheated liquid at α=0 should nucleate and grow void
+        """Superheated liquid at alpha=0 should nucleate and grow void
         via the C++ closure's nucleation onset model."""
         N = 5
         # Use high H_i to drive rapid flashing
         solver, fluid, _, _ = make_5eq_solver(N=N, C_0=1.0, H_i=1e7)
 
-        bc = tp.BoundaryConditions()
-        bc.p_in = 10.1e6
-        bc.p_out = 10.0e6
-        bc.h_in = 850e3  # superheated (h_sat_l ≈ 800e3)
-        bc.h_l_in = 850e3
-        bc.h_v_in = 2800e3
-        bc.alpha_in = 0.0  # pure liquid inlet — nucleation must create void
+        bc_in, bc_out = pressure_bcs(10.1e6, 10.0e6, 850e3, h_v=2800e3)
 
         p = np.full(N, 10.05e6)
         alpha = np.zeros(N)  # start with NO void at all
@@ -873,7 +780,7 @@ class TestNucleation:
 
         dt = 1e-4
         for _ in range(500):
-            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, dt)
+            step_5eq(solver, p, alpha, h_l, h_v, mdot, bc_in, bc_out, dt)
 
         # Nucleation should have created void from zero initial void.
         # Growth is slow because alpha_in=0 strips void at inlet,
@@ -894,13 +801,7 @@ class TestPhaseReappearance:
         N = 3
         solver, fluid, _, _ = make_5eq_solver(N=N, C_0=1.0, H_i=1e6)
 
-        bc = tp.BoundaryConditions()
-        bc.p_in = 10.1e6
-        bc.p_out = 10.0e6
-        bc.h_in = 700e3
-        bc.h_l_in = 700e3
-        bc.h_v_in = 2800e3
-        bc.alpha_in = 0.0  # subcooled liquid inlet
+        bc_in, bc_out = pressure_bcs(10.1e6, 10.0e6, 700e3, h_v=2800e3)
 
         # Start with nearly all vapor
         p = np.full(N, 10.05e6)
@@ -912,7 +813,7 @@ class TestPhaseReappearance:
         dt = 1e-4
         # Run: subcooled inlet should condense vapor, bringing alpha down
         for _ in range(5000):
-            step_5eq_migrated(solver, p, alpha, h_l, h_v, mdot, bc, dt)
+            step_5eq(solver, p, alpha, h_l, h_v, mdot, bc_in, bc_out, dt)
 
         # h_l should be finite everywhere (no stale values from phase absence)
         assert np.all(np.isfinite(h_l)), f"NaN in h_l: {h_l}"

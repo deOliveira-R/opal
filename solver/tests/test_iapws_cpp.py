@@ -17,7 +17,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "two_phase"))
 import opal_two_phase as tp
 import sys as _sys
 _sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent))
-from bc_helpers import step_hem_migrated, solve_migrated
+from bc_helpers import step_hem, solve_hem, pressure_bcs
 
 # The iapws package is the oracle
 iapws = pytest.importorskip("iapws")
@@ -274,7 +274,7 @@ class TestIAPWSSimpleFluidCrossCheck:
     """Run the same H-P problem with both fluids — results should be qualitatively similar."""
 
     def test_steady_state_flow_direction(self):
-        """Both fluids: positive dp → positive flow at steady state."""
+        """Both fluids: positive dp -> positive flow at steady state."""
         N = 5
         dx, A, Dh, fD = 1.0, 0.01, 0.1, 0.02
         p_in, p_out = 10.1e6, 10.0e6
@@ -285,12 +285,12 @@ class TestIAPWSSimpleFluidCrossCheck:
         ]:
             fluid = FluidClass()
             solver = tp.TwoPhaseSolver(N, dx, A, Dh, fD, fluid)
-            bc = tp.TwoPhaseBCs(p_in, p_out, h_in)
+            bc_in, bc_out = pressure_bcs(p_in, p_out, h_in)
             p = np.full(N, 0.5 * (p_in + p_out))
             h = np.full(N, h_in)
             mdot = np.zeros(N + 1)
 
-            hist = solve_migrated(solver, p, h, mdot, bc, 5e-4, 20000, 20000)
+            hist = solve_hem(solver, p, h, mdot, bc_in, bc_out, 5e-4, 20000, 20000)
             mdot_ss = hist[-1, 2*N:]
 
             # All flows should be positive and uniform at steady state
