@@ -391,7 +391,7 @@ def generate_bridge_c(info: ModelInfo, model_c: Path, functions_c: Path,
     _gen_param_setter(lines, info)
 
     # Getters for variable groups
-    _gen_getters(lines, info)
+    _gen_getters(lines, info, func_sigs)
 
     return '\n'.join(lines)
 
@@ -436,7 +436,7 @@ def _gen_param_setter(lines: list, info: ModelInfo):
     lines.append('')
 
 
-def _gen_getters(lines: list, info: ModelInfo):
+def _gen_getters(lines: list, info: ModelInfo, func_sigs: list = None):
     """Generate getter functions for property groups."""
     prefix = _detect_prefix(info)
     N = _detect_N(info, prefix)
@@ -462,10 +462,26 @@ def _gen_getters(lines: list, info: ModelInfo):
     _getter('opal_bridge_get_T_cell', f'{prefix}.T_cell', N,
             f'Cell temperature T_cell[1..{N}]')
 
-    # rho: may be sparse (OM may not store all cells' rho — some go directly to rho_face)
-    rho_indices = info.vars_by_pattern(f'{prefix}.rho', N)
-    if rho_indices:
-        _getter('opal_bridge_get_rho', f'{prefix}.rho', N, f'Cell density rho[1..{N}]')
+    # rho_cell: OM may eliminate some pipe.rho[i] variables (inlined into rho_face).
+    # Compute cell density directly from rho_ph(p[i], h[i]) using the compiled media function.
+    p_indices = info.vars_by_pattern(f'{prefix}.p', N)
+    h_indices = info.vars_by_pattern(f'{prefix}.h', N)
+
+    # Find the rho_ph media function name from the function signatures
+    rho_ph_func = None
+    for f in func_sigs:
+        if f['name'].endswith('rho__ph') and len(f['params']) == 3:  # threadData, p, h
+            rho_ph_func = f['name']
+            break
+
+    if rho_ph_func and p_indices and h_indices:
+        lines.append(f'/* Cell density: computed from rho_ph(p[i], h[i]) */')
+        lines.append(f'void opal_bridge_get_rho_cell(int n, double* out) {{')
+        for i in range(min(N, len(p_indices), len(h_indices))):
+            lines.append(f'    if ({i} < n) out[{i}] = {rho_ph_func}(&_td, '
+                         f'opal_vars[{p_indices[i]}], opal_vars[{h_indices[i]}]);')
+        lines.append('}')
+        lines.append('')
 
     # Generic getter: copy all vars
     lines.append(f'void opal_bridge_get_all_vars(int n, double* out) {{')
