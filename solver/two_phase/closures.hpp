@@ -5,10 +5,14 @@
  * Abstract interface for interfacial mass transfer (Γ), heat transfer (q_i),
  * drag (F_i), and drift-flux parameters (C_0, V_gj).
  *
- * Implementations:
- *   NoClosures        — for HEM (no interfacial terms)
- *   DriftFluxClosures — for 4-eq and 5-eq models
- *   TwoFluidClosures  — for 6-eq model (Phase 3d)
+ * Architecture:
+ *   InterfacialClosures         — top-level interface (compute + drift_flux)
+ *     NoClosures                — for HEM (no interfacial terms)
+ *     DriftFluxClosures         — composer for 4-eq/5-eq, takes:
+ *       HeatTransferModel       — interfacial heat transfer sub-model
+ *         LinearRelaxation      — q = H_i · a_i · (T_sat - T_l)
+ *       DriftVelocityModel      — drift velocity sub-model
+ *         ZuberFindlay          — churn-turbulent bubbly flow
  */
 
 #include <cmath>
@@ -68,33 +72,57 @@ public:
     }
 };
 
+// ===========================================================================
+// Sub-model interfaces — pluggable components of InterfacialClosures.
+// ===========================================================================
+
 /**
- * Drift-flux closures for 5-equation model.
+ * Interfacial heat transfer model.
  *
- * Drift-flux: Zuber-Findlay (churn-turbulent bubbly flow)
- *   C_0 = 1.13 (round tube, bubbly)
- *   V_gj = 1.41 * [σ·g·(ρ_l - ρ_v) / ρ_l²]^0.25
- *
- * Interfacial heat transfer: relaxation to saturation
- *   q_i_l = H_i · (T_l - T_sat)  where H_i = k / τ_relax
- *   Γ = q_i_l / h_fg  (all interfacial heat drives phase change)
- *   q_i_v = -Γ · h_fg - q_i_l = 0  (by construction)
- *
- * The relaxation time τ_relax controls how fast the liquid flashes.
- * Small τ → fast approach to equilibrium (HEM limit).
- * Large τ → slower flashing (non-equilibrium).
+ * Computes interfacial mass transfer (Γ) and heat fluxes (q_i_l, q_i_v)
+ * from the local two-phase state.  Different implementations represent
+ * different physics: linear relaxation, boiling curves, Henry-Fauske, etc.
  */
-class DriftFluxClosures : public InterfacialClosures {
+struct HeatTransferModel {
+    virtual ~HeatTransferModel() = default;
+    virtual ClosureResult evaluate(const InterfacialState& s) const = 0;
+};
+
+/**
+ * Drift velocity model.
+ *
+ * Computes the distribution parameter C_0 and drift velocity V_gj
+ * that relate phasic velocities to the mixture velocity via drift-flux.
+ * Different implementations: Zuber-Findlay, Wallis, Chexal-Lellouche, etc.
+ */
+struct DriftVelocityModel {
+    virtual ~DriftVelocityModel() = default;
+    virtual DriftFluxResult evaluate(const InterfacialState& s) const = 0;
+};
+
+// ===========================================================================
+// Concrete sub-model implementations
+// ===========================================================================
+
+/**
+ * Linear relaxation heat transfer with nucleation onset.
+ *
+ *   q_i_l = H_i · a_i · (T_sat - T_l)
+ *   Γ = -q_i_l / h_fg
+ *   q_i_v from interface energy balance
+ *
+ * Interfacial area: a_i = max(4α(1-α), α)
+ * Nucleation: when T_l > T_sat, enforce α ≥ alpha_nucleation.
+ */
+class LinearRelaxation : public HeatTransferModel {
 public:
     /// @param H_i   Interfacial heat transfer coefficient [W/(m³·K)]
     ///              Typical: 1e5 (slow transients) to 1e7 (rapid blowdowns)
-    /// @param C_0   Distribution parameter [-], default 1.13
     /// @param alpha_nucleation  Minimum void fraction when T_l > T_sat [-]
-    explicit DriftFluxClosures(double H_i = 1e5, double C_0 = 1.13,
-                               double alpha_nucleation = 1e-3)
-        : H_i_(H_i), C_0_(C_0), alpha_nucleation_(alpha_nucleation) {}
+    explicit LinearRelaxation(double H_i = 1e5, double alpha_nucleation = 1e-3)
+        : H_i_(H_i), alpha_nucleation_(alpha_nucleation) {}
 
-    ClosureResult compute(const InterfacialState& s) const override {
+    ClosureResult evaluate(const InterfacialState& s) const override {
         ClosureResult r{};
 
         double h_fg = s.h_sat_v - s.h_sat_l;
@@ -140,13 +168,34 @@ public:
         return r;
     }
 
-    DriftFluxResult drift_flux(const InterfacialState& s) const override {
+    double H_i() const { return H_i_; }
+    double alpha_nucleation() const { return alpha_nucleation_; }
+
+private:
+    double H_i_;
+    double alpha_nucleation_;
+};
+
+/**
+ * Zuber-Findlay drift velocity for churn-turbulent bubbly flow.
+ *
+ *   C_0 = distribution parameter (1.13 for round tube bubbly)
+ *   V_gj = 1.41 · [σ·g·Δρ / ρ_l²]^0.25
+ *
+ * Ref: Ishii & Hibiki, "Thermo-Fluid Dynamics of Two-Phase Flow", Eq. 11.21
+ *
+ * OPAL regularization: V_gj scaled by 4α(1-α) to smoothly recover HEM
+ * behavior at single-phase limits.
+ */
+class ZuberFindlay : public DriftVelocityModel {
+public:
+    /// @param C_0  Distribution parameter [-], default 1.13
+    explicit ZuberFindlay(double C_0 = 1.13) : C_0_(C_0) {}
+
+    DriftFluxResult evaluate(const InterfacialState& s) const override {
         DriftFluxResult r{};
         r.C_0 = C_0_;
 
-        // Zuber-Findlay drift velocity for churn-turbulent bubbly flow.
-        // V_gj = 1.41 * [σ·g·Δρ / ρ_l²]^0.25
-        // Ref: Ishii & Hibiki, "Thermo-Fluid Dynamics of Two-Phase Flow", Eq. 11.21
         double drho = s.rho_l - s.rho_v;
         if (drho < 0.01) drho = 0.01;  // clamp near critical
         double rho_l2 = s.rho_l * s.rho_l;
@@ -161,22 +210,44 @@ public:
         // for all α > 0). The scaling prevents numerical issues when
         // α ≈ 0 or α ≈ 1 and ensures the 5-eq model exactly recovers
         // HEM behavior in single-phase limits.
-        // Note: void fraction at faces uses arithmetic averaging (not
-        // upwind), which is diffusive but stable for void fronts.
         double scale = 4.0 * s.alpha * (1.0 - s.alpha);
         r.V_gj *= scale;
 
         return r;
     }
 
-    double H_i()  const { return H_i_; }
-    double C_0_param() const { return C_0_; }
-    double alpha_nucleation() const { return alpha_nucleation_; }
+    double C_0() const { return C_0_; }
 
 private:
-    double H_i_;
     double C_0_;
-    double alpha_nucleation_;
+};
+
+// ===========================================================================
+// Composed closures
+// ===========================================================================
+
+/**
+ * Drift-flux closures — composes a HeatTransferModel and DriftVelocityModel.
+ *
+ * This is the standard closure set for 4-eq and 5-eq drift-flux models.
+ * Sub-models are injected at construction and can be swapped independently.
+ */
+class DriftFluxClosures : public InterfacialClosures {
+public:
+    DriftFluxClosures(const HeatTransferModel& ht, const DriftVelocityModel& drift)
+        : ht_(ht), drift_(drift) {}
+
+    ClosureResult compute(const InterfacialState& s) const override {
+        return ht_.evaluate(s);
+    }
+
+    DriftFluxResult drift_flux(const InterfacialState& s) const override {
+        return drift_.evaluate(s);
+    }
+
+private:
+    const HeatTransferModel& ht_;
+    const DriftVelocityModel& drift_;
 };
 
 } // namespace opal

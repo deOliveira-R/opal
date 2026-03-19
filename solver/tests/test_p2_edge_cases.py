@@ -23,7 +23,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "two_phase"))
 import opal_two_phase as tp
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from bc_helpers import step_5eq, step_hem, solve_hem, pressure_bcs, wall_pressure_bcs, wall_wall_bcs, reset_time
+from bc_helpers import step_5eq, step_hem, solve_hem, pressure_bcs, wall_pressure_bcs, wall_wall_bcs, reset_time, drift_flux_closures
 
 
 # ============================================================================
@@ -59,7 +59,7 @@ class TestTightenedEnergyConservation:
         """No wall heat, subcooled flow: energy change = boundary enthalpy flux."""
         fluid = tp.SimpleFluidProperties()
         pp = fluid.evaluate_phasic(10e6)
-        closures = tp.DriftFluxClosures(H_i=0.0, C_0=1.0)
+        closures = drift_flux_closures(H_i=0.0, C_0=1.0)
         model = tp.FiveEqModel(fluid, closures)
         N = 5; dx = 1.0; A = 0.01; D_h = 0.1; f_D = 0.02; V = dx * A
         solver = tp.TwoPhaseSolver(N, dx, A, D_h, f_D, fluid,
@@ -103,7 +103,7 @@ class TestTightenedEnergyConservation:
         """With wall heat and closed walls, energy should increase."""
         fluid = tp.SimpleFluidProperties()
         pp = fluid.evaluate_phasic(10e6)
-        closures = tp.DriftFluxClosures(H_i=0.0, C_0=1.0)
+        closures = drift_flux_closures(H_i=0.0, C_0=1.0)
         model = tp.FiveEqModel(fluid, closures)
         N = 3; dx = 1.0; A = 0.01; D_h = 0.1; f_D = 0.0
         V = dx * A
@@ -145,7 +145,7 @@ class TestQuantitativeVoidGrowth:
         pp = fluid.evaluate_phasic(10e6)
         H_i = 1e5
 
-        closures = tp.DriftFluxClosures(H_i=H_i, C_0=1.0, alpha_nucleation=0.0)
+        closures = drift_flux_closures(H_i=H_i, C_0=1.0, alpha_nucleation=0.0)
         model = tp.FiveEqModel(fluid, closures)
         N = 1; dx = 1.0; A = 0.01; D_h = 0.1; f_D = 0.0
         solver = tp.TwoPhaseSolver(N, dx, A, D_h, f_D, fluid,
@@ -186,7 +186,7 @@ class TestQuantitativeVoidGrowth:
         """Strengthened version of test_superheated_flashing."""
         fluid = tp.SimpleFluidProperties()
         pp = fluid.evaluate_phasic(10e6)
-        closures = tp.DriftFluxClosures(H_i=1e6, C_0=1.0)
+        closures = drift_flux_closures(H_i=1e6, C_0=1.0)
         model = tp.FiveEqModel(fluid, closures)
         N = 5
         solver = tp.TwoPhaseSolver(N, 1.0, 0.01, 0.1, 0.02, fluid,
@@ -219,7 +219,7 @@ class TestVgjExtremeDensity:
     def test_near_critical_density(self):
         s = make_state(T_l=500, T_sat=500, alpha=0.3,
                        rho_l=350.0, rho_v=350.0, sigma=0.001)
-        c = tp.DriftFluxClosures(H_i=1e5, C_0=1.13)
+        c = drift_flux_closures(H_i=1e5, C_0=1.13)
         d = c.drift_flux(s)
         assert np.isfinite(d.V_gj), "V_gj should be finite near critical"
         assert d.V_gj >= 0, "V_gj should be non-negative"
@@ -228,7 +228,7 @@ class TestVgjExtremeDensity:
     def test_very_low_liquid_density(self):
         s = make_state(T_l=500, T_sat=500, alpha=0.3,
                        rho_l=0.5, rho_v=0.1, sigma=0.05)
-        c = tp.DriftFluxClosures(H_i=1e5, C_0=1.13)
+        c = drift_flux_closures(H_i=1e5, C_0=1.13)
         d = c.drift_flux(s)
         assert np.isfinite(d.V_gj), "V_gj should be finite with low rho_l"
 
@@ -243,7 +243,7 @@ class TestHfgFloor:
     def test_near_zero_hfg(self):
         s = make_state(T_l=510, T_sat=500, alpha=0.3,
                        h_sat_l=2000e3, h_sat_v=2000e3 + 0.5)
-        c = tp.DriftFluxClosures(H_i=1e5, C_0=1.0)
+        c = drift_flux_closures(H_i=1e5, C_0=1.0)
         r = c.compute(s)
         assert np.isfinite(r.Gamma), "Gamma should be finite with h_fg ~ 0"
         assert np.isfinite(r.q_i_l)
@@ -251,7 +251,7 @@ class TestHfgFloor:
     def test_equal_saturation_enthalpies(self):
         s = make_state(T_l=510, T_sat=500, alpha=0.3,
                        h_sat_l=2000e3, h_sat_v=2000e3)
-        c = tp.DriftFluxClosures(H_i=1e5, C_0=1.0)
+        c = drift_flux_closures(H_i=1e5, C_0=1.0)
         r = c.compute(s)
         assert np.isfinite(r.Gamma)
         assert abs(r.Gamma) > 1e4
@@ -331,7 +331,7 @@ class TestZeroFlowRate:
     def test_equal_pressure_zero_flow(self):
         fluid = tp.SimpleFluidProperties()
         pp = fluid.evaluate_phasic(10e6)
-        closures = tp.DriftFluxClosures(H_i=0.0, C_0=1.0)
+        closures = drift_flux_closures(H_i=0.0, C_0=1.0)
         model = tp.FiveEqModel(fluid, closures)
         N = 5
         solver = tp.TwoPhaseSolver(N, 1.0, 0.01, 0.1, 0.02, fluid,
@@ -363,7 +363,7 @@ class TestVerySmallAlpha:
     def test_alpha_1e10_stable(self):
         fluid = tp.SimpleFluidProperties()
         pp = fluid.evaluate_phasic(10e6)
-        closures = tp.DriftFluxClosures(H_i=1e5, C_0=1.0)
+        closures = drift_flux_closures(H_i=1e5, C_0=1.0)
         model = tp.FiveEqModel(fluid, closures)
         N = 3
         solver = tp.TwoPhaseSolver(N, 1.0, 0.01, 0.1, 0.02, fluid,
@@ -394,7 +394,7 @@ class TestPressureWorkSign:
     def test_pressurization_increases_enthalpy(self):
         fluid = tp.SimpleFluidProperties()
         pp = fluid.evaluate_phasic(10e6)
-        closures = tp.DriftFluxClosures(H_i=0.0, C_0=1.0)
+        closures = drift_flux_closures(H_i=0.0, C_0=1.0)
         model = tp.FiveEqModel(fluid, closures)
         N = 1
         solver = tp.TwoPhaseSolver(N, 1.0, 0.01, 0.1, 0.0, fluid,
@@ -424,7 +424,7 @@ class TestPressureWorkSign:
     def test_depressurization_decreases_enthalpy(self):
         fluid = tp.SimpleFluidProperties()
         pp = fluid.evaluate_phasic(10e6)
-        closures = tp.DriftFluxClosures(H_i=0.0, C_0=1.0)
+        closures = drift_flux_closures(H_i=0.0, C_0=1.0)
         model = tp.FiveEqModel(fluid, closures)
         N = 1
         solver = tp.TwoPhaseSolver(N, 1.0, 0.01, 0.1, 0.0, fluid,

@@ -26,7 +26,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "two_phase"))
 import opal_two_phase as tp
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from bc_helpers import step_5eq, step_hem, solve_hem, pressure_bcs, wall_pressure_bcs, wall_wall_bcs, wall_break_bcs, reset_time
+from bc_helpers import step_5eq, step_hem, solve_hem, pressure_bcs, wall_pressure_bcs, wall_wall_bcs, wall_break_bcs, reset_time, drift_flux_closures
 
 
 # ============================================================================
@@ -86,7 +86,7 @@ class TestInterfacialArea:
 
         s = make_state(T_l=T_l, T_sat=T_sat, alpha=alpha,
                        h_sat_l=800e3, h_sat_v=2800e3)
-        c = tp.DriftFluxClosures(H_i=H_i, C_0=1.0, alpha_nucleation=0.0)
+        c = drift_flux_closures(H_i=H_i, C_0=1.0, alpha_nucleation=0.0)
         r = c.compute(s)
 
         # Extract a_i from Gamma
@@ -113,7 +113,7 @@ class TestNucleationOnset:
         # Tiny alpha, superheated
         s = make_state(T_l=510, T_sat=500, alpha=1e-6,
                        h_sat_l=800e3, h_sat_v=2800e3)
-        c = tp.DriftFluxClosures(H_i=H_i, C_0=1.0, alpha_nucleation=alpha_nuc)
+        c = drift_flux_closures(H_i=H_i, C_0=1.0, alpha_nucleation=alpha_nuc)
         r = c.compute(s)
 
         # Should use alpha_eff = 1e-3 (not 1e-6)
@@ -129,7 +129,7 @@ class TestNucleationOnset:
         # Tiny alpha, subcooled — nucleation should NOT trigger
         s = make_state(T_l=490, T_sat=500, alpha=1e-6,
                        h_sat_l=800e3, h_sat_v=2800e3)
-        c = tp.DriftFluxClosures(H_i=H_i, C_0=1.0, alpha_nucleation=alpha_nuc)
+        c = drift_flux_closures(H_i=H_i, C_0=1.0, alpha_nucleation=alpha_nuc)
         r = c.compute(s)
 
         # Should use alpha_eff = 1e-6 (actual alpha, no boost)
@@ -144,7 +144,7 @@ class TestNucleationOnset:
         s2 = make_state(T_l=510, T_sat=500, alpha=1.001e-3,
                         h_sat_l=800e3, h_sat_v=2800e3)
 
-        c = tp.DriftFluxClosures(H_i=1e5, C_0=1.0, alpha_nucleation=1e-3)
+        c = drift_flux_closures(H_i=1e5, C_0=1.0, alpha_nucleation=1e-3)
         r1 = c.compute(s1)
         r2 = c.compute(s2)
 
@@ -163,20 +163,20 @@ class TestDriftFluxVgj:
     def test_vgj_zero_at_alpha_zero(self):
         """V_gj = 0 when alpha = 0 (no vapor phase)."""
         s = make_state(T_l=500, T_sat=500, alpha=0.0)
-        c = tp.DriftFluxClosures(H_i=1e5, C_0=1.13)
+        c = drift_flux_closures(H_i=1e5, C_0=1.13)
         d = c.drift_flux(s)
         assert d.V_gj == pytest.approx(0.0, abs=1e-15)
 
     def test_vgj_zero_at_alpha_one(self):
         """V_gj = 0 when alpha = 1 (no liquid phase)."""
         s = make_state(T_l=500, T_sat=500, alpha=1.0)
-        c = tp.DriftFluxClosures(H_i=1e5, C_0=1.13)
+        c = drift_flux_closures(H_i=1e5, C_0=1.13)
         d = c.drift_flux(s)
         assert d.V_gj == pytest.approx(0.0, abs=1e-15)
 
     def test_vgj_max_at_alpha_half(self):
         """V_gj is maximized at alpha = 0.5 (4alpha(1-alpha) = 1)."""
-        c = tp.DriftFluxClosures(H_i=1e5, C_0=1.13)
+        c = drift_flux_closures(H_i=1e5, C_0=1.13)
 
         s_half = make_state(T_l=500, T_sat=500, alpha=0.5)
         s_quarter = make_state(T_l=500, T_sat=500, alpha=0.25)
@@ -203,7 +203,7 @@ class TestDriftFluxVgj:
 
         s = make_state(T_l=500, T_sat=500, alpha=alpha,
                        rho_l=rho_l, rho_v=rho_v, sigma=sigma)
-        c = tp.DriftFluxClosures(H_i=1e5, C_0=1.13)
+        c = drift_flux_closures(H_i=1e5, C_0=1.13)
         d = c.drift_flux(s)
 
         assert d.V_gj == pytest.approx(V_gj_expected, rel=1e-6)
@@ -220,7 +220,7 @@ class TestPhasicFluxSplit:
 
     def _make_model(self):
         fluid = tp.SimpleFluidProperties()
-        closures = tp.DriftFluxClosures(H_i=1e5, C_0=1.0)
+        closures = drift_flux_closures(H_i=1e5, C_0=1.0)
         return tp.FiveEqModel(fluid, closures)
 
     @pytest.mark.parametrize("alpha", [0.001, 0.01, 0.05, 0.1, 0.3, 0.5,
@@ -357,7 +357,7 @@ class TestPostStepInvariants:
     def test_subcooled_flow(self):
         """Standard subcooled flow — should be perfectly stable."""
         fluid = tp.SimpleFluidProperties()
-        closures = tp.DriftFluxClosures(H_i=1e5, C_0=1.0)
+        closures = drift_flux_closures(H_i=1e5, C_0=1.0)
         model = tp.FiveEqModel(fluid, closures)
         N = 5
         solver = tp.TwoPhaseSolver(N, 0.5, 0.01, 0.1, 0.02, fluid,
@@ -378,7 +378,7 @@ class TestPostStepInvariants:
     def test_two_phase_flow(self):
         """Two-phase flow with moderate void fraction."""
         fluid = tp.SimpleFluidProperties()
-        closures = tp.DriftFluxClosures(H_i=1e5, C_0=1.0)
+        closures = drift_flux_closures(H_i=1e5, C_0=1.0)
         model = tp.FiveEqModel(fluid, closures)
         N = 5
         solver = tp.TwoPhaseSolver(N, 0.5, 0.01, 0.1, 0.02, fluid,
@@ -399,7 +399,7 @@ class TestPostStepInvariants:
     def test_heated_boiling(self):
         """Subcooled inlet with wall heating -> boiling."""
         fluid = tp.SimpleFluidProperties()
-        closures = tp.DriftFluxClosures(H_i=1e6, C_0=1.0)
+        closures = drift_flux_closures(H_i=1e6, C_0=1.0)
         model = tp.FiveEqModel(fluid, closures)
         N = 10
         solver = tp.TwoPhaseSolver(N, 0.3, 0.01, 0.1, 0.02, fluid,
@@ -421,7 +421,7 @@ class TestPostStepInvariants:
     def test_depressurization(self):
         """Sudden depressurization — most violent transient."""
         fluid = tp.SimpleFluidProperties()
-        closures = tp.DriftFluxClosures(H_i=1e6, C_0=1.0, alpha_nucleation=1e-3)
+        closures = drift_flux_closures(H_i=1e6, C_0=1.0, alpha_nucleation=1e-3)
         model = tp.FiveEqModel(fluid, closures)
         N = 10
         solver = tp.TwoPhaseSolver(N, 0.3, 0.01, 0.1, 0.02, fluid,
@@ -442,7 +442,7 @@ class TestPostStepInvariants:
     def test_condensation(self):
         """Subcooled liquid entering steam-filled pipe."""
         fluid = tp.SimpleFluidProperties()
-        closures = tp.DriftFluxClosures(H_i=1e6, C_0=1.0)
+        closures = drift_flux_closures(H_i=1e6, C_0=1.0)
         model = tp.FiveEqModel(fluid, closures)
         N = 5
         solver = tp.TwoPhaseSolver(N, 0.5, 0.01, 0.1, 0.02, fluid,
@@ -471,7 +471,7 @@ class TestMixtureConservation:
     def test_steady_state_uniform_flow(self):
         """At steady state, all face flows should be equal (mass balance)."""
         fluid = tp.SimpleFluidProperties()
-        closures = tp.DriftFluxClosures(H_i=1e5, C_0=1.0)
+        closures = drift_flux_closures(H_i=1e5, C_0=1.0)
         model = tp.FiveEqModel(fluid, closures)
         N = 5
         solver = tp.TwoPhaseSolver(N, 0.5, 0.01, 0.1, 0.02, fluid,
@@ -500,7 +500,7 @@ class TestMixtureConservation:
     def test_wall_bc_zero_inlet_flow(self):
         """With WALL BC at inlet, mdot[0] must be exactly zero."""
         fluid = tp.SimpleFluidProperties()
-        closures = tp.DriftFluxClosures(H_i=1e5, C_0=1.0)
+        closures = drift_flux_closures(H_i=1e5, C_0=1.0)
         model = tp.FiveEqModel(fluid, closures)
         N = 5
         solver = tp.TwoPhaseSolver(N, 0.5, 0.01, 0.1, 0.02, fluid,
@@ -532,7 +532,7 @@ class TestPhaseAbsentReset:
     def test_vapor_absent_resets_h_v_to_h_sat_v(self):
         """With alpha = 0, h_v should be h_sat_v(p) exactly."""
         fluid = tp.SimpleFluidProperties()
-        closures = tp.DriftFluxClosures(H_i=1e5, C_0=1.0)
+        closures = drift_flux_closures(H_i=1e5, C_0=1.0)
         model = tp.FiveEqModel(fluid, closures)
         N = 3
         solver = tp.TwoPhaseSolver(N, 0.5, 0.01, 0.1, 0.02, fluid,
@@ -558,7 +558,7 @@ class TestPhaseAbsentReset:
     def test_liquid_absent_resets_h_l_to_h_sat_l(self):
         """With alpha = 1, h_l should be h_sat_l(p) exactly."""
         fluid = tp.SimpleFluidProperties()
-        closures = tp.DriftFluxClosures(H_i=1e5, C_0=1.0)
+        closures = drift_flux_closures(H_i=1e5, C_0=1.0)
         model = tp.FiveEqModel(fluid, closures)
         N = 3
         solver = tp.TwoPhaseSolver(N, 0.5, 0.01, 0.1, 0.02, fluid,
@@ -594,7 +594,7 @@ class TestPressureSweep:
         """5-eq solver runs stably at this pressure for 200 steps."""
         p_Pa = p_MPa * 1e6
         fluid = tp.SimpleFluidProperties()
-        closures = tp.DriftFluxClosures(H_i=1e5, C_0=1.0)
+        closures = drift_flux_closures(H_i=1e5, C_0=1.0)
         model = tp.FiveEqModel(fluid, closures)
         N = 5
         solver = tp.TwoPhaseSolver(N, 0.5, 0.01, 0.1, 0.02, fluid,
@@ -629,7 +629,7 @@ class TestIAPWSAtSolverStates:
     def test_iapws_5eq_invariants(self):
         """Full 5-eq + IAPWS: all invariants hold for 200 steps."""
         fluid = tp.IAPWSIF97Properties()
-        closures = tp.DriftFluxClosures(H_i=1e6, C_0=1.0, alpha_nucleation=1e-3)
+        closures = drift_flux_closures(H_i=1e6, C_0=1.0, alpha_nucleation=1e-3)
         model = tp.FiveEqModel(fluid, closures)
         N = 5
         solver = tp.TwoPhaseSolver(N, 0.5, 0.0042, 0.073, 0.02, fluid,
@@ -668,7 +668,7 @@ class TestIAPWSAtSolverStates:
     def test_iapws_5eq_depressurization(self):
         """IAPWS + 5-eq + Wall/Break BCs — the Edwards configuration."""
         fluid = tp.IAPWSIF97Properties()
-        closures = tp.DriftFluxClosures(H_i=1e7, C_0=1.0, alpha_nucleation=1e-3)
+        closures = drift_flux_closures(H_i=1e7, C_0=1.0, alpha_nucleation=1e-3)
         model = tp.FiveEqModel(fluid, closures)
         N = 10
         solver = tp.TwoPhaseSolver(N, 0.4, 0.0042, 0.073, 0.02, fluid,

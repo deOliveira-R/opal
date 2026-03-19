@@ -21,7 +21,7 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import opal_two_phase as tp
-from bc_helpers import step_5eq, step_hem, solve_hem, pressure_bcs, reset_time
+from bc_helpers import step_5eq, step_hem, solve_hem, pressure_bcs, reset_time, drift_flux_closures
 
 
 # ---------------------------------------------------------------------------
@@ -32,7 +32,7 @@ def make_5eq_solver(N=10, dx=1.0, A=0.01, D_h=0.1, f_D=0.02,
                     H_i=1e5, C_0=1.13, recon=None):
     """Create a 5-equation solver with SimpleFluid."""
     fluid = tp.SimpleFluidProperties()
-    closures = tp.DriftFluxClosures(H_i=H_i, C_0=C_0)
+    closures = drift_flux_closures(H_i=H_i, C_0=C_0)
     model = tp.FiveEqModel(fluid, closures)
     if recon is None:
         recon = tp.DonorCell()
@@ -94,15 +94,25 @@ class TestClosures:
         nc = tp.NoClosures()
         assert nc is not None
 
-    def test_drift_flux_closures_construct(self):
-        dc = tp.DriftFluxClosures(H_i=1e5, C_0=1.13)
-        assert dc.H_i == pytest.approx(1e5)
-        assert dc.C_0_param == pytest.approx(1.13)
+    def test_sub_model_construct(self):
+        ht = tp.LinearRelaxation(H_i=1e5, alpha_nucleation=1e-3)
+        assert ht.H_i == pytest.approx(1e5)
+        assert ht.alpha_nucleation == pytest.approx(1e-3)
+        drift = tp.ZuberFindlay(C_0=1.13)
+        assert drift.C_0 == pytest.approx(1.13)
 
-    def test_drift_flux_defaults(self):
-        dc = tp.DriftFluxClosures()
-        assert dc.H_i == pytest.approx(1e5)
-        assert dc.C_0_param == pytest.approx(1.13)
+    def test_sub_model_defaults(self):
+        ht = tp.LinearRelaxation()
+        assert ht.H_i == pytest.approx(1e5)
+        assert ht.alpha_nucleation == pytest.approx(1e-3)
+        drift = tp.ZuberFindlay()
+        assert drift.C_0 == pytest.approx(1.13)
+
+    def test_drift_flux_closures_compose(self):
+        ht = tp.LinearRelaxation(H_i=1e5)
+        drift = tp.ZuberFindlay(C_0=1.13)
+        closures = tp.DriftFluxClosures(ht, drift)
+        assert closures is not None
 
 
 # ---------------------------------------------------------------------------
@@ -112,7 +122,7 @@ class TestClosures:
 class TestFiveEqConstruction:
     def test_model_name(self):
         fluid = tp.SimpleFluidProperties()
-        closures = tp.DriftFluxClosures()
+        closures = drift_flux_closures()
         model = tp.FiveEqModel(fluid, closures)
         assert model.name == "5-equation drift-flux"
         assert model.vars_per_cell == 5
@@ -614,12 +624,12 @@ class TestDriftFluxSplit:
 
 class TestMUSCL5Eq:
     def test_muscl_minmod_runs(self):
-        """5-eq model should work with MUSCL_Minmod reconstruction."""
+        """5-eq model should work with MUSCL minmod reconstruction."""
         N = 10
         fluid = tp.SimpleFluidProperties()
-        closures = tp.DriftFluxClosures(H_i=1e5, C_0=1.0)
+        closures = drift_flux_closures(H_i=1e5, C_0=1.0)
         model = tp.FiveEqModel(fluid, closures)
-        recon = tp.MUSCL_Minmod()
+        recon = tp.MUSCL("minmod")
         solver = tp.TwoPhaseSolver(N, 1.0, 0.01, 0.1, 0.02, fluid, recon, model)
 
         bc_in, bc_out = pressure_bcs(10.1e6, 10.0e6, 700e3, h_v=2800e3)
@@ -639,12 +649,12 @@ class TestMUSCL5Eq:
         assert np.all(mdot > 0)
 
     def test_muscl_vanleer_runs(self):
-        """5-eq model should work with MUSCL_VanLeer reconstruction."""
+        """5-eq model should work with MUSCL van Leer reconstruction."""
         N = 10
         fluid = tp.SimpleFluidProperties()
-        closures = tp.DriftFluxClosures(H_i=1e5, C_0=1.0)
+        closures = drift_flux_closures(H_i=1e5, C_0=1.0)
         model = tp.FiveEqModel(fluid, closures)
-        recon = tp.MUSCL_VanLeer()
+        recon = tp.MUSCL("van_leer")
         solver = tp.TwoPhaseSolver(N, 1.0, 0.01, 0.1, 0.02, fluid, recon, model)
 
         bc_in, bc_out = pressure_bcs(10.1e6, 10.0e6, 700e3, h_v=2800e3)
@@ -671,7 +681,7 @@ class TestMakeStateCompat:
     def test_subcooled_makes_alpha_zero(self):
         """make_state with subcooled h should give alpha=0."""
         fluid = tp.SimpleFluidProperties()
-        closures = tp.DriftFluxClosures()
+        closures = drift_flux_closures()
         model = tp.FiveEqModel(fluid, closures)
 
         # Use legacy step to exercise make_state indirectly
@@ -691,7 +701,7 @@ class TestMakeStateCompat:
     def test_two_phase_makes_nonzero_alpha(self):
         """make_state with two-phase h should give 0 < alpha < 1."""
         fluid = tp.SimpleFluidProperties()
-        closures = tp.DriftFluxClosures()
+        closures = drift_flux_closures()
         model = tp.FiveEqModel(fluid, closures)
 
         N = 3

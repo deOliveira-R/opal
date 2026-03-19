@@ -11,6 +11,7 @@
  *   opal_two_phase.WallFace(h_l, h_v)
  *   opal_two_phase.BreakFace(p_back, C_d, h_l, h_v)
  *   opal_two_phase.RampedBreak(p_back, C_d_final, t_open, h_l, h_v)
+ *   opal_two_phase.MUSCL(limiter="minmod")  # or "van_leer", "superbee", "mc"
  *   opal_two_phase.HEMModel()
  *   opal_two_phase.TwoPhaseSolver(N, dx, A_flow, D_h, f_D, fluid, [recon], [model])
  *     .step(p, h, mdot, bc, dt, q_wall=None)
@@ -114,11 +115,20 @@ PYBIND11_MODULE(opal_two_phase, m) {
     py::class_<DonorCell, FaceReconstruction>(m, "DonorCell")
         .def(py::init<>(), "First-order upwind (donor cell)");
 
-    py::class_<MUSCL_Minmod, FaceReconstruction>(m, "MUSCL_Minmod")
-        .def(py::init<>(), "Second-order TVD with minmod limiter");
-
-    py::class_<MUSCL_VanLeer, FaceReconstruction>(m, "MUSCL_VanLeer")
-        .def(py::init<>(), "Second-order TVD with van Leer limiter");
+    // Limiter selection: pass a string name to MUSCL constructor.
+    // Supported: "minmod", "van_leer", "superbee", "mc"
+    py::class_<MUSCL, FaceReconstruction>(m, "MUSCL")
+        .def(py::init([](const std::string& name) {
+            if (name == "minmod")        return new MUSCL(limiters::minmod);
+            if (name == "van_leer")      return new MUSCL(limiters::van_leer);
+            if (name == "superbee")      return new MUSCL(limiters::superbee);
+            if (name == "mc")            return new MUSCL(limiters::mc);
+            throw std::invalid_argument(
+                "Unknown limiter '" + name + "'. "
+                "Options: minmod, van_leer, superbee, mc");
+        }),
+        py::arg("limiter") = "minmod",
+        "Second-order TVD MUSCL with selectable slope limiter");
 
     // FlowModel hierarchy --------------------------------------------------
     py::class_<FlowModel>(m, "FlowModel")
@@ -178,6 +188,29 @@ PYBIND11_MODULE(opal_two_phase, m) {
         .def_readonly("C_0",  &DriftFluxResult::C_0)
         .def_readonly("V_gj", &DriftFluxResult::V_gj);
 
+    // Sub-model interfaces --------------------------------------------------
+    py::class_<HeatTransferModel>(m, "HeatTransferModel")
+        .def("evaluate", &HeatTransferModel::evaluate,
+             py::arg("state"), "Compute interfacial transfer rates");
+
+    py::class_<DriftVelocityModel>(m, "DriftVelocityModel")
+        .def("evaluate", &DriftVelocityModel::evaluate,
+             py::arg("state"), "Compute drift-flux parameters");
+
+    // Concrete sub-models ---------------------------------------------------
+    py::class_<LinearRelaxation, HeatTransferModel>(m, "LinearRelaxation")
+        .def(py::init<double, double>(),
+             py::arg("H_i") = 1e5, py::arg("alpha_nucleation") = 1e-3,
+             "Linear relaxation: q_i = H_i * a_i * (T_sat - T_l)")
+        .def_property_readonly("H_i", &LinearRelaxation::H_i)
+        .def_property_readonly("alpha_nucleation", &LinearRelaxation::alpha_nucleation);
+
+    py::class_<ZuberFindlay, DriftVelocityModel>(m, "ZuberFindlay")
+        .def(py::init<double>(),
+             py::arg("C_0") = 1.13,
+             "Zuber-Findlay drift velocity for churn-turbulent bubbly flow")
+        .def_property_readonly("C_0", &ZuberFindlay::C_0);
+
     // InterfacialClosures hierarchy ----------------------------------------
     py::class_<InterfacialClosures>(m, "InterfacialClosures")
         .def("compute", &InterfacialClosures::compute,
@@ -189,14 +222,11 @@ PYBIND11_MODULE(opal_two_phase, m) {
         .def(py::init<>(), "No closures (for HEM)");
 
     py::class_<DriftFluxClosures, InterfacialClosures>(m, "DriftFluxClosures")
-        .def(py::init<double, double, double>(),
-             py::arg("H_i") = 1e5, py::arg("C_0") = 1.13,
-             py::arg("alpha_nucleation") = 1e-3,
-             "Drift-flux closures: Zuber-Findlay + interfacial heat transfer "
-             "with nucleation onset model")
-        .def_property_readonly("H_i", &DriftFluxClosures::H_i)
-        .def_property_readonly("C_0_param", &DriftFluxClosures::C_0_param)
-        .def_property_readonly("alpha_nucleation", &DriftFluxClosures::alpha_nucleation);
+        .def(py::init<const HeatTransferModel&, const DriftVelocityModel&>(),
+             py::arg("heat_transfer"), py::arg("drift_velocity"),
+             py::keep_alive<1, 2>(),  // closures keeps ht alive
+             py::keep_alive<1, 3>(),  // closures keeps drift alive
+             "Drift-flux closures with pluggable sub-models");
 
     // FiveEqModel ----------------------------------------------------------
     py::class_<FiveEqModel, FlowModel>(m, "FiveEqModel")

@@ -6,21 +6,58 @@
  * scalar) for the energy advection term.  Different reconstruction schemes
  * give different spatial accuracy:
  *
- *   DonorCell     — first-order upwind (Phase 2 default)
- *   MUSCL_Minmod  — second-order TVD, most diffusive
- *   MUSCL_VanLeer — second-order TVD, smooth, good for void fronts
+ *   DonorCell  — first-order upwind (Phase 2 default)
+ *   MUSCL      — second-order TVD with pluggable slope limiter:
+ *                limiters::minmod, van_leer, superbee, mc
  *
  * The solver stores a const reference to a FaceReconstruction object,
  * just like it stores a FluidProperties reference.  New schemes (WENO, PPM)
- * can be added without touching the solver code.
+ * can be added without touching the solver code.  New slope limiters can
+ * be added as one-line functions in the limiters namespace.
  *
  * Derived in: docs/math/derivations/muscl_reconstruction.py
  */
 
 #include <cmath>
 #include <algorithm>
+#include <functional>
 
 namespace opal {
+
+// ---------------------------------------------------------------------------
+// Slope limiters — pluggable via MUSCL constructor.
+//
+// A limiter phi(r) maps the upwind-to-downwind gradient ratio r to a
+// flux-limiting coefficient.  phi=0 gives donor cell, phi=1 gives
+// centered differences.  TVD limiters satisfy 0 <= phi(r) <= min(2r, 2).
+// ---------------------------------------------------------------------------
+namespace limiters {
+
+/// Minmod: most diffusive TVD limiter.  phi(r) = max(0, min(r, 1))
+inline double minmod(double r) {
+    return std::max(0.0, std::min(r, 1.0));
+}
+
+/// Van Leer: smooth TVD limiter, good for void fronts.  phi(r) = (r+|r|)/(1+|r|)
+inline double van_leer(double r) {
+    return (r + std::abs(r)) / (1.0 + std::abs(r));
+}
+
+/// Superbee: least diffusive TVD limiter.  phi(r) = max(0, min(2r,1), min(r,2))
+inline double superbee(double r) {
+    return std::max({0.0, std::min(2.0 * r, 1.0), std::min(r, 2.0)});
+}
+
+/// MC (monotonized central): balanced between minmod and superbee.
+/// phi(r) = max(0, min((1+r)/2, 2, 2r))
+inline double mc(double r) {
+    return std::max(0.0, std::min({(1.0 + r) / 2.0, 2.0, 2.0 * r}));
+}
+
+} // namespace limiters
+
+/// Limiter function type: takes gradient ratio r, returns phi in [0, 2].
+using LimiterFn = double(*)(double);
 
 /**
  * Abstract base for face-value reconstruction.
@@ -61,11 +98,21 @@ struct DonorCell : FaceReconstruction {
 };
 
 /**
- * MUSCL with minmod limiter — second-order TVD, most diffusive.
- * phi(r) = max(0, min(r, 1))
+ * MUSCL — second-order TVD reconstruction with pluggable slope limiter.
+ *
+ * Usage:
+ *   MUSCL recon(limiters::minmod);    // most diffusive
+ *   MUSCL recon(limiters::van_leer);  // smooth, good for void fronts
+ *   MUSCL recon(limiters::superbee);  // least diffusive, sharpest fronts
+ *   MUSCL recon(limiters::mc);        // balanced (monotonized central)
  */
-struct MUSCL_Minmod : FaceReconstruction {
+struct MUSCL : FaceReconstruction {
+    LimiterFn limiter_;
+
+    explicit MUSCL(LimiterFn limiter = limiters::minmod) : limiter_(limiter) {}
+
     int ghost_cells() const override { return 2; }
+
     double face_value(
         double cell_LL, double cell_L, double cell_R, double cell_RR,
         double mdot_face) const override
@@ -75,40 +122,14 @@ struct MUSCL_Minmod : FaceReconstruction {
             double delta = cell_R - cell_L;
             if (std::abs(delta) < 1e-30) return cell_L;
             double r = (cell_L - cell_LL) / delta;
-            double phi = std::max(0.0, std::min(r, 1.0));
+            double phi = limiter_(r);
             return cell_L + 0.5 * phi * delta;
         } else {
             // Upwind = cell_R, gradient ratio r = (R-RR)/(L-R)
             double delta = cell_L - cell_R;
             if (std::abs(delta) < 1e-30) return cell_R;
             double r = (cell_R - cell_RR) / delta;
-            double phi = std::max(0.0, std::min(r, 1.0));
-            return cell_R + 0.5 * phi * delta;
-        }
-    }
-};
-
-/**
- * MUSCL with van Leer limiter — second-order TVD, smooth.
- * phi(r) = (r + |r|) / (1 + |r|)
- */
-struct MUSCL_VanLeer : FaceReconstruction {
-    int ghost_cells() const override { return 2; }
-    double face_value(
-        double cell_LL, double cell_L, double cell_R, double cell_RR,
-        double mdot_face) const override
-    {
-        if (mdot_face >= 0.0) {
-            double delta = cell_R - cell_L;
-            if (std::abs(delta) < 1e-30) return cell_L;
-            double r = (cell_L - cell_LL) / delta;
-            double phi = (r + std::abs(r)) / (1.0 + std::abs(r));
-            return cell_L + 0.5 * phi * delta;
-        } else {
-            double delta = cell_L - cell_R;
-            if (std::abs(delta) < 1e-30) return cell_R;
-            double r = (cell_R - cell_RR) / delta;
-            double phi = (r + std::abs(r)) / (1.0 + std::abs(r));
+            double phi = limiter_(r);
             return cell_R + 0.5 * phi * delta;
         }
     }

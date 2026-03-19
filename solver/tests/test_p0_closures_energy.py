@@ -20,7 +20,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "two_phase"))
 import opal_two_phase as tp
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from bc_helpers import step_5eq, step_hem, solve_hem, pressure_bcs, wall_pressure_bcs, reset_time
+from bc_helpers import step_5eq, step_hem, solve_hem, pressure_bcs, wall_pressure_bcs, reset_time, drift_flux_closures
 
 
 # ============================================================================
@@ -58,7 +58,7 @@ def make_5eq_solver(N=5, fluid=None):
     """Standard 5-eq solver with SimpleFluid for isolated testing."""
     if fluid is None:
         fluid = tp.SimpleFluidProperties()
-    closures = tp.DriftFluxClosures(H_i=1e6, C_0=1.0, alpha_nucleation=1e-3)
+    closures = drift_flux_closures(H_i=1e6, C_0=1.0, alpha_nucleation=1e-3)
     model = tp.FiveEqModel(fluid, closures)
     dx = 0.5
     A = 0.01
@@ -80,35 +80,35 @@ class TestClosureSignConvention:
     def test_superheated_liquid_q_i_l_negative(self):
         """When T_l > T_sat, heat LEAVES liquid: q_i_l < 0."""
         s = make_interfacial_state(T_l=510.0, T_sat=500.0)
-        c = tp.DriftFluxClosures(H_i=1e5, C_0=1.0)
+        c = drift_flux_closures(H_i=1e5, C_0=1.0)
         r = c.compute(s)
         assert r.q_i_l < 0, f"q_i_l should be negative when superheated, got {r.q_i_l}"
 
     def test_superheated_liquid_Gamma_positive(self):
         """When T_l > T_sat, evaporation occurs: Gamma > 0."""
         s = make_interfacial_state(T_l=510.0, T_sat=500.0)
-        c = tp.DriftFluxClosures(H_i=1e5, C_0=1.0)
+        c = drift_flux_closures(H_i=1e5, C_0=1.0)
         r = c.compute(s)
         assert r.Gamma > 0, f"Gamma should be positive (evaporation), got {r.Gamma}"
 
     def test_subcooled_liquid_q_i_l_positive(self):
         """When T_l < T_sat, heat ENTERS liquid: q_i_l > 0."""
         s = make_interfacial_state(T_l=490.0, T_sat=500.0)
-        c = tp.DriftFluxClosures(H_i=1e5, C_0=1.0)
+        c = drift_flux_closures(H_i=1e5, C_0=1.0)
         r = c.compute(s)
         assert r.q_i_l > 0, f"q_i_l should be positive when subcooled, got {r.q_i_l}"
 
     def test_subcooled_liquid_Gamma_negative(self):
         """When T_l < T_sat, condensation occurs: Gamma < 0."""
         s = make_interfacial_state(T_l=490.0, T_sat=500.0)
-        c = tp.DriftFluxClosures(H_i=1e5, C_0=1.0)
+        c = drift_flux_closures(H_i=1e5, C_0=1.0)
         r = c.compute(s)
         assert r.Gamma < 0, f"Gamma should be negative (condensation), got {r.Gamma}"
 
     def test_equilibrium_zero_transfer(self):
         """When T_l = T_sat exactly, no interfacial transfer."""
         s = make_interfacial_state(T_l=500.0, T_sat=500.0)
-        c = tp.DriftFluxClosures(H_i=1e5, C_0=1.0)
+        c = drift_flux_closures(H_i=1e5, C_0=1.0)
         r = c.compute(s)
         assert r.q_i_l == pytest.approx(0.0, abs=1e-10)
         assert r.Gamma == pytest.approx(0.0, abs=1e-10)
@@ -134,7 +134,7 @@ class TestClosureEnergyBalance:
         """q_i_l + q_i_v + Gamma*(h_v - h_l) = 0 for various states."""
         s = make_interfacial_state(T_l=T_l, T_sat=T_sat, alpha=alpha,
                                    h_l=h_l, h_v=h_v)
-        c = tp.DriftFluxClosures(H_i=1e6, C_0=1.0)
+        c = drift_flux_closures(H_i=1e6, C_0=1.0)
         r = c.compute(s)
 
         residual = r.q_i_l + r.q_i_v + r.Gamma * (h_v - h_l)
@@ -180,7 +180,7 @@ class TestClosureGammaMagnitude:
         # Now verify C++ closure matches
         s = make_interfacial_state(T_l=T_l, T_sat=T_sat, alpha=alpha,
                                    h_sat_l=h_sat_l, h_sat_v=h_sat_v)
-        c = tp.DriftFluxClosures(H_i=H_i, C_0=1.0)
+        c = drift_flux_closures(H_i=H_i, C_0=1.0)
         r = c.compute(s)
 
         assert r.q_i_l == pytest.approx(q_i_l_expected, rel=1e-10)
@@ -190,8 +190,8 @@ class TestClosureGammaMagnitude:
         """Doubling H_i doubles Gamma."""
         s = make_interfacial_state(T_l=510.0, T_sat=500.0, alpha=0.3)
 
-        c1 = tp.DriftFluxClosures(H_i=1e5, C_0=1.0)
-        c2 = tp.DriftFluxClosures(H_i=2e5, C_0=1.0)
+        c1 = drift_flux_closures(H_i=1e5, C_0=1.0)
+        c2 = drift_flux_closures(H_i=2e5, C_0=1.0)
 
         r1 = c1.compute(s)
         r2 = c2.compute(s)
@@ -203,7 +203,7 @@ class TestClosureGammaMagnitude:
         s1 = make_interfacial_state(T_l=510.0, T_sat=500.0, alpha=0.3)
         s2 = make_interfacial_state(T_l=520.0, T_sat=500.0, alpha=0.3)
 
-        c = tp.DriftFluxClosures(H_i=1e5, C_0=1.0)
+        c = drift_flux_closures(H_i=1e5, C_0=1.0)
 
         r1 = c.compute(s1)
         r2 = c.compute(s2)
@@ -391,7 +391,7 @@ class TestSuperheatedEnthalpyDirection:
     def test_h_l_decreases_when_superheated(self):
         """Superheated liquid: h_l must decrease toward h_sat_l over time."""
         fluid = tp.SimpleFluidProperties()
-        closures = tp.DriftFluxClosures(H_i=1e6, C_0=1.0, alpha_nucleation=1e-3)
+        closures = drift_flux_closures(H_i=1e6, C_0=1.0, alpha_nucleation=1e-3)
         model = tp.FiveEqModel(fluid, closures)
         N = 5
         solver = tp.TwoPhaseSolver(N, 0.5, 0.01, 0.1, 0.02, fluid,
@@ -422,7 +422,7 @@ class TestSuperheatedEnthalpyDirection:
     def test_h_l_approaches_saturation(self):
         """With strong H_i, h_l should approach h_sat_l (not overshoot to zero)."""
         fluid = tp.SimpleFluidProperties()
-        closures = tp.DriftFluxClosures(H_i=1e7, C_0=1.0, alpha_nucleation=1e-3)
+        closures = drift_flux_closures(H_i=1e7, C_0=1.0, alpha_nucleation=1e-3)
         model = tp.FiveEqModel(fluid, closures)
         N = 3
         solver = tp.TwoPhaseSolver(N, 0.5, 0.01, 0.1, 0.02, fluid,

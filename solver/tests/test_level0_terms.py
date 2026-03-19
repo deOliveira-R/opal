@@ -31,7 +31,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "two_phase"))
 import opal_two_phase as tp
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from bc_helpers import step_5eq, step_hem, solve_hem, pressure_bcs, wall_pressure_bcs, wall_wall_bcs, reset_time
+from bc_helpers import step_5eq, step_hem, solve_hem, pressure_bcs, wall_pressure_bcs, wall_wall_bcs, reset_time, drift_flux_closures
 
 
 # ============================================================================
@@ -42,7 +42,7 @@ def make_5eq_solver(N=1, fluid=None, H_i=1e6, p_ref=10e6):
     """Standard 5-eq solver for isolated term testing."""
     if fluid is None:
         fluid = tp.SimpleFluidProperties()
-    closures = tp.DriftFluxClosures(H_i=H_i, C_0=1.0, alpha_nucleation=0.0)
+    closures = drift_flux_closures(H_i=H_i, C_0=1.0, alpha_nucleation=0.0)
     model = tp.FiveEqModel(fluid, closures)
     dx = 1.0; A = 0.01; D_h = 0.1; f_D = 0.0  # zero friction for isolation
     solver = tp.TwoPhaseSolver(N, dx, A, D_h, f_D, fluid,
@@ -260,7 +260,7 @@ class TestVoidFractionUpdateExact:
 
         # Superheated liquid -> Gamma > 0 -> void should grow
         H_i = 1e6
-        closures = tp.DriftFluxClosures(H_i=H_i, C_0=1.0, alpha_nucleation=0.0)
+        closures = drift_flux_closures(H_i=H_i, C_0=1.0, alpha_nucleation=0.0)
         model = tp.FiveEqModel(fluid, closures)
         N = 1; dx = 1.0; A = 0.01; D_h = 0.1; f_D = 0.0
         solver = tp.TwoPhaseSolver(N, dx, A, D_h, f_D, fluid,
@@ -312,7 +312,7 @@ class TestVoidFractionUpdateExact:
         fluid = tp.SimpleFluidProperties()
         pp = fluid.evaluate_phasic(10e6)
 
-        closures = tp.DriftFluxClosures(H_i=1e6, C_0=1.0, alpha_nucleation=0.0)
+        closures = drift_flux_closures(H_i=1e6, C_0=1.0, alpha_nucleation=0.0)
         model = tp.FiveEqModel(fluid, closures)
         N = 1; dx = 1.0; A = 0.01; D_h = 0.1; f_D = 0.0
         solver = tp.TwoPhaseSolver(N, dx, A, D_h, f_D, fluid,
@@ -345,7 +345,7 @@ class TestPhaseChangeEnthalpyTerms:
         pp = fluid.evaluate_phasic(10e6)
 
         # Strong H_i so interfacial term dominates pressure work
-        closures = tp.DriftFluxClosures(H_i=1e7, C_0=1.0, alpha_nucleation=0.0)
+        closures = drift_flux_closures(H_i=1e7, C_0=1.0, alpha_nucleation=0.0)
         model = tp.FiveEqModel(fluid, closures)
         N = 1; dx = 1.0; A = 0.01; D_h = 0.1; f_D = 0.0
         solver = tp.TwoPhaseSolver(N, dx, A, D_h, f_D, fluid,
@@ -374,7 +374,7 @@ class TestPhaseChangeEnthalpyTerms:
         fluid = tp.SimpleFluidProperties()
         pp = fluid.evaluate_phasic(10e6)
 
-        closures = tp.DriftFluxClosures(H_i=1e7, C_0=1.0, alpha_nucleation=0.0)
+        closures = drift_flux_closures(H_i=1e7, C_0=1.0, alpha_nucleation=0.0)
         model = tp.FiveEqModel(fluid, closures)
         N = 1; dx = 1.0; A = 0.01; D_h = 0.1; f_D = 0.0
         solver = tp.TwoPhaseSolver(N, dx, A, D_h, f_D, fluid,
@@ -403,7 +403,7 @@ class TestPhaseChangeEnthalpyTerms:
         fluid = tp.SimpleFluidProperties()
         pp = fluid.evaluate_phasic(10e6)
 
-        closures = tp.DriftFluxClosures(H_i=1e7, C_0=1.0, alpha_nucleation=0.0)
+        closures = drift_flux_closures(H_i=1e7, C_0=1.0, alpha_nucleation=0.0)
         model = tp.FiveEqModel(fluid, closures)
         N = 1; dx = 1.0; A = 0.01; D_h = 0.1; f_D = 0.0
         solver = tp.TwoPhaseSolver(N, dx, A, D_h, f_D, fluid,
@@ -438,7 +438,7 @@ class TestAdvectiveFluxSign:
         fluid = tp.SimpleFluidProperties()
         pp = fluid.evaluate_phasic(10e6)
 
-        closures = tp.DriftFluxClosures(H_i=0.0, C_0=1.0)  # zero HT
+        closures = drift_flux_closures(H_i=0.0, C_0=1.0)  # zero HT
         model = tp.FiveEqModel(fluid, closures)
         N = 5; dx = 0.5; A = 0.01; D_h = 0.1; f_D = 0.02
         solver = tp.TwoPhaseSolver(N, dx, A, D_h, f_D, fluid,
@@ -480,7 +480,7 @@ class TestWallHeatSplit:
         fluid = tp.SimpleFluidProperties()
         pp = fluid.evaluate_phasic(10e6)
 
-        closures = tp.DriftFluxClosures(H_i=0.0, C_0=1.0)
+        closures = drift_flux_closures(H_i=0.0, C_0=1.0)
         model = tp.FiveEqModel(fluid, closures)
         N = 1; dx = 1.0; A = 0.01; D_h = 0.1; f_D = 0.0
         solver = tp.TwoPhaseSolver(N, dx, A, D_h, f_D, fluid,
@@ -509,7 +509,7 @@ class TestWallHeatSplit:
         fluid = tp.SimpleFluidProperties()
         pp = fluid.evaluate_phasic(10e6)
 
-        closures = tp.DriftFluxClosures(H_i=0.0, C_0=1.0)
+        closures = drift_flux_closures(H_i=0.0, C_0=1.0)
         model = tp.FiveEqModel(fluid, closures)
         N = 1; dx = 1.0; A = 0.01; D_h = 0.1; f_D = 0.0
         solver = tp.TwoPhaseSolver(N, dx, A, D_h, f_D, fluid,
@@ -543,7 +543,7 @@ class TestMomentumPressureDirection:
         """Higher inlet pressure -> positive flow toward outlet."""
         fluid = tp.SimpleFluidProperties()
         pp = fluid.evaluate_phasic(10e6)
-        closures = tp.DriftFluxClosures(H_i=0.0, C_0=1.0)
+        closures = drift_flux_closures(H_i=0.0, C_0=1.0)
         model = tp.FiveEqModel(fluid, closures)
         N = 3
         solver = tp.TwoPhaseSolver(N, 0.5, 0.01, 0.1, 0.02, fluid,
@@ -568,7 +568,7 @@ class TestMomentumPressureDirection:
         """Lower inlet pressure -> negative flow (right to left)."""
         fluid = tp.SimpleFluidProperties()
         pp = fluid.evaluate_phasic(10e6)
-        closures = tp.DriftFluxClosures(H_i=0.0, C_0=1.0)
+        closures = drift_flux_closures(H_i=0.0, C_0=1.0)
         model = tp.FiveEqModel(fluid, closures)
         N = 3
         solver = tp.TwoPhaseSolver(N, 0.5, 0.01, 0.1, 0.02, fluid,
@@ -655,7 +655,7 @@ class TestFaceDensityBoundaries:
         verify that pressure at cell 0 is self-consistent (no wrong density)."""
         fluid = tp.SimpleFluidProperties()
         pp = fluid.evaluate_phasic(10e6)
-        closures = tp.DriftFluxClosures(H_i=0.0, C_0=1.0)
+        closures = drift_flux_closures(H_i=0.0, C_0=1.0)
         model = tp.FiveEqModel(fluid, closures)
         N = 3
         solver = tp.TwoPhaseSolver(N, 0.5, 0.01, 0.1, 0.02, fluid,
@@ -739,11 +739,11 @@ class TestMUSCLNegativeFlow:
         """With reversed pressure, MUSCL should still produce stable results."""
         fluid = tp.SimpleFluidProperties()
         pp = fluid.evaluate_phasic(10e6)
-        closures = tp.DriftFluxClosures(H_i=0.0, C_0=1.0)
+        closures = drift_flux_closures(H_i=0.0, C_0=1.0)
         model = tp.FiveEqModel(fluid, closures)
         N = 10
 
-        for recon in [tp.MUSCL_Minmod(), tp.MUSCL_VanLeer()]:
+        for recon in [tp.MUSCL("minmod"), tp.MUSCL("van_leer")]:
             solver = tp.TwoPhaseSolver(N, 0.3, 0.01, 0.1, 0.02, fluid,
                                         recon, model, tp.InertialMomentum())
 
@@ -781,7 +781,7 @@ class TestInletBoundaryEnthalpy:
         """When PressureFace is constructed with hot h_l, solver uses it."""
         fluid = tp.SimpleFluidProperties()
         pp = fluid.evaluate_phasic(10e6)
-        closures = tp.DriftFluxClosures(H_i=0.0, C_0=1.0)
+        closures = drift_flux_closures(H_i=0.0, C_0=1.0)
         model = tp.FiveEqModel(fluid, closures)
         N = 5
 

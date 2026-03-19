@@ -86,4 +86,8 @@ def reset_time(solver=None):
         _t_accum.pop(id(solver), None)
 
 
-    # Legacy wrappers removed — all callers now use BoundaryFace directly.
+def drift_flux_closures(H_i=1e5, C_0=1.13, alpha_nucleation=1e-3):
+    """Create DriftFluxClosures from scalar parameters (default sub-models)."""
+    ht = tp.LinearRelaxation(H_i=H_i, alpha_nucleation=alpha_nucleation)
+    drift = tp.ZuberFindlay(C_0=C_0)
+    return tp.DriftFluxClosures(ht, drift)

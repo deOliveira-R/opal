@@ -10,9 +10,15 @@ P2 tests (9): RansomTrapp, IAPWS PhasicProperties, nucleation, enthalpy bounds
 All tests use the full C++ solver via pybind11 bindings.
 """
 
+import sys
+from pathlib import Path
 import numpy as np
 import pytest
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "two_phase"))
 import opal_two_phase as tp
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from bc_helpers import (step_5eq, step_hem, pressure_bcs, wall_pressure_bcs,
+                        wall_break_bcs, drift_flux_closures)
 
 
 # ============================================================================
@@ -36,10 +42,10 @@ class TestIAPWSInertialMomentum:
         p = np.linspace(10.1e6, 10.0e6, N)
         h = np.full(N, 900e3)  # subcooled at 10 MPa (h_f ~ 1267 kJ/kg)
         mdot = np.zeros(N + 1)
-        bc = tp.TwoPhaseBCs(10.1e6, 10.0e6, 900e3)
+        bc_in, bc_out = pressure_bcs(10.1e6, 10.0e6, 900e3)
 
         for _ in range(2000):
-            solver.step(p, h, mdot, bc, 1e-4)
+            step_hem(solver, p, h, mdot, bc_in, bc_out, 1e-4)
 
         assert np.all(np.isfinite(p)), f"NaN in pressure: {p}"
         assert np.all(np.isfinite(mdot)), f"NaN in mdot: {mdot}"
@@ -60,10 +66,10 @@ class TestIAPWSInertialMomentum:
         p = np.linspace(10.1e6, 10.0e6, N)
         h = np.full(N, 1800e3)  # two-phase at 10 MPa
         mdot = np.zeros(N + 1)
-        bc = tp.TwoPhaseBCs(10.1e6, 10.0e6, 1800e3)
+        bc_in, bc_out = pressure_bcs(10.1e6, 10.0e6, 1800e3)
 
         for _ in range(1000):
-            solver.step(p, h, mdot, bc, 1e-4)
+            step_hem(solver, p, h, mdot, bc_in, bc_out, 1e-4)
 
         assert np.all(np.isfinite(p)), f"NaN in pressure: {p}"
         assert np.all(np.isfinite(h)), f"NaN in enthalpy: {h}"
@@ -83,20 +89,14 @@ class TestWallBCReflection:
         pressure should stay uniform and mdot at wall should be zero."""
         N = 5
         fluid = tp.SimpleFluidProperties()
-        closures = tp.DriftFluxClosures(H_i=0.0, C_0=1.0)
+        closures = drift_flux_closures(H_i=0.0, C_0=1.0)
         model = tp.FiveEqModel(fluid, closures)
         momentum = tp.InertialMomentum()
         solver = tp.TwoPhaseSolver(N, 1.0, 0.01, 0.1, 0.02, fluid,
                                    tp.DonorCell(), model, momentum)
 
-        bc = tp.BoundaryConditions()
-        bc.bc_type_in = tp.BCType.PRESSURE
-        bc.bc_type_out = tp.BCType.WALL
-        bc.p_in = 10.0e6
-        bc.p_out = 10.0e6
-        bc.h_in = 700e3
-        bc.h_l_in = 700e3
-        bc.h_v_in = 2800e3
+        bc_in = tp.PressureFace(10.0e6, 700e3, 2800e3, 0.0)
+        bc_out = tp.WallFace(700e3, 2800e3)
 
         p = np.full(N, 10.0e6)
         alpha = np.zeros(N)
@@ -105,7 +105,7 @@ class TestWallBCReflection:
         mdot = np.zeros(N + 1)
 
         for _ in range(200):
-            solver.step_5eq(p, alpha, h_l, h_v, mdot, bc, 1e-4)
+            step_5eq(solver, p, alpha, h_l, h_v, mdot, bc_in, bc_out, 1e-4)
 
         # Wall face flow must be exactly zero
         assert mdot[-1] == 0.0, f"Wall mdot should be 0, got {mdot[-1]}"
@@ -122,20 +122,14 @@ class TestWallBCReflection:
         2x the initial jump (perfect reflection limit)."""
         N = 10
         fluid = tp.SimpleFluidProperties()
-        closures = tp.DriftFluxClosures(H_i=0.0, C_0=1.0)
+        closures = drift_flux_closures(H_i=0.0, C_0=1.0)
         model = tp.FiveEqModel(fluid, closures)
         momentum = tp.InertialMomentum()
         solver = tp.TwoPhaseSolver(N, 0.5, 0.01, 0.1, 0.02, fluid,
                                    tp.DonorCell(), model, momentum)
 
-        bc = tp.BoundaryConditions()
-        bc.bc_type_in = tp.BCType.PRESSURE
-        bc.bc_type_out = tp.BCType.WALL
-        bc.p_in = 10.1e6
-        bc.p_out = 10.0e6
-        bc.h_in = 700e3
-        bc.h_l_in = 700e3
-        bc.h_v_in = 2800e3
+        bc_in = tp.PressureFace(10.1e6, 700e3, 2800e3, 0.0)
+        bc_out = tp.WallFace(700e3, 2800e3)
 
         # Step pressure: cells 0-4 at 10.1 MPa, cells 5-9 at 10.0 MPa
         p = np.full(N, 10.0e6)
@@ -147,7 +141,7 @@ class TestWallBCReflection:
 
         p_max_seen = np.max(p)
         for _ in range(500):
-            solver.step_5eq(p, alpha, h_l, h_v, mdot, bc, 1e-4)
+            step_5eq(solver, p, alpha, h_l, h_v, mdot, bc_in, bc_out, 1e-4)
             p_max_seen = max(p_max_seen, np.max(p))
 
         # Max pressure should not exceed 10.2 MPa (2x the 0.1 MPa step)
@@ -169,7 +163,7 @@ class TestMiniEdwards:
         decreasing at break cell and positive outlet flow."""
         N = 5
         fluid = tp.IAPWSIF97Properties()
-        closures = tp.DriftFluxClosures(H_i=1e7, C_0=1.0, alpha_nucleation=1e-3)
+        closures = drift_flux_closures(H_i=1e7, C_0=1.0, alpha_nucleation=1e-3)
         model = tp.FiveEqModel(fluid, closures)
         momentum = tp.InertialMomentum()
         critical_flow = tp.RansomTrapp(fluid, x_trans=0.10, c_floor=1200.0)
@@ -177,14 +171,8 @@ class TestMiniEdwards:
                                    fluid, tp.DonorCell(), model,
                                    momentum, critical_flow)
 
-        bc = tp.BoundaryConditions()
-        bc.bc_type_in = tp.BCType.WALL
-        bc.bc_type_out = tp.BCType.BREAK
-        bc.p_out = 101325.0
-        bc.break_area_fraction = 0.87
-        bc.h_in = 986.6e3
-        bc.h_l_in = 986.6e3
-        bc.h_v_in = 2772.6e3
+        bc_in = tp.WallFace(986.6e3, 2772.6e3)
+        bc_out = tp.BreakFace(101325.0, 0.87, 986.6e3, 2772.6e3)
 
         p = np.full(N, 7.0e6)
         alpha = np.full(N, 1e-6)
@@ -196,7 +184,7 @@ class TestMiniEdwards:
         p_break_initial = p[-1]
 
         for _ in range(200):
-            solver.step_5eq(p, alpha, h_l, h_v, mdot, bc, dt)
+            step_5eq(solver, p, alpha, h_l, h_v, mdot, bc_in, bc_out, dt)
 
         # All state should be finite
         assert np.all(np.isfinite(p)), f"NaN in pressure: {p}"
@@ -344,7 +332,7 @@ class TestNucleationIAPWS:
         produce void from alpha=0 via nucleation."""
         N = 3
         fluid = tp.IAPWSIF97Properties()
-        closures = tp.DriftFluxClosures(H_i=1e7, C_0=1.0, alpha_nucleation=1e-3)
+        closures = drift_flux_closures(H_i=1e7, C_0=1.0, alpha_nucleation=1e-3)
         model = tp.FiveEqModel(fluid, closures)
         solver = tp.TwoPhaseSolver(N, 1.0, 0.01, 0.1, 0.02, fluid,
                                    tp.DonorCell(), model)
@@ -353,13 +341,8 @@ class TestNucleationIAPWS:
         # Use h_l = 1000 kJ/kg → T_l > T_sat → superheated
         pp = fluid.evaluate_phasic(2e6)
 
-        bc = tp.BoundaryConditions()
-        bc.p_in = 2.1e6
-        bc.p_out = 2.0e6
-        bc.h_in = 1000e3
-        bc.h_l_in = 1000e3
-        bc.h_v_in = pp.h_sat_v
-        bc.alpha_in = 0.001
+        bc_in, bc_out = pressure_bcs(2.1e6, 2.0e6, 1000e3,
+                                     h_v=pp.h_sat_v, alpha=0.001)
 
         p = np.full(N, 2.05e6)
         alpha = np.zeros(N)  # start with ZERO void
@@ -368,7 +351,7 @@ class TestNucleationIAPWS:
         mdot = np.zeros(N + 1)
 
         for _ in range(200):
-            solver.step_5eq(p, alpha, h_l, h_v, mdot, bc, 1e-4)
+            step_5eq(solver, p, alpha, h_l, h_v, mdot, bc_in, bc_out, 1e-4)
 
         assert np.max(alpha) > 0, (
             f"Nucleation failed with IAPWS: max(alpha) = {np.max(alpha):.2e}"
@@ -388,17 +371,12 @@ class TestEnthalpyBounds:
         not go to infinity or NaN."""
         N = 3
         fluid = tp.SimpleFluidProperties()
-        closures = tp.DriftFluxClosures(H_i=1e5, C_0=1.0)
+        closures = drift_flux_closures(H_i=1e5, C_0=1.0)
         model = tp.FiveEqModel(fluid, closures)
         solver = tp.TwoPhaseSolver(N, 1.0, 0.01, 0.1, 0.02, fluid,
                                    tp.DonorCell(), model)
 
-        bc = tp.BoundaryConditions()
-        bc.p_in = 10.5e6
-        bc.p_out = 10.0e6
-        bc.h_in = 700e3
-        bc.h_l_in = 700e3
-        bc.h_v_in = 2800e3
+        bc_in, bc_out = pressure_bcs(10.5e6, 10.0e6, 700e3, h_v=2800e3)
 
         p = np.full(N, 10.25e6)
         alpha = np.full(N, 0.1)
@@ -408,7 +386,7 @@ class TestEnthalpyBounds:
 
         # Deliberately large dt (should trigger CFL warning)
         for _ in range(10):
-            solver.step_5eq(p, alpha, h_l, h_v, mdot, bc, 0.1)
+            step_5eq(solver, p, alpha, h_l, h_v, mdot, bc_in, bc_out, 0.1)
 
         # Enthalpy should be finite (clamped, not NaN)
         assert np.all(np.isfinite(h_l)), f"h_l has NaN: {h_l}"

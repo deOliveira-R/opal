@@ -2,7 +2,7 @@
 test_muscl.py — MUSCL reconstruction verification tests.
 
 Verifies the C++ FaceReconstruction implementations (DonorCell,
-MUSCL_Minmod, MUSCL_VanLeer) through the actual TwoPhaseSolver.
+MUSCL with minmod/van_leer limiters) through the actual TwoPhaseSolver.
 
 Tests (all use SimpleFluid):
 1. Backwards compatibility: explicit DonorCell = default constructor
@@ -164,8 +164,8 @@ class TestMUSCLSharperProfiles:
         """At the same N, MUSCL should have smaller profile error."""
         N = 10
         err_dc = self._profile_error(N, tp.DonorCell())
-        err_mm = self._profile_error(N, tp.MUSCL_Minmod())
-        err_vl = self._profile_error(N, tp.MUSCL_VanLeer())
+        err_mm = self._profile_error(N, tp.MUSCL("minmod"))
+        err_vl = self._profile_error(N, tp.MUSCL("van_leer"))
 
         # MUSCL should be at least as good as donor-cell
         # (on this smooth profile, they should all be very close,
@@ -184,8 +184,8 @@ class TestTVD:
     """MUSCL must not create new extrema in the enthalpy field."""
 
     @pytest.mark.parametrize("recon", [
-        tp.MUSCL_Minmod(),
-        tp.MUSCL_VanLeer(),
+        tp.MUSCL("minmod"),
+        tp.MUSCL("van_leer"),
     ])
     def test_step_profile_no_overshoot(self, recon):
         """Sharp enthalpy step: all values must stay within [h_low, h_high]."""
@@ -222,8 +222,8 @@ class TestBoundaryStencil:
 
     @pytest.mark.parametrize("N", [2, 3])
     @pytest.mark.parametrize("recon", [
-        tp.MUSCL_Minmod(),
-        tp.MUSCL_VanLeer(),
+        tp.MUSCL("minmod"),
+        tp.MUSCL("van_leer"),
     ])
     def test_small_N_no_crash(self, N, recon):
         """N=2,3: must produce finite values and converge."""
@@ -261,8 +261,8 @@ class TestMassConservationMUSCL:
     """MUSCL only affects enthalpy — pressure solve and mass balance untouched."""
 
     @pytest.mark.parametrize("recon", [
-        tp.MUSCL_Minmod(),
-        tp.MUSCL_VanLeer(),
+        tp.MUSCL("minmod"),
+        tp.MUSCL("van_leer"),
     ])
     def test_linearized_mass_balance(self, recon):
         """Tridiagonal residual must be ~machine eps even with MUSCL."""

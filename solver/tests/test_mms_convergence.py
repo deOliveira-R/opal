@@ -27,7 +27,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "two_phase"))
 import opal_two_phase as tp
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from bc_helpers import step_5eq, step_hem, solve_hem, pressure_bcs, wall_wall_bcs, reset_time
+from bc_helpers import step_5eq, step_hem, solve_hem, pressure_bcs, wall_wall_bcs, reset_time, drift_flux_closures
 
 
 # ============================================================================
@@ -131,7 +131,7 @@ def run_mms_5eq_subcooled(N, n_steps=5000, dt=1e-4, recon=None):
 
     fluid = tp.SimpleFluidProperties()
     pp = fluid.evaluate_phasic(p0)
-    closures = tp.DriftFluxClosures(H_i=0.0, C_0=1.0)
+    closures = drift_flux_closures(H_i=0.0, C_0=1.0)
     model = tp.FiveEqModel(fluid, closures)
     solver = tp.TwoPhaseSolver(N, dx, A_flow, D_h, f_D, fluid,
                                 recon, model, tp.AlgebraicMomentum())
@@ -251,7 +251,7 @@ class TestMMSSourceTermInjection:
         """A mass source should change the pressure field."""
         fluid = tp.SimpleFluidProperties()
         pp = fluid.evaluate_phasic(10e6)
-        closures = tp.DriftFluxClosures(H_i=0.0, C_0=1.0)
+        closures = drift_flux_closures(H_i=0.0, C_0=1.0)
         model = tp.FiveEqModel(fluid, closures)
         N = 5; dx = 1.0
         solver = tp.TwoPhaseSolver(N, dx, A_flow, D_h, 0.0, fluid,
@@ -284,7 +284,7 @@ class TestMMSSourceTermInjection:
         """A momentum source should accelerate the flow."""
         fluid = tp.SimpleFluidProperties()
         pp = fluid.evaluate_phasic(10e6)
-        closures = tp.DriftFluxClosures(H_i=0.0, C_0=1.0)
+        closures = drift_flux_closures(H_i=0.0, C_0=1.0)
         model = tp.FiveEqModel(fluid, closures)
         N = 5; dx = 1.0
         solver = tp.TwoPhaseSolver(N, dx, A_flow, D_h, 0.0, fluid,
@@ -312,7 +312,7 @@ class TestMMSSourceTermInjection:
         """An energy source should increase liquid enthalpy."""
         fluid = tp.SimpleFluidProperties()
         pp = fluid.evaluate_phasic(10e6)
-        closures = tp.DriftFluxClosures(H_i=0.0, C_0=1.0)
+        closures = drift_flux_closures(H_i=0.0, C_0=1.0)
         model = tp.FiveEqModel(fluid, closures)
         N = 3; dx = 1.0
         solver = tp.TwoPhaseSolver(N, dx, A_flow, D_h, 0.0, fluid,
@@ -345,8 +345,8 @@ class TestMMSConvergenceMUSCL:
     """MMS convergence for MUSCL reconstruction schemes."""
 
     @pytest.mark.parametrize("recon_name,recon", [
-        ("minmod", tp.MUSCL_Minmod()),
-        ("vanLeer", tp.MUSCL_VanLeer()),
+        ("minmod", tp.MUSCL("minmod")),
+        ("vanLeer", tp.MUSCL("van_leer")),
     ])
     def test_muscl_convergence_rate(self, recon_name, recon):
         """MUSCL convergence rate from coarse-mesh pair (N=10->20) should be
@@ -377,8 +377,8 @@ class TestMMSConvergenceMUSCL:
         )
 
     @pytest.mark.parametrize("recon_name,recon", [
-        ("minmod", tp.MUSCL_Minmod()),
-        ("vanLeer", tp.MUSCL_VanLeer()),
+        ("minmod", tp.MUSCL("minmod")),
+        ("vanLeer", tp.MUSCL("van_leer")),
     ])
     def test_muscl_beats_donor_cell(self, recon_name, recon):
         """At the same mesh, MUSCL should have smaller error than donor-cell."""

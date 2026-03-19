@@ -17,7 +17,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "two_phase"))
 import opal_two_phase as tp
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from bc_helpers import step_5eq, pressure_bcs
+from bc_helpers import step_5eq, pressure_bcs, drift_flux_closures
 
 
 # ============================================================================
@@ -49,7 +49,7 @@ def run_mms(N, recon, h_func, dh_func, n_steps=10000, dt=1e-4):
     dx = L_pipe / N
     fluid = tp.SimpleFluidProperties()
     pp = fluid.evaluate_phasic(p0)
-    closures = tp.DriftFluxClosures(H_i=0.0, C_0=1.0)
+    closures = drift_flux_closures(H_i=0.0, C_0=1.0)
     model = tp.FiveEqModel(fluid, closures)
     solver = tp.TwoPhaseSolver(N, dx, A_flow, D_h, 0.02, fluid,
                                 recon, model, tp.AlgebraicMomentum())
@@ -91,7 +91,7 @@ def convergence_rate(dx1, e1, dx2, e2):
 class TestBoundaryOrderEffect:
 
     def test_zero_gradient_inlet_second_order(self):
-        recon = tp.MUSCL_Minmod()
+        recon = tp.MUSCL("minmod")
         dx1, e1 = run_mms(10, recon, h_A, dh_A)
         dx2, e2 = run_mms(20, recon, h_A, dh_A)
         rate = convergence_rate(dx1, e1, dx2, e2)
@@ -99,7 +99,7 @@ class TestBoundaryOrderEffect:
         assert rate > 1.5
 
     def test_maximal_gradient_inlet_second_order(self):
-        recon = tp.MUSCL_Minmod()
+        recon = tp.MUSCL("minmod")
         dx1, e1 = run_mms(10, recon, h_B, dh_B)
         dx2, e2 = run_mms(20, recon, h_B, dh_B)
         rate = convergence_rate(dx1, e1, dx2, e2)
@@ -123,13 +123,13 @@ class TestBoundaryOrderEffect:
 class TestBoundaryContaminationReach:
 
     def test_interior_approaches_second_order(self):
-        recon = tp.MUSCL_Minmod()
+        recon = tp.MUSCL("minmod")
         errors = []
         for N in [10, 20, 40]:
             dx = L_pipe / N; dt = 1e-4
             fluid = tp.SimpleFluidProperties()
             pp = fluid.evaluate_phasic(p0)
-            closures = tp.DriftFluxClosures(H_i=0.0, C_0=1.0)
+            closures = drift_flux_closures(H_i=0.0, C_0=1.0)
             model = tp.FiveEqModel(fluid, closures)
             solver = tp.TwoPhaseSolver(N, dx, A_flow, D_h, 0.02, fluid,
                                         recon, model, tp.AlgebraicMomentum())
