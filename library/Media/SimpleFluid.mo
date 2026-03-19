@@ -82,6 +82,16 @@ package SimpleFluid "Synthetic test fluid — linear properties for rigorous two
     annotation(Inline=true);
   end rho_g;
 
+  function sigma "Surface tension [N/m] — constant approximation"
+    input Real p "Pressure [Pa]";
+    output Real sigma_val;
+  algorithm
+    // Typical water surface tension at ~10 MPa (~0.02 N/m)
+    // Linear decrease toward critical point
+    sigma_val := 0.06 - 0.04 * (p - p_ref) / p_ref;
+    annotation(Inline=true);
+  end sigma;
+
   // =========================================================================
   // Region detection
   // =========================================================================

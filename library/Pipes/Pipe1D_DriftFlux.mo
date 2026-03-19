@@ -146,7 +146,9 @@ equation
     q_i_v[i] = -Gamma[i] * (h_v[i] - h_l[i]) - q_i_l[i];
 
     // Zuber-Findlay drift velocity
-    V_gj[i] = 1.41 * (Medium.rho_f(p[i]) * 9.81 *
+    // V_gj = 1.41 * [σ * g * Δρ / ρ_l²]^0.25 * 4α(1-α)
+    // Ref: Ishii & Hibiki, "Thermo-Fluid Dynamics of Two-Phase Flow", Eq. 11.21
+    V_gj[i] = 1.41 * (Medium.sigma(p[i]) * 9.81 *
                max(rho_l[i] - rho_v[i], 0.01) /
                max(rho_l[i]^2, 1.0))^0.25 *
                4 * alpha[i] * (1 - alpha[i]);

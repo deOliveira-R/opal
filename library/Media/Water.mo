@@ -185,6 +185,19 @@ package Water "OPAL water medium — unified IAPWS-IF97 API with event-free regi
     annotation(Inline=true);
   end rho_g;
 
+  function sigma "Surface tension [N/m] from pressure (IAPWS-IF97)"
+    input Real p "Pressure [Pa]";
+    output Real sigma_val;
+  protected
+    Real T_s = IF97.Saturation.T_sat(p);
+    Real tau = 1 - T_s / 647.096 "Reduced temperature distance from critical";
+  algorithm
+    // IAPWS 1994 correlation for surface tension of water
+    // sigma = 0.2358 * tau^1.256 * (1 - 0.625 * tau)
+    sigma_val := 0.2358 * tau^1.256 * (1 - 0.625 * tau);
+    annotation(Inline=true);
+  end sigma;
+
   // ---------------------------------------------------------------------------
   // Convenience wrappers: (p, T) input for use in equation-level models
   // ---------------------------------------------------------------------------

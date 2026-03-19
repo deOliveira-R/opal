@@ -60,6 +60,11 @@ partial package PartialMedium
     output Real rho_val;
   end rho_g;
 
+  function sigma "Surface tension [N/m] from pressure"
+    input Real p "Pressure [Pa]";
+    output Real sigma_val;
+  end sigma;
+
   annotation(Documentation(info="<html>
 <p>Abstract interface for OPAL thermodynamic media packages.</p>
 <p>All media (SimpleFluid, Water) implement these functions:</p>
