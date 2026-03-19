@@ -175,7 +175,7 @@ class ExtractedSemiImplicitSolver:
         self.last_d = d.copy()
 
         # ──────────────────────────────────────────────────────
-        # Step 5: Thomas algorithm (tridiagonal solve)
+        # Step 5: Thomas algorithm (tridiagonal solve) + pressure bounds
         # ──────────────────────────────────────────────────────
         c_p = np.zeros(N)
         d_p = np.zeros(N)
@@ -188,6 +188,12 @@ class ExtractedSemiImplicitSolver:
         p[N - 1] = d_p[N - 1]
         for i in range(N - 2, -1, -1):
             p[i] = d_p[i] - c_p[i] * p[i + 1]
+
+        # Pressure bounds (from FluidPackage, same as C++ solver)
+        p_floor = self.fluid.p_min if hasattr(self.fluid, 'p_min') else 100.0
+        p_ceil = self.fluid.p_max if hasattr(self.fluid, 'p_max') else 100e6
+        for i in range(N):
+            p[i] = max(p_floor, min(p_ceil, p[i]))
 
         # ──────────────────────────────────────────────────────
         # Step 6: Update momentum (from extracted momentum equations)
