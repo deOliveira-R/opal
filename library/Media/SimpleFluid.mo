@@ -1,6 +1,6 @@
 within library.Media;
-package SimpleFluid
-  "Synthetic test fluid — linear properties for rigorous two-phase solver verification"
+package SimpleFluid "Synthetic test fluid — linear properties for rigorous two-phase solver verification"
+  extends library.Media.PartialMedium;
 
   // =========================================================================
   // Constants

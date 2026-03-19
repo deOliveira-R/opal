@@ -4,9 +4,22 @@ external/OpenModelica/build_cmake/
 # Python virtualenv
 external/venv/
 
+# External Modelica libraries (cloned for reference, not tracked)
+external/TRANSFORM/
+external/ThermoPower/
+external/ThermoSysPro/
+external/MSL/
+external/Buildings/
+external/OpenIPSL/
+
 # Feasibility test outputs (large XML / flat Modelica files)
 feasibility/results/*.xml
 feasibility/results/*.mo
+feasibility/results/*.c
+feasibility/results/*.h
+feasibility/results/*.bin
+feasibility/results/*.json
+feasibility/results/*.makefile
 feasibility/results/report.txt
 
 # Solver build artifacts
@@ -29,3 +42,4 @@ library/Media/tests/_probe.mo
 .gitnexus
 solver/two_phase/build/
 *.so
+external/ClaRa/

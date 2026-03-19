@@ -1,5 +1,6 @@
 within library.Media;
 package Water "OPAL water medium — unified IAPWS-IF97 API with event-free region selection"
+  extends library.Media.PartialMedium;
 
   // ---------------------------------------------------------------------------
   // Region detection
