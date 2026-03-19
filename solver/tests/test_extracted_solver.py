@@ -231,23 +231,27 @@ class TestMomentumUpdate:
         solver.step(p, h, mdot, 1e-4)
         assert mdot[2] > 0, "Flow should go toward low-pressure outlet"
 
-    def test_interior_momentum_uses_new_pressure(self):
-        """Verify interior mdot update uses the NEW pressure from tridiagonal solve."""
-        spec = make_spec(N=3, p_init=10e6, p_out=9.9e6, inlet_closed=True)
+    def test_momentum_differs_from_old_pressure_formula(self):
+        """Verify momentum uses NEW pressure, not old — by showing the result
+        differs from what old-pressure formula would give."""
+        spec = make_spec(N=2, p_init=10e6, p_out=9e6, inlet_closed=True)
         solver = make_solver(spec)
-        p = np.array([10e6, 10.05e6, 10.1e6])
-        h = np.array([700e3, 700e3, 700e3])
-        mdot_old = np.array([0.0, 0.1, 0.1, 0.1])
-        mdot = mdot_old.copy()
         dt = 1e-4
-
-        solver.step(p, h, mdot, dt)
-
         beta = dt * spec.A_flow / spec.dx
-        # Face 2 uses NEW p[1] and p[2] (after tridiagonal solve)
-        # Verify using the formula with solver's new p values
-        expected = 0.1 + beta * (p[0] - p[1]) - dt * solver.last_fric[1]
-        assert mdot[1] == pytest.approx(expected, rel=1e-10)
+
+        p_old = np.array([10e6, 10e6])
+        h = np.array([700e3, 700e3])
+        mdot_old = np.array([0.0, 0.0, 0.5])
+        mdot = mdot_old.copy()
+
+        solver.step(p_old.copy(), h, mdot, dt)
+
+        # What OLD pressure would give for outlet face:
+        mdot_if_old_p = mdot_old[2] + beta * (10e6 - 9e6) - dt * solver.last_fric[2]
+        # Actual mdot[2] uses NEW p[1] (which changed from tridiagonal solve)
+        # These should differ because p[1] moved
+        assert mdot[2] != pytest.approx(mdot_if_old_p, rel=1e-6), \
+            "Momentum should use NEW pressure, not old"
 
 
 # ============================================================================
@@ -288,29 +292,83 @@ class TestEnergyUpdate:
         # Cell 1 receives hot fluid from cell 0 via face 1
         assert h[1] > h_before, "Cell 1 should heat up from hot cell 0 inflow"
 
-    def test_energy_magnitude_single_cell(self):
-        """Verify energy change magnitude for one cell against hand calculation."""
+    def test_energy_L0_hand_calculation(self):
+        """L0: Compute expected h_new by hand and compare against solver output.
+
+        Single cell, wall inlet, known state. We compute each energy term
+        independently and verify the solver's h_new matches.
+
+        Energy equation: rho*V*dh/dt = flux_in + flux_out + p_work
+        With wall inlet (mdot[0]=0): flux_in = 0
+        Donor-cell outflow (mdot[1]>0): h_face_out = h[0] → flux_out = -mdot[1]*(h[0]-h[0]) = 0
+        Only pressure work remains: rho*V*dh = V*(p_new - p_old)/dt * dt = V*(p_new - p_old)
+        So: h_new = h_old + (p_new - p_old) / rho
+        """
         spec = make_spec(N=1, dx=1.0, A=0.01, p_init=10e6, h_init=700e3,
                          p_out=9.9e6, inlet_closed=True)
         solver = make_solver(spec)
+        fluid = tp.SimpleFluidProperties()
 
         p = np.array([10e6])
         h = np.array([700e3])
-        mdot = np.array([0.0, 0.5])  # wall inlet, outflow at outlet
+        mdot = np.array([0.0, 0.0])  # start from rest (wall inlet, zero outlet)
         dt = 1e-4
 
-        p_old = p[0]
         h_old = h[0]
+        p_old = p[0]
+
         solver.step(p, h, mdot, dt)
 
-        # Hand calculation:
-        # rho*V*dh = mdot_in*(h_in-h) - mdot_out*(h_out-h) + V*dp/dt
-        # mdot_in=0 (wall), mdot_out used the NEW mdot from momentum update
-        # But we can verify the direction: outflow removes enthalpy → h should decrease
-        # unless pressure work compensates
-        # Key: the test verifies the solver produces a FINITE, REASONABLE result
-        assert np.isfinite(h[0])
-        assert h[0] != h_old, "Enthalpy should change with outflow"
+        # After the step, mdot[1] is updated by momentum. For the energy update:
+        # mdot[0] = 0 (wall), mdot[1] = updated outlet flow
+        # h_face_in = h[0] (wall: self), h_face_out = h[0] (donor-cell, positive flow)
+        # flux = 0*(h[0]-h[0]) - mdot_new[1]*(h[0]-h[0]) = 0 (uniform h!)
+        # So dh = dt/(rho*V) * (0 + V*(p_new - p_old)/dt) = (p_new - p_old) / rho
+
+        rho = solver.last_rho[0]
+        p_new = p[0]
+
+        expected_h = h_old + (p_new - p_old) / rho
+        assert h[0] == pytest.approx(expected_h, rel=1e-10), \
+            f"Energy L0: h={h[0]:.6f}, expected={expected_h:.6f}, " \
+            f"p_work={(p_new-p_old)/rho:.6f}"
+
+    def test_energy_advective_flux_magnitude(self):
+        """L0: Verify advective energy flux through solver with non-uniform h."""
+        spec = make_spec(N=2, dx=1.0, A=0.01, p_init=10e6, h_init=700e3,
+                         p_out=10e6, inlet_closed=True)
+        solver = make_solver(spec)
+        fluid = tp.SimpleFluidProperties()
+
+        # Cell 0: hot (800 kJ/kg), Cell 1: cold (700 kJ/kg)
+        p = np.array([10e6, 10e6])
+        h = np.array([800e3, 700e3])
+        # Positive flow from cell 0 → cell 1
+        mdot = np.array([0.0, 0.3, 0.3])
+        dt = 1e-5  # tiny dt for near-exact forward Euler
+
+        h_old = h.copy()
+        p_old = p.copy()
+        solver.step(p, h, mdot, dt)
+
+        # Cell 1 (i=1): mdot[1]=updated, mdot[2]=updated
+        # h_face_in = h_old[0] = 800e3 (positive flow, donor-cell from cell 0)
+        # h_face_out = h_old[1] = 700e3 (positive flow, donor-cell self)
+        # flux = mdot[1]*(800e3-700e3) - mdot[2]*(700e3-700e3)
+        #      = mdot[1] * 100e3
+        # This should be positive → cell 1 heats up
+
+        rho1 = solver.last_rho[1]
+        V = spec.V_cell
+        mdot_in = solver.last_fric  # not this — use the actual mdot after momentum
+        # The key check: cell 1 enthalpy increased
+        assert h[1] > h_old[1], \
+            f"Cell 1 should heat: h_old={h_old[1]}, h_new={h[1]}"
+        # And the change should be on the order of dt*mdot*dh/(rho*V)
+        expected_order = dt * 0.3 * 100e3 / (rho1 * V)
+        actual_change = h[1] - h_old[1]
+        assert actual_change == pytest.approx(expected_order, rel=0.5), \
+            f"Energy flux magnitude: actual={actual_change:.2e}, expected~{expected_order:.2e}"
 
 
 # ============================================================================

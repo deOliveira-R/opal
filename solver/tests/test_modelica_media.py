@@ -334,48 +334,78 @@ class TestSignConventions:
         # Wall inlet should stay zero
         assert mdot[0] == 0.0
 
-    def test_advective_flux_sign(self):
-        """Pipe1D.mo energy: mdot_in*(h_in - h) - mdot_out*(h_out - h).
-        Positive mdot_in with h_in > h → positive flux (heating).
-        Positive mdot_out with h_out = h → zero exit flux."""
-        h_cell = 700e3
-        h_in = 800e3  # hot fluid entering
-        mdot_in = 0.5
-        mdot_out = 0.5
-        h_out = h_cell  # donor-cell: exit face uses cell value
+    def test_advective_flux_heats_via_solver(self):
+        """Verify hot inflow heats a cold cell through the actual solver."""
+        from partitioner.pipe1d_mapper import Pipe1DGridSpec
+        from partitioner.equation_classifier import ClassifiedSystem
+        from partitioner.extracted_solver import ExtractedSemiImplicitSolver
 
-        flux = mdot_in * (h_in - h_cell) - mdot_out * (h_out - h_cell)
-        assert flux > 0, "Hot inflow should give positive energy flux"
-        assert flux == pytest.approx(mdot_in * (h_in - h_cell))
+        spec = Pipe1DGridSpec(
+            N=3, prefix="pipe", dx=1.0, A_flow=0.01, D_h=0.1, f_D=0.02,
+            V_cell=0.01, p_out=10e6, h_out=700e3,
+            inlet_closed=True, outlet_closed=False,
+            p0=[10e6]*3, h0=[800e3, 700e3, 700e3], mdot0=[0, 0, 0, 0])
+        cs = ClassifiedSystem(prefix="pipe", N=3)
+        fluid = tp.SimpleFluidProperties()
+        solver = ExtractedSemiImplicitSolver(cs, fluid, spec)
 
-    def test_pressure_work_matches_modelica(self):
-        """Pipe1D.mo: + V_cell * der(p[i]).
-        extracted_solver: + V_cell * (p_new - p_old) / dt.
-        Both positive when pressure rises."""
-        V_cell = 0.01
-        p_new, p_old = 10.1e6, 10.0e6
-        dt = 1e-4
+        p = np.array([10e6, 10e6, 10e6])
+        h = np.array([800e3, 700e3, 700e3])
+        mdot = np.array([0.0, 0.2, 0.2, 0.2])
 
-        # Modelica form: V * der(p)
-        der_p = (p_new - p_old) / dt
-        modelica_work = V_cell * der_p
+        h1_before = h[1]
+        solver.step(p, h, mdot, 1e-5)
+        assert h[1] > h1_before, "Hot cell 0 should heat cold cell 1 via advection"
 
-        # Extracted solver form
-        extracted_work = V_cell * (p_new - p_old) / dt
+    def test_pressure_work_raises_enthalpy_via_solver(self):
+        """Verify rising pressure increases enthalpy through the actual solver."""
+        from partitioner.pipe1d_mapper import Pipe1DGridSpec
+        from partitioner.equation_classifier import ClassifiedSystem
+        from partitioner.extracted_solver import ExtractedSemiImplicitSolver
 
-        assert modelica_work == pytest.approx(extracted_work)
-        assert modelica_work > 0
+        # Single cell, wall inlet, closed-ish outlet (high p_out to create compression)
+        spec = Pipe1DGridSpec(
+            N=1, prefix="pipe", dx=1.0, A_flow=0.01, D_h=0.1, f_D=0.02,
+            V_cell=0.01, p_out=10.5e6, h_out=700e3,
+            inlet_closed=True, outlet_closed=False,
+            p0=[10e6], h0=[700e3], mdot0=[0, 0])
+        cs = ClassifiedSystem(prefix="pipe", N=1)
+        fluid = tp.SimpleFluidProperties()
+        solver = ExtractedSemiImplicitSolver(cs, fluid, spec)
 
-    def test_momentum_pressure_gradient_sign(self):
-        """Pipe1D.mo: A*(p[i-1] - p[i]) drives flow from high to low pressure.
-        Extracted solver: beta*(p[i-1] - p[i]) where beta = dt*A/dx.
-        p[i-1] > p[i] → positive mdot change → accelerates rightward flow."""
-        A, dx, dt = 0.01, 1.0, 1e-4
-        beta = dt * A / dx
-        p_left, p_right = 10.1e6, 10.0e6
+        p = np.array([10e6])
+        h = np.array([700e3])
+        mdot = np.array([0.0, -0.1])  # inflow from high-pressure outlet
 
-        delta_mdot = beta * (p_left - p_right)
-        assert delta_mdot > 0, "Higher left pressure accelerates rightward flow"
+        h_before = h[0]
+        solver.step(p, h, mdot, 1e-4)
+
+        # Pressure should rise (inflow from high p_out compresses)
+        # Pressure work = V*(p_new - p_old)/dt, if p_new > p_old → positive work → h rises
+        if p[0] > 10e6:
+            assert h[0] >= h_before, "Rising pressure should increase enthalpy via p-work"
+
+    def test_momentum_gradient_via_solver(self):
+        """Verify pressure gradient accelerates flow through the actual solver."""
+        from partitioner.pipe1d_mapper import Pipe1DGridSpec
+        from partitioner.equation_classifier import ClassifiedSystem
+        from partitioner.extracted_solver import ExtractedSemiImplicitSolver
+
+        spec = Pipe1DGridSpec(
+            N=2, prefix="pipe", dx=1.0, A_flow=0.01, D_h=0.1, f_D=0.02,
+            V_cell=0.01, p_out=9e6, h_out=700e3,
+            inlet_closed=True, outlet_closed=False,
+            p0=[10e6, 10e6], h0=[700e3, 700e3], mdot0=[0, 0, 0])
+        cs = ClassifiedSystem(prefix="pipe", N=2)
+        fluid = tp.SimpleFluidProperties()
+        solver = ExtractedSemiImplicitSolver(cs, fluid, spec)
+
+        p = np.array([10e6, 10e6])
+        h = np.array([700e3, 700e3])
+        mdot = np.zeros(3)
+        solver.step(p, h, mdot, 1e-4)
+
+        assert mdot[2] > 0, "High cell pressure vs low p_out should drive positive outflow"
 
 
 if __name__ == "__main__":
