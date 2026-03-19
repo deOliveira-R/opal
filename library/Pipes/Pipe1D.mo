@@ -32,6 +32,12 @@ model Pipe1D
   parameter Real S_momentum[N + 1] = zeros(N + 1) "Momentum source per face [N]";
   parameter Real S_energy[N] = zeros(N) "Energy source per cell [W]";
 
+  // Critical flow at outlet (Ransom-Trapp)
+  parameter Boolean use_critical_flow = false "Enable critical flow limiter at outlet";
+  parameter Real C_d = 1.0 "Break discharge coefficient [-]";
+  parameter Real x_trans = 0.10 "Quality transition for critical flow blend [-]";
+  parameter Real c_floor = 1200.0 "Minimum sound speed for critical flow [m/s]";
+
   // ═══════════════════════════════════════════════════════════════════
   // Replaceable medium — swap SimpleFluid ↔ Water at system level
   // ═══════════════════════════════════════════════════════════════════
@@ -61,6 +67,9 @@ model Pipe1D
   Real drho_dp[N] "drho/dp at constant h [kg/(m^3*Pa)]";
   Real drho_dh[N] "drho/dh at constant p [kg/(m^3*J/kg)]";
   Real T_cell[N] "Cell temperature [K] (diagnostic)";
+
+  // Critical flow variables (computed at outlet cell)
+  Real mdot_crit "Critical mass flow rate at outlet [kg/s]";
 
   // Face densities (arithmetic average of adjacent cells)
   Real rho_face[N + 1] "Face density for momentum equation [kg/m^3]";
@@ -140,11 +149,36 @@ equation
       + S_momentum[i];
   end for;
 
-  (rho_face[N + 1] * dx / A_flow) * der(mdot[N + 1])
-    = A_flow * (p[N] - port_b.p)
-    - f_D * dx / (2 * D_h) * abs(mdot[N + 1]) * mdot[N + 1] / (rho_face[N + 1] * A_flow^2)
-    - rho_face[N + 1] * g_axial * A_flow * dx
-    + S_momentum[N + 1];
+  // ─────────────────────────────────────────────────────────────────
+  // Critical flow at outlet (Ransom-Trapp)
+  // ─────────────────────────────────────────────────────────────────
+  mdot_crit = if use_critical_flow then
+    library.Numerics.CriticalFlow.ransom_trapp(
+      p[N], h[N], rho[N], drho_dp[N],
+      Medium.h_f(p[N]), Medium.h_g(p[N]), Medium.rho_f(p[N]),
+      port_b.p, A_flow, C_d, x_trans, c_floor)
+    else 1e10;  // effectively no limit
+
+  // Outlet face momentum — with optional critical flow limiter
+  // When choked: mdot[N+1] is clamped to mdot_crit (if positive outflow)
+  if use_critical_flow then
+    // Critical flow: momentum drives mdot, but cannot exceed mdot_crit
+    (rho_face[N + 1] * dx / A_flow) * der(mdot[N + 1])
+      = A_flow * (p[N] - port_b.p)
+      - f_D * dx / (2 * D_h) * abs(mdot[N + 1]) * mdot[N + 1] / (rho_face[N + 1] * A_flow^2)
+      - rho_face[N + 1] * g_axial * A_flow * dx
+      + S_momentum[N + 1]
+      - (if mdot[N + 1] > mdot_crit then
+           (mdot[N + 1] - mdot_crit) / (dx / A_flow)
+         else 0.0);
+  else
+    // No critical flow: standard momentum equation
+    (rho_face[N + 1] * dx / A_flow) * der(mdot[N + 1])
+      = A_flow * (p[N] - port_b.p)
+      - f_D * dx / (2 * D_h) * abs(mdot[N + 1]) * mdot[N + 1] / (rho_face[N + 1] * A_flow^2)
+      - rho_face[N + 1] * g_axial * A_flow * dx
+      + S_momentum[N + 1];
+  end if;
 
   // ─────────────────────────────────────────────────────────────────
   // ENERGY (per cell) — enthalpy form with pressure work
