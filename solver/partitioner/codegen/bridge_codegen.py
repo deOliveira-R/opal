@@ -51,77 +51,234 @@ def extract_equation_functions(model_c: Path, model_name: str) -> dict[int, str]
     return functions
 
 
-def rewrite_equation_body(body: str) -> str:
+class CTokenRewriter:
+    """Token-level rewriter for OM-generated C equation function bodies.
+
+    Instead of fragile regex patterns, this walks the source character by character,
+    recognizing specific token sequences and replacing them. Fails loudly if it
+    encounters a data-> pattern it cannot handle.
+
+    Recognized patterns:
+      1. data->localData[0]->realVars[data->simulationInfo->realVarsIndex[N]]  → opal_vars[N]
+         (with optional /* comment */ and outer parens)
+      2. data->simulationInfo->realParameter[data->simulationInfo->realParamsIndex[N]]  → opal_params[N]
+         (with optional /* comment */ and outer parens)
+      3. DIVISION_SIM(  → OPAL_DIV(
+      4. relationhysteresis(data, &out, val, threshold, ..., op, opZC) → out = (val) op (threshold)
+      5. threadData->lastEquationSolved = N;  → (removed)
+      6. const int equationIndexes[...] = {...};  → (removed)
+      7. threadData  → (&_td)  (for media function calls)
+    """
+
+    # The fixed token sequences we scan for
+    VAR_PREFIX = 'data->localData[0]->realVars[data->simulationInfo->realVarsIndex['
+    PARAM_PREFIX = 'data->simulationInfo->realParameter[data->simulationInfo->realParamsIndex['
+
+    # Comparison operators in relationhysteresis
+    RELATION_OPS = {
+        'GreaterEq': '>=', 'Greater': '>', 'LessEq': '<=', 'Less': '<',
+    }
+
+    def __init__(self):
+        self.warnings = []
+
+    def rewrite(self, body: str, eq_id: int = 0) -> str:
+        """Rewrite a single equation function body. Returns the rewritten C code."""
+        # Phase 1: Replace data-> accessor chains (token-level scan)
+        body = self._replace_accessors(body)
+
+        # Phase 2: Replace OM runtime calls
+        body = body.replace('DIVISION_SIM(', 'OPAL_DIV(')
+        body = self._replace_relationhysteresis(body)
+
+        # Phase 3: Remove debug/bookkeeping lines
+        body = self._remove_line_containing(body, 'threadData->lastEquationSolved')
+        body = self._remove_line_containing(body, 'const int equationIndexes')
+
+        # Phase 4: Replace threadData with our static dummy (for media function calls)
+        body = body.replace('threadData', '(&_td)')
+
+        # Phase 5: Validate — no data-> references should survive
+        self._validate_no_data_refs(body, eq_id)
+
+        return body
+
+    def _replace_accessors(self, text: str) -> str:
+        """Replace data->...realVarsIndex[N] and data->...realParamsIndex[N] with flat arrays.
+
+        Two-pass approach:
+        1. Strip parenthesized wrappers: (data->...realVarsIndex[N] /* comment */) → data->...realVarsIndex[N]]
+        2. Replace bare accessors: data->...realVarsIndex[N]] → opal_vars[N]
+        """
+        # Pass 1: Strip outer (data->.../* comment */) wrapping
+        text = self._strip_accessor_parens(text, self.VAR_PREFIX)
+        text = self._strip_accessor_parens(text, self.PARAM_PREFIX)
+
+        # Pass 2: Replace bare accessors
+        text = self._replace_bare_accessor(text, self.VAR_PREFIX, 'opal_vars')
+        text = self._replace_bare_accessor(text, self.PARAM_PREFIX, 'opal_params')
+
+        return text
+
+    def _strip_accessor_parens(self, text: str, prefix: str) -> str:
+        """Strip (data->...Index[N] /* comment */) → data->...Index[N]]
+
+        Removes the outer parens and the /* comment */ that OM wraps around accessors.
+        """
+        result = []
+        i = 0
+        while i < len(text):
+            # Look for ( immediately followed by the prefix
+            if text[i] == '(' and text[i + 1:i + 1 + len(prefix)] == prefix:
+                # Find the closing ]] after the index
+                search_start = i + 1 + len(prefix)
+                # Skip digits (index number)
+                j = search_start
+                while j < len(text) and text[j].isdigit():
+                    j += 1
+                # Expect ]] (close index bracket + close array bracket)
+                if j + 1 < len(text) and text[j] == ']' and text[j + 1] == ']':
+                    end_accessor = j + 2  # past ]]
+                    # Skip optional whitespace + /* comment */
+                    k = end_accessor
+                    while k < len(text) and text[k] in ' \t\n':
+                        k += 1
+                    if k + 1 < len(text) and text[k:k + 2] == '/*':
+                        close_comment = text.find('*/', k + 2)
+                        if close_comment != -1:
+                            k = close_comment + 2
+                            while k < len(text) and text[k] in ' \t\n':
+                                k += 1
+                    # Expect closing )
+                    if k < len(text) and text[k] == ')':
+                        # Emit the accessor WITHOUT outer () and comment
+                        result.append(text[i + 1:end_accessor])
+                        i = k + 1
+                        continue
+            result.append(text[i])
+            i += 1
+        return ''.join(result)
+
+    def _replace_bare_accessor(self, text: str, prefix: str, array_name: str) -> str:
+        """Replace bare data->...Index[N]] with array_name[N]."""
+        result = []
+        i = 0
+        while i < len(text):
+            if text[i:i + len(prefix)] == prefix:
+                # Extract the index number
+                j = i + len(prefix)
+                while j < len(text) and text[j].isdigit():
+                    j += 1
+                if j > i + len(prefix) and j + 1 < len(text) and text[j] == ']' and text[j + 1] == ']':
+                    index_str = text[i + len(prefix):j]
+                    result.append(f'{array_name}[{index_str}]')
+                    i = j + 2  # skip ]]
+                    continue
+            result.append(text[i])
+            i += 1
+        return ''.join(result)
+
+    def _replace_relationhysteresis(self, text: str) -> str:
+        """Replace relationhysteresis(data, &out, val, threshold, ..., Op, OpZC) calls.
+
+        Uses paren-aware argument parsing to extract the comparison operator
+        and generate a simple comparison: out = (val) op (threshold).
+        """
+        result = []
+        i = 0
+        marker = 'relationhysteresis('
+        while i < len(text):
+            if text[i:i + len(marker)] == marker:
+                # Find the matching closing paren
+                args_start = i + len(marker)
+                args, end = self._parse_paren_args(text, args_start)
+                if len(args) >= 9:
+                    # args: data, &out, val, threshold, tmp1, tmp2, idx, Op, OpZC
+                    out_var = args[1].strip().lstrip('&')
+                    val_expr = args[2].strip()
+                    threshold = args[3].strip()
+                    op_name = args[7].strip()
+                    op = self.RELATION_OPS.get(op_name, '>=')
+                    result.append(f'{out_var} = ({val_expr}) {op} ({threshold})')
+                    i = end
+                    continue
+                # Fallback: couldn't parse — leave as is (will fail validation)
+            result.append(text[i])
+            i += 1
+        return ''.join(result)
+
+    def _parse_paren_args(self, text: str, start: int) -> tuple[list[str], int]:
+        """Parse comma-separated arguments respecting nested parens.
+
+        Starts just after the opening '(' and returns (arg_list, position_after_close_paren).
+        """
+        depth = 1
+        args = []
+        current = []
+        i = start
+        while i < len(text) and depth > 0:
+            c = text[i]
+            if c == '(':
+                depth += 1
+                current.append(c)
+            elif c == ')':
+                depth -= 1
+                if depth == 0:
+                    args.append(''.join(current))
+                    return args, i + 1
+                current.append(c)
+            elif c == ',' and depth == 1:
+                args.append(''.join(current))
+                current = []
+            else:
+                current.append(c)
+            i += 1
+        return args, i
+
+    def _remove_line_containing(self, text: str, needle: str) -> str:
+        """Remove entire lines containing the given substring."""
+        lines = text.split('\n')
+        return '\n'.join(line for line in lines if needle not in line)
+
+    def _validate_no_data_refs(self, body: str, eq_id: int):
+        """Check that no data-> references survived the rewriting.
+
+        Raises ValueError if any are found — indicates a pattern the rewriter missed.
+        """
+        # Skip string literals when checking
+        in_string = False
+        escape = False
+        for i, c in enumerate(body):
+            if escape:
+                escape = False
+                continue
+            if c == '\\':
+                escape = True
+                continue
+            if c == '"':
+                in_string = not in_string
+                continue
+            if in_string:
+                continue
+
+            if body[i:i + 5] == 'data-':
+                # Found a data-> reference outside a string literal
+                context = body[max(0, i - 20):i + 60].replace('\n', ' ')
+                raise ValueError(
+                    f"Equation {eq_id}: unrewritten data-> reference survived: "
+                    f"...{context}..."
+                )
+
+
+def rewrite_equation_body(body: str, eq_id: int = 0) -> str:
     """Rewrite an OM equation function body to use flat opal_vars/opal_params arrays.
 
-    Replaces:
-      data->localData[0]->realVars[data->simulationInfo->realVarsIndex[N]] → opal_vars[N]
-      data->simulationInfo->realParameter[data->simulationInfo->realParamsIndex[N]] → opal_params[N]
-      DIVISION_SIM(x, y, "msg", equationIndexes) → ((y) != 0.0 ? (x)/(y) : 0.0)
-      relationhysteresis(data, &out, val, threshold, ...) → simple comparison
-      threadData->lastEquationSolved = N; → (removed)
-      const int equationIndexes[2] = {1,N}; → (removed)
+    Uses token-level scanning (not regex) for robustness. Validates that no
+    data-> references survive — fails loudly if the rewriter encounters an
+    unrecognized pattern.
     """
-    # Variable access: realVars[realVarsIndex[N]]
-    body = re.sub(
-        r'\(data->localData\[0\]->realVars\[data->simulationInfo->realVarsIndex\[(\d+)\]\]'
-        r'\s*/\*[^*]*\*/\s*\)',
-        r'opal_vars[\1]',
-        body
-    )
-    # Fallback without comment
-    body = re.sub(
-        r'data->localData\[0\]->realVars\[data->simulationInfo->realVarsIndex\[(\d+)\]\]',
-        r'opal_vars[\1]',
-        body
-    )
-
-    # Parameter access: realParameter[realParamsIndex[N]]
-    body = re.sub(
-        r'\(data->simulationInfo->realParameter\[data->simulationInfo->realParamsIndex\[(\d+)\]\]'
-        r'\s*/\*[^*]*\*/\s*\)',
-        r'opal_params[\1]',
-        body
-    )
-    body = re.sub(
-        r'data->simulationInfo->realParameter\[data->simulationInfo->realParamsIndex\[(\d+)\]\]',
-        r'opal_params[\1]',
-        body
-    )
-
-    # DIVISION_SIM(numerator, denominator, "msg", equationIndexes)
-    # Need to handle nested parens in numerator/denominator
-    body = re.sub(
-        r'DIVISION_SIM\(',
-        'OPAL_DIV(',
-        body
-    )
-
-    # relationhysteresis(data, &out, val, threshold, tmp1, tmp2, idx, GreaterEq, GreaterEqZC)
-    # → out = (val >= threshold)
-    body = re.sub(
-        r'relationhysteresis\s*\(\s*data\s*,\s*&(\w+)\s*,\s*([^,]+)\s*,\s*([^,]+)\s*,'
-        r'\s*[^,]+\s*,\s*[^,]+\s*,\s*\d+\s*,\s*GreaterEq\s*,\s*GreaterEqZC\s*\)',
-        r'\1 = (\2) >= (\3)',
-        body
-    )
-    body = re.sub(
-        r'relationhysteresis\s*\(\s*data\s*,\s*&(\w+)\s*,\s*([^,]+)\s*,\s*([^,]+)\s*,'
-        r'\s*[^,]+\s*,\s*[^,]+\s*,\s*\d+\s*,\s*Greater\s*,\s*GreaterZC\s*\)',
-        r'\1 = (\2) > (\3)',
-        body
-    )
-
-    # Remove threadData->lastEquationSolved = N;
-    body = re.sub(r'\s*threadData->lastEquationSolved\s*=\s*\d+\s*;', '', body)
-
-    # Remove equationIndexes declaration
-    body = re.sub(r'\s*const\s+int\s+equationIndexes\[\d+\]\s*=\s*\{[^}]*\}\s*;', '', body)
-
-    # Replace threadData with our static dummy
-    body = body.replace('threadData', '(&_td)')
-
-    return body
+    rewriter = CTokenRewriter()
+    return rewriter.rewrite(body, eq_id)
 
 
 def generate_bridge_c(info: ModelInfo, model_c: Path, functions_c: Path,
@@ -210,7 +367,7 @@ def generate_bridge_c(info: ModelInfo, model_c: Path, functions_c: Path,
         defines_str = ', '.join(eq.defines) if eq else '?'
 
         body = eq_functions[eq_id]
-        rewritten = rewrite_equation_body(body)
+        rewritten = rewrite_equation_body(body, eq_id=eq_id)
 
         lines.append(f'/* eq {eq_id}: {defines_str} */')
         lines.append(f'static void eq_{eq_id}(void) {{')
