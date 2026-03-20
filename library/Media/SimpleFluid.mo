@@ -90,6 +90,14 @@ package SimpleFluid "Synthetic test fluid — linear properties for rigorous two
     annotation(Inline=true);
   end cp_f;
 
+  function k_f "Saturated liquid thermal conductivity [W/(m*K)] — constant"
+    input Real p "Pressure [Pa]";
+    output Real k_val;
+  algorithm
+    k_val := 0.56 "Typical water value at ~7 MPa";
+    annotation(Inline=true);
+  end k_f;
+
   function sigma "Surface tension [N/m] — constant approximation"
     input Real p "Pressure [Pa]";
     output Real sigma_val;

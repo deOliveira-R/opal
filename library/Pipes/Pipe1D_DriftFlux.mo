@@ -11,7 +11,11 @@ model Pipe1D_DriftFlux
   parameter Real alpha_init = 1e-6 "Initial void fraction [-]";
 
   // Closure parameters
-  parameter Real H_i = 1e5 "Interfacial heat transfer coefficient [W/(m^3*K)]";
+  parameter Real d_b = 1e-3 "Reference bubble diameter for interfacial area [m]";
+  parameter Real d_b_min = 1e-5 "Minimum bubble diameter (numerical floor) [m]";
+  parameter Real Nu_i = 2.0
+    "Interfacial Nusselt number [-]. 2.0 = conduction limit (no-slip model).
+     Future: Nu = 2 + 0.6*Re^0.5*Pr^0.33 (Ranz-Marshall) when slip velocity added.";
   parameter Real C_0 = 1.13 "Drift-flux distribution parameter [-]";
   parameter Real alpha_nucleation = 1e-3 "Nucleation onset void fraction [-]";
 
@@ -50,7 +54,8 @@ model Pipe1D_DriftFlux
   Real Gamma[N] "Interfacial mass transfer [kg/(m^3*s)], >0 = evaporation";
   Real q_i_l[N] "Interfacial heat to liquid [W/m^3]";
   Real q_i_v[N] "Interfacial heat to vapour [W/m^3]";
-  Real a_i[N] "Interfacial area concentration [-]";
+  Real a_i[N] "Interfacial area concentration [1/m]";
+  Real h_i[N] "Interfacial film heat transfer coefficient [W/(m^2*K)]";
   Real alpha_eff[N] "Effective void fraction (with nucleation) [-]";
 
   // Drift-flux (per cell)
@@ -159,11 +164,20 @@ equation
     alpha_eff[i] = if T_l[i] > T_sat_cell[i] and alpha[i] < alpha_nucleation
                    then alpha_nucleation else alpha[i];
 
-    // Interfacial area: max(4*alpha*(1-alpha), alpha)
-    a_i[i] = max(4 * alpha_eff[i] * (1 - alpha_eff[i]), alpha_eff[i]);
+    // Interfacial area concentration [1/m] — bubbly flow geometry
+    // a_i = 6*alpha*(1-alpha)/d_b for monodisperse spherical bubbles.
+    // The (1-alpha) factor smoothly reduces area at high void (bubbly→annular).
+    // Ref: Ishii & Hibiki, "Thermo-Fluid Dynamics of Two-Phase Flow", Ch. 9
+    a_i[i] = 6 * alpha_eff[i] * (1 - alpha_eff[i]) / d_b;
 
-    // Interfacial heat transfer (linear relaxation)
-    q_i_l[i] = H_i * a_i[i] * (T_sat_cell[i] - T_l[i]);
+    // Interfacial film heat transfer coefficient [W/(m^2*K)]
+    // Nu = 2 for conduction around sphere (Ranz-Marshall at Re_b = 0, no-slip).
+    // k_f from pressure-dependent saturated liquid thermal conductivity.
+    // Ref: Ranz & Marshall (1952), conduction limit.
+    h_i[i] = Nu_i * Medium.k_f(p[i]) / d_b;
+
+    // Volumetric interfacial heat transfer [W/m^3] = h_i * a_i * dT
+    q_i_l[i] = h_i[i] * a_i[i] * (T_sat_cell[i] - T_l[i]);
 
     // Mass transfer from interfacial heat
     Gamma[i] = -q_i_l[i] / max(h_sat_v[i] - h_sat_l[i], 1.0);

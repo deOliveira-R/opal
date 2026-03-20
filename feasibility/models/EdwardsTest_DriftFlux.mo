@@ -5,7 +5,7 @@ model EdwardsTest_DriftFlux
     redeclare package Medium = library.Media.Water,
     N=24, L=4.096, D=0.073, f_D=0.02,
     p_init=7e6, h_l_init=986.6e3, h_v_init=2772.6e3, alpha_init=1e-6,
-    H_i=1e7, C_0=1.0, alpha_nucleation=1e-3,
+    d_b=3e-4, C_0=1.0, alpha_nucleation=1e-3,
     use_critical_flow=true, C_d=0.87, x_trans=0.10, c_floor=10.0,
     use_two_phase_friction=true);
   library.Boundary.PressureSource atm(p_set=101325.0, h_set=986.6e3);
