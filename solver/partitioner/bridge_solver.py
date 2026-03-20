@@ -1,20 +1,32 @@
 """
 bridge_solver.py — Semi-implicit solver using the OM equation bridge.
 
-True Case 2: ALL algebraic evaluation comes from OM-generated C code
+True Case 2: ALL physics evaluation comes from OM-generated C code
 called through the equation bridge. The solver provides ONLY the
-semi-implicit numerical method (operator splitting, Thomas algorithm).
+semi-implicit numerical method (operator splitting, Thomas algorithm,
+donor-cell reconstruction).
 
-Replaces:
-  - self.fluid.evaluate(p, h) calls → bridge.evaluate() + bridge.get_*()
-  - Python face density averaging → bridge computes from OM equations
-  - Python donor-cell h_face logic → bridge computes from OM equations
+What comes from the bridge (Modelica physics, evaluated at old state):
+  - Thermodynamic properties: rho, drho_dp, drho_dh, T (from PartialMedium)
+  - Face density averaging (from PartialPipe1D equations)
+  - Cell density (from PartialMedium.rho_ph)
 
-Keeps:
-  - Pressure tridiagonal assembly + Thomas solve (numerical method)
-  - Semi-implicit momentum update (numerical method)
-  - Explicit energy update (numerical method)
-  - Pressure clamping (solver safety)
+What stays in the solver (numerical methods):
+  - Friction computation (from extracted geometry + old momentum)
+  - Pressure tridiagonal assembly + Thomas solve
+  - Semi-implicit momentum update (NEW pressure, OLD friction)
+  - Donor-cell upwind selection (using NEW mdot for transport consistency)
+  - Explicit energy update (forward Euler)
+  - Pressure clamping
+
+Note on donor-cell: The upwind direction selection `if mdot >= 0 then h_upwind`
+is a numerical discretization choice (like the Thomas algorithm or operator
+splitting), not a physical closure. It appears in Modelica because Modelica
+needs to express the complete equation system, but it is in the same category
+as Numerics/Limiters.mo — a scheme choice, not a physical law. The semi-implicit
+method requires evaluating donor-cell with the UPDATED mdot (post-momentum)
+for consistency with the implicit pressure solve. The bridge evaluates h_face
+at the old state; the solver applies the correct time level.
 """
 
 import numpy as np
@@ -23,10 +35,10 @@ from .codegen.equation_bridge import OMEquationBridge
 
 
 class BridgeSolver:
-    """Semi-implicit HEM solver with ALL physics from OM equation bridge.
+    """Semi-implicit HEM solver driven by the OM equation bridge.
 
-    The solver reads computed properties, face densities, and donor-cell
-    enthalpies from the bridge. It provides only the numerical method.
+    Physics (properties, face densities) from OM-generated C.
+    Numerics (pressure solve, momentum, transport) from Python.
     """
 
     def __init__(self, bridge: OMEquationBridge, spec):
@@ -59,34 +71,30 @@ class BridgeSolver:
         self.last_fric = None
 
     def step(self, p, h, mdot, dt):
-        """One semi-implicit timestep. Modifies p, h, mdot in-place.
-
-        ALL algebraic evaluation from OM-generated C.
-        ALL numerical methods in Python.
-        """
+        """One semi-implicit timestep. Modifies p, h, mdot in-place."""
         N = self.N
         p_old = p.copy()
         mdot_old = mdot.copy()
 
         # ══════════════════════════════════════════════════════════
-        # ALL ALGEBRAIC EVALUATION — single bridge call
-        # Replaces: fluid.evaluate(), face averaging, donor-cell
+        # PHYSICS EVALUATION — from OM-generated C (old state)
+        # Properties, face densities, cell density — all from Modelica
         # ══════════════════════════════════════════════════════════
         self.bridge.set_state(p, h, mdot)
         self.bridge.evaluate()
 
         drho_dp = self.bridge.get_drho_dp()
         rho_face = self.bridge.get_rho_face()
-        h_face = self.bridge.get_h_face()
+        rho_cell = self.bridge.get_rho_cell()
 
         self.last_rho_face = rho_face.copy()
         self.last_drho_dp = drho_dp.copy()
 
         # ══════════════════════════════════════════════════════════
-        # NUMERICAL METHOD ONLY BELOW THIS LINE
+        # NUMERICAL METHOD — semi-implicit operator splitting
         # ══════════════════════════════════════════════════════════
 
-        # ── Friction (from geometry + old momentum) ──
+        # ── Friction (Darcy, from geometry + old momentum + face density) ──
         fric = np.zeros(N + 1)
         for i in range(N + 1):
             if rho_face[i] > 0.01:
@@ -143,21 +151,17 @@ class BridgeSolver:
 
         mdot[N] = mdot_old[N] + beta * (p[N - 1] - self.p_out) - dt * fric[N]
 
-        # ── Energy update (explicit, donor-cell with NEW mdot) ──
-        # Cell density from bridge (computed via rho_ph(p[i], h[i]))
-        rho_cell = self.bridge.get_rho_cell()
-
-        # Donor-cell face enthalpies must use NEW mdot (after momentum update)
-        # for consistency with the extracted solver. The bridge evaluated h_face
-        # with OLD mdot, so we recompute donor-cell in Python.
+        # ── Energy update (explicit, donor-cell with UPDATED mdot) ──
+        # Donor-cell upwind selection uses the new mdot (post-momentum)
+        # for consistency with the implicit pressure solve. This is the
+        # standard approach in semi-implicit TH codes (RELAP5, TRACE).
         for i in range(N):
-            rho_i = rho_cell[i]
-            if rho_i < 0.01:
+            if rho_cell[i] < 0.01:
                 continue
 
-            # Donor-cell with NEW mdot (same logic as extracted_solver.py)
+            # Donor-cell face enthalpies (upwind selection with new mdot)
             if mdot[i] >= 0:
-                h_in = h[i - 1] if i > 0 else h[0]  # wall: use cell 0
+                h_in = h[i - 1] if i > 0 else h[0]
             else:
                 h_in = h[i]
 
@@ -169,4 +173,4 @@ class BridgeSolver:
             flux = mdot[i] * (h_in - h[i]) - mdot[i + 1] * (h_out - h[i])
             p_work = self.V_cell * (p[i] - p_old[i]) / dt
 
-            h[i] = h[i] + dt / (rho_i * self.V_cell) * (flux + p_work)
+            h[i] = h[i] + dt / (rho_cell[i] * self.V_cell) * (flux + p_work)
