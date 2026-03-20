@@ -140,16 +140,32 @@ Boolean parameters from OM come as 'true'/'false' strings, not floats. The bridg
 must handle this explicitly. Without it, critical flow was disabled (use_critical_flow
 read as None → default False).
 
+### 7. Henry-Fauske critical flow
+**Impact: -12 pts on GS-1 (64.2% → 52.3%), -1.6 pts overall**
+
+Henry-Fauske accounts for non-equilibrium (delayed flashing) at the break plane.
+With N_param=0 (frozen flow, sharp orifice), the model gives Bernoulli discharge
+at the throat pressure p_c = 2/3*p_0, which is HIGHER than Ransom-Trapp's
+HEM-blended value at low quality.
+
+For Edwards (glass disk break, L/D ≈ 0), the liquid leaves the break plane as
+metastable liquid without flashing. Henry-Fauske captures this physically;
+Ransom-Trapp's equilibrium blend artificially reduces the discharge rate.
+
+Combined with break ramp: GS-1 = 43.5%, overall = 28.2%.
+
+**Key insight:** The critical flow model matters more for near-break stations than
+interior stations. The choice of critical flow model (equilibrium vs non-equilibrium)
+is a physical modeling question that depends on the break geometry (L/D ratio).
+The C_d parameter has a different physical meaning in each model: 0.87 for
+Ransom-Trapp (semi-empirical), 0.61 for Henry-Fauske (sharp-edged orifice theory).
+
 ## Remaining Gaps (as of 2026-03-20)
 
-1. **GS-1 late-time error (52.6%)**: Flashing too aggressive after 100ms. Needs
-   physically-derived H_i model (Ranz-Marshall or similar) instead of constant.
-2. **No transport properties**: k_l, mu_l not in PartialMedium API. Needed for
-   proper Nusselt number calculation.
-3. **No flow regime map**: Single drift-flux correlation used everywhere.
-   Flow-regime-dependent closures would improve accuracy across regimes.
-4. **N=24 spatial resolution**: The pipe diameter is 73mm, cell length is 170mm
-   (2.3 diameters per cell). N=48 would give ~1 diameter per cell.
-5. **Break opening ramp not in Modelica**: Currently applied in the validation
-   driver via C_d_factor. Should be a RampedBreak Modelica component connected
-   to the critical flow model.
+1. **GS-1 late-time error (~43%)**: Depressurization still too fast after 200ms.
+   Physics-based H_i (d_b=3e-4, Nu=2) gives weaker flashing than tuned H_i=1e7.
+   May need turbulence-enhanced Nu or pressure-dependent d_b.
+2. **No flow regime map**: Single bubbly-flow drift-flux correlation everywhere.
+3. **N=24 spatial resolution**: 2.3 diameters per cell. N=48 study needed.
+4. **Integer parameter limitation**: OM bridge cannot handle integerParameter
+   references; critical_flow_model uses Real instead of Integer (with OM warning).
