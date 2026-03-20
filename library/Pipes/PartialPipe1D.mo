@@ -30,10 +30,15 @@ partial model PartialPipe1D
   parameter Real S_mass[N] = zeros(N) "Mass source per cell [kg/s]";
   parameter Real S_momentum[N + 1] = zeros(N + 1) "Momentum source per face [N]";
 
-  // Critical flow at outlet (Ransom-Trapp)
+  // Critical flow at outlet
   parameter Boolean use_critical_flow = false "Enable critical flow limiter at outlet";
+  parameter Real critical_flow_model = 1
+    "Critical flow model: 1 = Ransom-Trapp, 2 = Henry-Fauske";
   parameter Real C_d = 1.0 "Break discharge coefficient [-] (default, overridable via C_d_eff)";
-  parameter Real x_trans = 0.10 "Quality transition for critical flow blend [-]";
+  parameter Real x_trans = 0.10 "Ransom-Trapp: quality transition for blend [-]";
+  parameter Real x_ne = 0.05 "Henry-Fauske: non-equilibrium transition quality [-]";
+  parameter Real N_param = 0.0
+    "Henry-Fauske: non-equilibrium parameter (0=frozen/sharp orifice, 1=full HF) [-]";
   parameter Real c_floor = 10.0 "Minimum sound speed for critical flow [m/s] (numerical floor only)";
 
   // Time-varying discharge coefficient (for break opening ramp).
@@ -104,13 +109,19 @@ equation
   rho_face[N + 1] = rho_cell[N];
 
   // ─────────────────────────────────────────────────────────────────
-  // Critical flow at outlet (Ransom-Trapp)
+  // Critical flow at outlet (selectable model)
   // ─────────────────────────────────────────────────────────────────
   mdot_crit = if use_critical_flow then
-    library.Numerics.CriticalFlow.ransom_trapp(
-      p[N], h_mix_outlet, rho_outlet, drho_dp[N],
-      Medium.h_f(p[N]), Medium.h_g(p[N]), Medium.rho_f(p[N]),
-      port_b.p, A_flow, C_d_eff, x_trans, c_floor)
+    (if critical_flow_model == 2 then
+      library.Numerics.CriticalFlow.henry_fauske(
+        p[N], h_mix_outlet, rho_outlet, drho_dp[N],
+        Medium.h_f(p[N]), Medium.h_g(p[N]), Medium.rho_f(p[N]), Medium.rho_g(p[N]),
+        port_b.p, A_flow, C_d_eff, x_ne, N_param, c_floor)
+    else
+      library.Numerics.CriticalFlow.ransom_trapp(
+        p[N], h_mix_outlet, rho_outlet, drho_dp[N],
+        Medium.h_f(p[N]), Medium.h_g(p[N]), Medium.rho_f(p[N]),
+        port_b.p, A_flow, C_d_eff, x_trans, c_floor))
     else 1e10;
 
   // ─────────────────────────────────────────────────────────────────
