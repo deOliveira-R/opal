@@ -183,7 +183,7 @@ def extract_model_spec(es: "EquationSystem") -> ExtractedModelSpec:
         use_critical_flow=has_crit_flow_eqs,  # infer from equations
         C_d=pval("C_d", 1.0),
         x_trans=pval("x_trans", 0.10),
-        c_floor=pval("c_floor", 1200.0),
+        c_floor=pval("c_floor", 10.0),
         use_two_phase_friction=has_two_phase_fric,  # infer from equations
         Phi2_max=pval("Phi2_max", 20.0),
     )

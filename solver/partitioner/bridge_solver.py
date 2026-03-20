@@ -41,11 +41,13 @@ class BridgeSolver:
     Numerics (pressure solve, momentum, transport) from Python.
     """
 
-    def __init__(self, bridge: OMEquationBridge, spec):
+    def __init__(self, bridge: OMEquationBridge, spec, es=None):
         """
         Args:
             bridge: OMEquationBridge (compiled from translateModel output)
             spec: Pipe1DGridSpec with geometry and BCs
+            es: EquationSystem (optional) — if provided, ALL parameter values
+                are read from the extracted XML (authoritative source).
         """
         self.bridge = bridge
         self.N = bridge.N
@@ -62,8 +64,8 @@ class BridgeSolver:
         self.inlet_closed = spec.inlet_closed
         self.p_out = spec.p_out or 101325.0
 
-        # Set bridge parameters from spec
-        bridge.set_params_from_spec(spec)
+        # Set bridge parameters (from XML if available, else from spec)
+        bridge.set_params_from_spec(spec, es=es)
 
         # Exposed internals for L0 testing
         self.last_rho_face = None
@@ -149,7 +151,16 @@ class BridgeSolver:
         for i in range(1, N):
             mdot[i] = mdot_old[i] + beta * (p[i - 1] - p[i]) - dt * fric[i]
 
-        mdot[N] = mdot_old[N] + beta * (p[N - 1] - self.p_out) - dt * fric[N]
+        mdot_mom = mdot_old[N] + beta * (p[N - 1] - self.p_out) - dt * fric[N]
+
+        # Critical flow limiter at outlet (if model has it)
+        mdot_crit_name = f'{self.bridge.prefix}.mdot_crit'
+        if mdot_crit_name in self.bridge.info.all_vars and mdot_mom > 0:
+            crit_idx = self.bridge.info.var_index(mdot_crit_name)
+            mdot_crit_val = self.bridge.lib.opal_bridge_get_var(crit_idx)
+            mdot[N] = min(mdot_mom, mdot_crit_val)
+        else:
+            mdot[N] = mdot_mom
 
         # ── Energy update (explicit, donor-cell with UPDATED mdot) ──
         # Donor-cell upwind selection uses the new mdot (post-momentum)

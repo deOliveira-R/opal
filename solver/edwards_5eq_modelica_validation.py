@@ -68,7 +68,7 @@ solver = Extracted5EqSolver(
     fluid, spec,
     H_i=1e5, C_0=1.0, alpha_nucleation=1e-3,
     use_critical_flow=True, C_d=geom["break_flow_area_fraction"],
-    x_trans=0.10, c_floor=1200.0,
+    x_trans=0.10, c_floor=10.0,
     use_two_phase_friction=False)
 
 # Initial state

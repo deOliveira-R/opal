@@ -34,7 +34,7 @@ partial model PartialPipe1D
   parameter Boolean use_critical_flow = false "Enable critical flow limiter at outlet";
   parameter Real C_d = 1.0 "Break discharge coefficient [-]";
   parameter Real x_trans = 0.10 "Quality transition for critical flow blend [-]";
-  parameter Real c_floor = 1200.0 "Minimum sound speed for critical flow [m/s]";
+  parameter Real c_floor = 10.0 "Minimum sound speed for critical flow [m/s] (numerical floor only)";
 
   // ═══════════════════════════════════════════════════════════════════
   // Replaceable medium — swap SimpleFluid ↔ Water at system level

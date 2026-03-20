@@ -14,7 +14,7 @@ package CriticalFlow "Critical (choked) flow models for break boundaries"
     input Real A_flow "Flow area [m^2]";
     input Real C_d "Discharge coefficient [-]";
     input Real x_trans "Quality transition for blend [-] (default 0.10)";
-    input Real c_floor "Minimum sound speed [m/s] (default 1200)";
+    input Real c_floor "Minimum sound speed [m/s] (default 10 — numerical floor only)";
     output Real mdot_crit "Critical mass flow rate [kg/s]";
   protected
     Real h_fg = max(h_g - h_f, 1e3);

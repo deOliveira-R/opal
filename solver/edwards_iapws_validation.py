@@ -81,7 +81,7 @@ print(f"  Break: C_d={C_d}, p_back={p_atm} Pa")
 # ============================================================================
 
 fluid = tp.IAPWSIF97Properties()
-critical_flow = tp.RansomTrapp(fluid, x_trans=0.10, c_floor=1200.0)
+critical_flow = tp.RansomTrapp(fluid, x_trans=0.10, c_floor=10.0)
 
 # Use the extraction-driven solver but with IAPWS properties
 solver = ExtractedSemiImplicitSolver(cs, fluid, spec)

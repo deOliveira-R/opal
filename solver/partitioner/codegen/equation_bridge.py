@@ -182,33 +182,50 @@ class OMEquationBridge:
                 len(values), self._var_groups[var_name],
                 values.ctypes.data_as(self._DP))
 
-    def set_params_from_spec(self, spec):
-        """Write parameters from a Pipe1DGridSpec."""
+    def set_params_from_spec(self, spec, es=None):
+        """Write parameters from a Pipe1DGridSpec + EquationSystem.
+
+        If `es` (EquationSystem from xml_reader) is provided, ALL parameter
+        values are read from the extracted XML — the authoritative source.
+        Otherwise, maps known spec fields to parameter names.
+        """
         param_values = np.zeros(self.info.n_params)
 
-        # Map spec attributes to parameter names
-        name_to_value = {
-            f'{self.prefix}.A_flow': spec.A_flow,
-            f'{self.prefix}.D_h': spec.D_h,
-            f'{self.prefix}.dx': spec.dx,
-            f'{self.prefix}.f_D': spec.f_D,
-            f'{self.prefix}.V_cell': spec.V_cell,
-        }
-        if hasattr(spec, 'N'):
-            name_to_value[f'{self.prefix}.L'] = spec.dx * spec.N
-            name_to_value[f'{self.prefix}.D'] = spec.D_h
+        if es is not None:
+            # First pass: read parameters from the extracted XML (authoritative)
+            for pname, pinfo in self.info.parameters.items():
+                try:
+                    p = es.param(pname)
+                    if p.value is not None:
+                        param_values[pinfo.index] = float(p.value)
+                except (KeyError, TypeError, ValueError):
+                    pass
 
-        for pname, pinfo in self.info.parameters.items():
-            if pname in name_to_value:
-                param_values[pinfo.index] = name_to_value[pname]
-            elif pname.endswith('.p_set') and hasattr(spec, 'p_out') and spec.p_out:
-                param_values[pinfo.index] = spec.p_out
-            elif pname.endswith('.h_set') and hasattr(spec, 'h_out') and spec.h_out:
-                param_values[pinfo.index] = spec.h_out
-            elif pname == f'{self.prefix}.p_init' and hasattr(spec, 'p0') and spec.p0:
-                param_values[pinfo.index] = spec.p0[0]
-            elif pname == f'{self.prefix}.h_init' and hasattr(spec, 'h0') and spec.h0:
-                param_values[pinfo.index] = spec.h0[0]
+        # Always apply spec values for geometry (OM may not store derived params)
+        if True:
+            # Fallback: map from spec (geometry + boundary only)
+            name_to_value = {
+                f'{self.prefix}.A_flow': spec.A_flow,
+                f'{self.prefix}.D_h': spec.D_h,
+                f'{self.prefix}.dx': spec.dx,
+                f'{self.prefix}.f_D': spec.f_D,
+                f'{self.prefix}.V_cell': spec.V_cell,
+            }
+            if hasattr(spec, 'N'):
+                name_to_value[f'{self.prefix}.L'] = spec.dx * spec.N
+                name_to_value[f'{self.prefix}.D'] = spec.D_h
+
+            for pname, pinfo in self.info.parameters.items():
+                if pname in name_to_value:
+                    param_values[pinfo.index] = name_to_value[pname]
+                elif pname.endswith('.p_set') and hasattr(spec, 'p_out') and spec.p_out:
+                    param_values[pinfo.index] = spec.p_out
+                elif pname.endswith('.h_set') and hasattr(spec, 'h_out') and spec.h_out:
+                    param_values[pinfo.index] = spec.h_out
+                elif pname == f'{self.prefix}.p_init' and hasattr(spec, 'p0') and spec.p0:
+                    param_values[pinfo.index] = spec.p0[0]
+                elif pname == f'{self.prefix}.h_init' and hasattr(spec, 'h0') and spec.h0:
+                    param_values[pinfo.index] = spec.h0[0]
 
         self.lib.opal_bridge_set_params(
             self.info.n_params, param_values.ctypes.data_as(self._DP))
