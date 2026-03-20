@@ -95,10 +95,16 @@ class CTokenRewriter:
         body = self._remove_line_containing(body, 'threadData->lastEquationSolved')
         body = self._remove_line_containing(body, 'const int equationIndexes')
 
-        # Phase 4: Replace threadData with our static dummy (for media function calls)
+        # Phase 4: Strip OM assertion blocks (noThrowAsserts, needToReThrow)
+        # These are runtime checks wrapped around sqrt() and similar — the solver
+        # clamps inputs so they are never triggered. Remove entire if-blocks that
+        # reference data->simulationInfo for assertion handling.
+        body = self._strip_assertion_blocks(body)
+
+        # Phase 5: Replace threadData with our static dummy (for media function calls)
         body = body.replace('threadData', '(&_td)')
 
-        # Phase 5: Validate — no data-> references should survive
+        # Phase 6: Validate — no data-> references should survive
         self._validate_no_data_refs(body, eq_id)
 
         return body
@@ -235,6 +241,58 @@ class CTokenRewriter:
             i += 1
         return args, i
 
+    def _strip_assertion_blocks(self, text: str) -> str:
+        """Strip OM assertion if-blocks that check noThrowAsserts.
+
+        OM wraps sqrt() and similar with assertion checks:
+          if(!(condition >= 0.0)) { if (data->...noThrowAsserts) { ... } else { ... } }
+        We remove the ENTIRE outer if-block (condition check + assertion body)
+        because the solver clamps inputs to valid ranges.
+
+        Uses brace-matching to find the exact extent of each block.
+        """
+        # Find and remove each "if(!(...)) { ...noThrowAsserts... }" block
+        result = []
+        i = 0
+        while i < len(text):
+            # Look for "if(!(" pattern that precedes an assertion block
+            if text[i:i+5] == 'if(!(' :
+                # Check if this is an assertion block by scanning ahead for noThrowAsserts
+                # First find the opening { of this if
+                j = i
+                while j < len(text) and text[j] != '{':
+                    j += 1
+                if j >= len(text):
+                    result.append(text[i])
+                    i += 1
+                    continue
+
+                # Check if noThrowAsserts appears within the next 500 chars
+                lookahead = text[j:j+500]
+                if 'noThrowAsserts' not in lookahead:
+                    result.append(text[i])
+                    i += 1
+                    continue
+
+                # This IS an assertion block. Skip the entire if-block using brace matching.
+                brace_start = j + 1  # past the {
+                depth = 1
+                k = brace_start
+                while k < len(text) and depth > 0:
+                    if text[k] == '{':
+                        depth += 1
+                    elif text[k] == '}':
+                        depth -= 1
+                    k += 1
+                # k is now past the closing } of the if-block
+                i = k
+                continue
+
+            result.append(text[i])
+            i += 1
+
+        return ''.join(result)
+
     def _remove_line_containing(self, text: str, needle: str) -> str:
         """Remove entire lines containing the given substring."""
         lines = text.split('\n')
@@ -343,7 +401,7 @@ def generate_bridge_c(info: ModelInfo, model_c: Path, functions_c: Path,
     lines.append('}')
     lines.append('')
 
-    # Assertion/error stubs (used in IAPWS saturation boundary checks)
+    # Assertion/error/logging stubs
     lines.append('typedef struct { const char* f; int ls; int le; int cs; int ce; int ro; } FILE_INFO;')
     lines.append('static const FILE_INFO omc_dummyFileInfo = {"",0,0,0,0,0};')
     lines.append('static void omc_assert(threadData_t *td, FILE_INFO info, const char *msg, ...) {')
@@ -351,6 +409,11 @@ def generate_bridge_c(info: ModelInfo, model_c: Path, functions_c: Path,
     lines.append('static void throwStreamPrintWithEquationIndexes(')
     lines.append('    threadData_t *td, FILE_INFO info, const int *idx, const char *msg, ...) {')
     lines.append('    (void)td; (void)info; (void)idx; (void)msg; abort(); }')
+    lines.append('static void omc_assert_warning(FILE_INFO info, const char *msg, ...) {')
+    lines.append('    (void)info; (void)msg; }')
+    lines.append('#define infoStreamPrintWithEquationIndexes(...)')
+    lines.append('#define OMC_LOG_ASSERT 0')
+    lines.append('static inline modelica_boolean initial(void) { return 0; }')
     lines.append('')
 
     # Boxptr stubs

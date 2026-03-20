@@ -40,22 +40,38 @@ class OMEquationBridge:
         self.N = self._detect_N()
 
         # Build index arrays for variable groups (computed once, reused every step)
-        self._p_idx = self._c_indices(info.vars_by_pattern(f'{self.prefix}.p', self.N))
-        self._h_idx = self._c_indices(info.vars_by_pattern(f'{self.prefix}.h', self.N))
-        self._rho_face_idx = self._c_indices(info.vars_by_pattern(f'{self.prefix}.rho_face', self.N + 1))
-        self._h_face_idx = self._c_indices(info.vars_by_pattern(f'{self.prefix}.h_face', self.N + 1))
-        self._drho_dp_idx = self._c_indices(info.vars_by_pattern(f'{self.prefix}.drho_dp', self.N))
-        self._drho_dh_idx = self._c_indices(info.vars_by_pattern(f'{self.prefix}.drho_dh', self.N))
-        self._T_cell_idx = self._c_indices(info.vars_by_pattern(f'{self.prefix}.T_cell', self.N))
+        # Use a generic pattern-based approach — works for HEM and DriftFlux
+        self._var_groups = {}
+        self._build_var_group('p', self.N)
+        self._build_var_group('rho_face', self.N + 1)
+        self._build_var_group('drho_dp', self.N)
+        self._build_var_group('drho_dh', self.N)
+        self._build_var_group('T_cell', self.N)
+
+        # HEM-specific
+        self._build_var_group('h', self.N)
+        self._build_var_group('h_face', self.N + 1)
+
+        # DriftFlux-specific (present if model uses Pipe1D_DriftFlux)
+        for name in ['alpha', 'h_l', 'h_v', 'h_mix', 'rho_l', 'rho_v', 'rho_m',
+                      'Gamma', 'q_i_l', 'q_i_v', 'V_gj', 'a_i', 'alpha_eff',
+                      'T_l', 'T_sat_cell', 'h_sat_l', 'h_sat_v']:
+            self._build_var_group(name, self.N)
+        self._build_var_group('Phi2', self.N + 1)
 
         # mdot: states + dummy states, sorted by Modelica index
         mdot_entries = sorted(
-            [(int(name.split('[')[1].rstrip(']')), vi.index)
-             for name, vi in info.all_vars.items()
-             if f'{self.prefix}.mdot[' in name and vi.kind in ('state', 'dummy state')],
+            [(int(n.split('[')[1].rstrip(']')), vi.index)
+             for n, vi in info.all_vars.items()
+             if f'{self.prefix}.mdot[' in n and vi.kind in ('state', 'dummy state')],
             key=lambda x: x[0]
         )
-        self._mdot_idx = self._c_indices([idx for _, idx in mdot_entries])
+        self._var_groups['mdot'] = self._c_indices([idx for _, idx in mdot_entries])
+
+        # Backward compatibility aliases
+        self._p_idx = self._var_groups.get('p')
+        self._h_idx = self._var_groups.get('h')
+        self._mdot_idx = self._var_groups.get('mdot')
 
         # Pressure bounds (defaults — can be overridden)
         self.p_min = 1e4
@@ -127,20 +143,44 @@ class OMEquationBridge:
 
         return None
 
+    def _build_var_group(self, short_name: str, count: int):
+        """Build a ctypes index array for a variable group if it exists in the model."""
+        full_pattern = f'{self.prefix}.{short_name}'
+        indices = self.info.vars_by_pattern(full_pattern, count)
+        if indices:
+            self._var_groups[short_name] = self._c_indices(indices)
+
     def _c_indices(self, indices: list[int]) -> ctypes.Array:
         """Convert Python index list to a ctypes int array (allocated once)."""
         return (ctypes.c_int * len(indices))(*indices)
 
     # ── State set/get (name-aware, index-driven) ──
 
-    def set_state(self, p: np.ndarray, h: np.ndarray, mdot: np.ndarray):
-        """Write current state into the bridge flat arrays."""
-        self.lib.opal_bridge_set_vars(len(p), self._p_idx,
-                                       p.ctypes.data_as(self._DP))
-        self.lib.opal_bridge_set_vars(len(h), self._h_idx,
-                                       h.ctypes.data_as(self._DP))
-        self.lib.opal_bridge_set_vars(len(mdot), self._mdot_idx,
-                                       mdot.ctypes.data_as(self._DP))
+    def set_state(self, p: np.ndarray, h: np.ndarray = None, mdot: np.ndarray = None,
+                  alpha: np.ndarray = None, h_l: np.ndarray = None, h_v: np.ndarray = None):
+        """Write current state into the bridge flat arrays.
+
+        HEM: set_state(p, h=h, mdot=mdot)
+        5-eq: set_state(p, mdot=mdot, alpha=alpha, h_l=h_l, h_v=h_v)
+        """
+        self._set_group('p', p)
+        if mdot is not None:
+            self._set_group('mdot', mdot)
+        if h is not None:
+            self._set_group('h', h)
+        if alpha is not None:
+            self._set_group('alpha', alpha)
+        if h_l is not None:
+            self._set_group('h_l', h_l)
+        if h_v is not None:
+            self._set_group('h_v', h_v)
+
+    def _set_group(self, var_name: str, values: np.ndarray):
+        """Write a numpy array to a variable group by name."""
+        if var_name in self._var_groups:
+            self.lib.opal_bridge_set_vars(
+                len(values), self._var_groups[var_name],
+                values.ctypes.data_as(self._DP))
 
     def set_params_from_spec(self, spec):
         """Write parameters from a Pipe1DGridSpec."""
@@ -185,20 +225,34 @@ class OMEquationBridge:
         self.lib.opal_bridge_get_vars(n, c_indices, out.ctypes.data_as(self._DP))
         return out
 
+    def get(self, var_name: str) -> np.ndarray:
+        """Generic getter: read a variable group by short name (e.g., 'rho_face')."""
+        if var_name not in self._var_groups:
+            raise KeyError(f"Variable group '{var_name}' not found. "
+                           f"Available: {sorted(self._var_groups.keys())}")
+        c_idx = self._var_groups[var_name]
+        n = len(c_idx)
+        return self._get_array(c_idx, n)
+
+    def has(self, var_name: str) -> bool:
+        """Check if a variable group exists in this model."""
+        return var_name in self._var_groups
+
+    # Named getters for backward compatibility
     def get_rho_face(self) -> np.ndarray:
-        return self._get_array(self._rho_face_idx, self.N + 1)
+        return self.get('rho_face')
 
     def get_drho_dp(self) -> np.ndarray:
-        return self._get_array(self._drho_dp_idx, self.N)
+        return self.get('drho_dp')
 
     def get_drho_dh(self) -> np.ndarray:
-        return self._get_array(self._drho_dh_idx, self.N)
+        return self.get('drho_dh')
 
     def get_h_face(self) -> np.ndarray:
-        return self._get_array(self._h_face_idx, self.N + 1)
+        return self.get('h_face')
 
     def get_T_cell(self) -> np.ndarray:
-        return self._get_array(self._T_cell_idx, self.N)
+        return self.get('T_cell')
 
     def get_rho_cell(self) -> np.ndarray:
         """Cell densities from rho_ph(p[i], h[i]) via bridge media wrapper."""
