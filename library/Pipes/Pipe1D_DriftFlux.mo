@@ -21,7 +21,7 @@ model Pipe1D_DriftFlux
   parameter Real S_void[N] = zeros(N) "Vapour mass source per cell [kg/s]";
 
   // Two-phase friction multiplier
-  parameter Boolean use_two_phase_friction = false "Enable Martinelli-Nelson friction multiplier";
+  parameter Boolean use_two_phase_friction = true "Enable Martinelli-Nelson friction multiplier";
   parameter Real Phi2_max = 20.0 "Maximum two-phase friction multiplier [-]";
 
   // ═══════════════════════════════════════════════════════════════════
@@ -55,6 +55,17 @@ model Pipe1D_DriftFlux
 
   // Drift-flux (per cell)
   Real V_gj[N] "Drift velocity [m/s]";
+
+  // ═══════════════════════════════════════════════════════════════════
+  // Drift-flux phasic mass flows (per face, from algebraic slip)
+  // ═══════════════════════════════════════════════════════════════════
+  Real alpha_face[N + 1] "Face-averaged void fraction [-]";
+  Real rho_l_face[N + 1] "Face-averaged liquid density [kg/m^3]";
+  Real rho_v_face[N + 1] "Face-averaged vapour density [kg/m^3]";
+  Real V_gj_face[N + 1] "Face-averaged drift velocity [m/s]";
+  Real j_face[N + 1] "Volumetric flux at face [m/s]";
+  Real mdot_v[N + 1] "Vapour mass flow at face [kg/s]";
+  Real mdot_l[N + 1] "Liquid mass flow at face [kg/s]";
 
   // ═══════════════════════════════════════════════════════════════════
   // Mixture enthalpy (for connector coupling and critical flow)
@@ -119,14 +130,23 @@ equation
     // When h_l > h_f (superheated liquid after depressurization), the equilibrium
     // T_ph returns T_sat. For the 5-eq model we need the actual liquid temperature
     // to drive interfacial heat transfer and flashing.
-    // T_l = T_sat + (h_l - h_f) / cp_l, where cp_l ≈ 4200 J/(kg·K) for water.
+    // T_l = T_sat + (h_l - h_f) / cp_f(p), using pressure-dependent cp_f.
     // Ref: RELAP5/MOD3 Vol I §3.2 — metastable liquid state extension.
     T_l[i] = if h_l[i] <= h_sat_l[i] then
                Medium.T_ph(p[i], h_l[i])
              else
-               T_sat_cell[i] + (h_l[i] - h_sat_l[i]) / 4200.0;
+               T_sat_cell[i] + (h_l[i] - h_sat_l[i]) / Medium.cp_f(p[i]);
 
-    // Mixture derivatives for pressure linearisation
+    // Mixture derivatives for pressure linearisation.
+    // Evaluated at h_mix (equilibrium mixture enthalpy), NOT at phasic enthalpies.
+    // This provides the "effective compressibility" that includes both mechanical
+    // (sound speed) and thermal (saturation curve shift) effects. The thermal
+    // compressibility is essential for the semi-implicit scheme: it allows the
+    // pressure equation to implicitly account for density changes from phase
+    // change, which is treated explicitly in the void fraction transport.
+    // Without it, the scheme requires acoustic-CFL timesteps (dt ~ dx/c).
+    // This is the standard approach in RELAP5, TRACE, and system codes.
+    // Ref: RELAP5/MOD3 Vol I §3.1.2 (pressure linearization).
     drho_dp[i] = Medium.drho_dp_h(p[i], h_mix[i]);
     drho_dh[i] = Medium.drho_dh_p(p[i], h_mix[i]);
   end for;
@@ -161,6 +181,46 @@ equation
   end for;
 
   // ─────────────────────────────────────────────────────────────────
+  // Drift-flux phasic mass flow split (per face)
+  //   From mixture mdot, compute phasic mdot_v, mdot_l using the
+  //   drift-flux algebraic slip relation:
+  //     j = [G_m - α·V_gj·(ρ_v - ρ_l)] / [ρ_l + α·C_0·(ρ_v - ρ_l)]
+  //     v_v = C_0·j + V_gj
+  //     mdot_v = α·ρ_v·v_v·A,  mdot_l = mdot - mdot_v
+  //   Ref: Ishii & Hibiki, "Thermo-Fluid Dynamics of Two-Phase Flow"
+  //   Verified against: archive/cpp_prototype/two_phase/five_eq_model.cpp:266-305
+  // ─────────────────────────────────────────────────────────────────
+
+  // Step 1: Face-averaged properties (boundary: nearest cell; interior: arithmetic mean)
+  alpha_face[1] = alpha[1];
+  rho_l_face[1] = rho_l[1];
+  rho_v_face[1] = rho_v[1];
+  V_gj_face[1] = V_gj[1];
+  for i in 2:N loop
+    alpha_face[i] = 0.5 * (alpha[i - 1] + alpha[i]);
+    rho_l_face[i] = 0.5 * (rho_l[i - 1] + rho_l[i]);
+    rho_v_face[i] = 0.5 * (rho_v[i - 1] + rho_v[i]);
+    V_gj_face[i] = 0.5 * (V_gj[i - 1] + V_gj[i]);
+  end for;
+  alpha_face[N + 1] = alpha[N];
+  rho_l_face[N + 1] = rho_l[N];
+  rho_v_face[N + 1] = rho_v[N];
+  V_gj_face[N + 1] = V_gj[N];
+
+  // Step 2: Drift-flux split at each face
+  for i in 1:N + 1 loop
+    // Volumetric flux from drift-flux relation
+    j_face[i] = (mdot[i] / A_flow - alpha_face[i] * V_gj_face[i] * (rho_v_face[i] - rho_l_face[i]))
+                / max(rho_l_face[i] + alpha_face[i] * C_0 * (rho_v_face[i] - rho_l_face[i]), 1.0);
+
+    // Vapour velocity: v_v = C_0*j + V_gj, then vapour mass flow
+    mdot_v[i] = alpha_face[i] * rho_v_face[i] * (C_0 * j_face[i] + V_gj_face[i]) * A_flow;
+
+    // Liquid mass flow from mixture mass conservation: mdot_l = mdot - mdot_v
+    mdot_l[i] = mdot[i] - mdot_v[i];
+  end for;
+
+  // ─────────────────────────────────────────────────────────────────
   // MASS CONSERVATION (per cell) — pressure linearisation
   //   V * (drho_dp * der(p) + drho_dh * der(h_mix)) = mdot_in - mdot_out + S_mass
   //   where h_mix = (1-α)*h_l + α*h_v
@@ -173,41 +233,35 @@ equation
   end for;
 
   // ─────────────────────────────────────────────────────────────────
-  // VOID FRACTION (per cell) — vapour mass transport
+  // VOID FRACTION (per cell) — vapour mass transport with drift-flux
   //   d(α*ρ_v)/dt = (mdot_v_in - mdot_v_out) / V + Γ
-  //   Simplified: use mixture mdot with donor-cell void fraction
+  //   NOTE: The Modelica form uses rho_v * der(alpha) which drops the
+  //   α*der(rho_v) coupling term. The bridge solver handles the conservative
+  //   update (alpha*rho_v product) in its explicit time-stepping, matching
+  //   the C++ prototype (five_eq_model.cpp:394-399). This split avoids
+  //   OM generating massive symbolic derivatives through the EOS chain rule.
   // ─────────────────────────────────────────────────────────────────
   for i in 1:N loop
     rho_v[i] * V_cell * der(alpha[i])
-      = (if mdot[i] >= 0 then
-           mdot[i] * (if i > 1 then alpha[i - 1] else alpha[i])
-         else
-           mdot[i] * alpha[i])
-      - (if mdot[i + 1] >= 0 then
-           mdot[i + 1] * alpha[i]
-         else
-           mdot[i + 1] * (if i < N then alpha[i + 1] else alpha[i]))
+      = mdot_v[i] - mdot_v[i + 1]
       + V_cell * Gamma[i]
       + S_void[i];
   end for;
 
   // ─────────────────────────────────────────────────────────────────
-  // LIQUID ENERGY (per cell) — phasic enthalpy with interfacial HT
-  //   (1-α)*ρ_l*V * dh_l/dt = advection + (1-α)*V*dp/dt + q_wall_l
-  //                          + q_i_l - Γ*h_l*V
+  // LIQUID ENERGY (per cell) — phasic enthalpy with drift-flux advection
+  //   (1-α)*ρ_l*V * dh_l/dt = mdot_l_in*(h_in-h_cell) - mdot_l_out*(h_out-h_cell)
+  //                          + (1-α)*V*dp/dt + q_wall_l + q_i_l - Γ*h_l*V
+  //   Donor-cell enthalpy selection based on mdot_l direction.
+  //   Phase-absence guard: max(1-α, 1e-6) prevents singular ODE when α → 1.
+  //   Ref: C++ prototype five_eq_model.cpp:439 checks m_l > m_phase_min.
   // ─────────────────────────────────────────────────────────────────
   for i in 1:N loop
-    (1 - alpha[i]) * rho_l[i] * V_cell * der(h_l[i])
-      = (if mdot[i] >= 0 then
-           mdot[i] * (1 - (if i > 1 then alpha[i - 1] else alpha[i]))
-         else
-           mdot[i] * (1 - alpha[i]))
-        * ((if mdot[i] >= 0 then (if i > 1 then h_l[i - 1] else h_l[i]) else h_l[i]) - h_l[i])
-      - (if mdot[i + 1] >= 0 then
-           mdot[i + 1] * (1 - alpha[i])
-         else
-           mdot[i + 1] * (1 - (if i < N then alpha[i + 1] else alpha[i])))
-        * ((if mdot[i + 1] >= 0 then h_l[i] else (if i < N then h_l[i + 1] else h_l[i])) - h_l[i])
+    max(1 - alpha[i], 1e-6) * rho_l[i] * V_cell * der(h_l[i])
+      = mdot_l[i]
+        * ((if mdot_l[i] >= 0 then (if i > 1 then h_l[i - 1] else h_l[i]) else h_l[i]) - h_l[i])
+      - mdot_l[i + 1]
+        * ((if mdot_l[i + 1] >= 0 then h_l[i] else (if i < N then h_l[i + 1] else h_l[i])) - h_l[i])
       + (1 - alpha[i]) * V_cell * der(p[i])
       + q_wall[i] * (1 - alpha[i])
       + q_i_l[i] * V_cell
@@ -216,22 +270,18 @@ equation
   end for;
 
   // ─────────────────────────────────────────────────────────────────
-  // VAPOUR ENERGY (per cell) — phasic enthalpy with interfacial HT
-  //   α*ρ_v*V * dh_v/dt = advection + α*V*dp/dt + q_wall_v
-  //                      + q_i_v + Γ*h_v*V
+  // VAPOUR ENERGY (per cell) — phasic enthalpy with drift-flux advection
+  //   α*ρ_v*V * dh_v/dt = mdot_v_in*(h_in-h_cell) - mdot_v_out*(h_out-h_cell)
+  //                      + α*V*dp/dt + q_wall_v + q_i_v + Γ*h_v*V
+  //   Donor-cell enthalpy selection based on mdot_v direction.
+  //   Phase-absence guard: max(α, 1e-6) prevents singular ODE when α → 0.
   // ─────────────────────────────────────────────────────────────────
   for i in 1:N loop
-    alpha[i] * rho_v[i] * V_cell * der(h_v[i])
-      = (if mdot[i] >= 0 then
-           mdot[i] * (if i > 1 then alpha[i - 1] else alpha[i])
-         else
-           mdot[i] * alpha[i])
-        * ((if mdot[i] >= 0 then (if i > 1 then h_v[i - 1] else h_v[i]) else h_v[i]) - h_v[i])
-      - (if mdot[i + 1] >= 0 then
-           mdot[i + 1] * alpha[i]
-         else
-           mdot[i + 1] * (if i < N then alpha[i + 1] else alpha[i]))
-        * ((if mdot[i + 1] >= 0 then h_v[i] else (if i < N then h_v[i + 1] else h_v[i])) - h_v[i])
+    max(alpha[i], 1e-6) * rho_v[i] * V_cell * der(h_v[i])
+      = mdot_v[i]
+        * ((if mdot_v[i] >= 0 then (if i > 1 then h_v[i - 1] else h_v[i]) else h_v[i]) - h_v[i])
+      - mdot_v[i + 1]
+        * ((if mdot_v[i + 1] >= 0 then h_v[i] else (if i < N then h_v[i + 1] else h_v[i])) - h_v[i])
       + alpha[i] * V_cell * der(p[i])
       + q_wall[i] * alpha[i]
       + q_i_v[i] * V_cell
@@ -253,7 +303,8 @@ vapour enthalpy h_v. Mass flow at faces (staggered mesh).</p>
 <li>Liquid energy (phasic, with interfacial HT and phase-change coupling)</li>
 <li>Vapour energy (phasic, with interfacial HT and phase-change coupling)</li>
 </ol>
-<p>Closures: linear relaxation interfacial HT, Zuber-Findlay drift velocity.</p>
+<p>Closures: linear relaxation interfacial HT, Zuber-Findlay drift velocity,
+drift-flux phasic flux split (C_0, V_gj), Martinelli-Nelson two-phase friction.</p>
 <p>Swap medium: <code>redeclare package Medium = library.Media.Water</code></p>
 </html>"));
 end Pipe1D_DriftFlux;

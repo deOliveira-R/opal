@@ -82,6 +82,14 @@ package SimpleFluid "Synthetic test fluid — linear properties for rigorous two
     annotation(Inline=true);
   end rho_g;
 
+  function cp_f "Saturated liquid specific heat [J/(kg*K)] — constant"
+    input Real p "Pressure [Pa]";
+    output Real cp_val;
+  algorithm
+    cp_val := cp_L;
+    annotation(Inline=true);
+  end cp_f;
+
   function sigma "Surface tension [N/m] — constant approximation"
     input Real p "Pressure [Pa]";
     output Real sigma_val;

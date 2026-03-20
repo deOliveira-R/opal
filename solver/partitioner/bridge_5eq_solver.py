@@ -23,7 +23,14 @@ class BridgeDriftFluxSolver:
     phasic energy) from Python.
     """
 
-    def __init__(self, bridge: OMEquationBridge, spec):
+    def __init__(self, bridge: OMEquationBridge, spec, es=None):
+        """
+        Args:
+            bridge: OMEquationBridge with compiled Modelica model
+            spec: Pipe1DGridSpec (geometry, BCs)
+            es: EquationSystem from XML — pass this to load ALL parameter values
+                from Modelica (H_i, C_0, etc.). Without es, only geometry is set.
+        """
         self.bridge = bridge
         self.N = bridge.N
         self.spec = spec
@@ -39,11 +46,14 @@ class BridgeDriftFluxSolver:
         self.inlet_closed = getattr(spec, 'inlet_closed', True)
         self.p_out = getattr(spec, 'p_out', 101325.0) or 101325.0
 
-        # Closure flags (from spec if available)
+        # Critical flow: use if bridge provides mdot_crit (Modelica computes it)
         self.use_critical_flow = getattr(spec, 'use_critical_flow', False)
+        if not self.use_critical_flow and bridge.has('mdot_crit'):
+            # Bridge has mdot_crit from Modelica → critical flow is active
+            self.use_critical_flow = True
 
-        # Set bridge parameters from spec
-        bridge.set_params_from_spec(spec)
+        # Set bridge parameters from spec + XML (es provides closure params)
+        bridge.set_params_from_spec(spec, es=es)
 
     @staticmethod
     def _thomas_solve(a, b, c, d):
@@ -65,6 +75,8 @@ class BridgeDriftFluxSolver:
         N = self.N
         p_old = p.copy()
         alpha_old = alpha.copy()
+        h_l_old = h_l.copy()
+        h_v_old = h_v.copy()
         mdot_old = mdot.copy()
 
         # ══════════════════════════════════════════════════════════
@@ -91,124 +103,197 @@ class BridgeDriftFluxSolver:
         # NUMERICAL METHOD ONLY BELOW
         # ══════════════════════════════════════════════════════════
 
-        # ── Friction (Darcy * Phi2, from geometry + old momentum + face density) ──
+        # ── Critical flow (from Modelica via bridge) ──
+        mdot_crit = 1e10
+        outlet_choked = False
+        if self.use_critical_flow and self.bridge.has('mdot_crit'):
+            mdot_crit_arr = self.bridge.get('mdot_crit')
+            mdot_crit = mdot_crit_arr[0] if len(mdot_crit_arr) > 0 else 1e10
+            outlet_choked = mdot_old[N] > 0
+
+        # ── Friction with implicit resistance (semi-implicit friction treatment) ──
+        # The friction force is linearized and partially treated implicitly:
+        #   fric(mdot_new) ≈ fric(mdot_old) + dfric/dmdot * (mdot_new - mdot_old)
+        # This yields an effective coupling coefficient beta_eff = beta / (1 + sigma)
+        # where sigma = dt * dfric/dmdot. When friction is large (high flow in
+        # single-phase), sigma >> 1 and beta_eff → 0, naturally regularizing the
+        # pressure tridiagonal without floors or hacks.
+        # Ref: standard semi-implicit friction treatment in TH codes (RELAP5, TRACE).
+        K_geom = self.f_D * self.dx / (2 * self.D_h)
         fric = np.zeros(N + 1)
+        sigma = np.zeros(N + 1)
+
         for i in range(N + 1):
             phi2_i = Phi2[min(i, len(Phi2) - 1)]
-            if rho_face[i] > 0.01:
-                fric[i] = (phi2_i * self.f_D * self.dx / (2 * self.D_h)
-                           * abs(mdot_old[i]) * mdot_old[i]
-                           / (rho_face[i] * self.A_flow**2))
+            if rho_face[i] > 0.01 and np.isfinite(mdot_old[i]):
+                f = (phi2_i * K_geom * abs(mdot_old[i]) * mdot_old[i]
+                     / (rho_face[i] * self.A_flow**2))
+                fric[i] = f if np.isfinite(f) else 0.0
+                # Implicit friction resistance: sigma = dt * dfric/dmdot
+                sigma[i] = (2 * dt * phi2_i * K_geom * abs(mdot_old[i])
+                            / (rho_face[i] * self.A_flow**2))
 
-        # ── Pressure tridiagonal ──
+        # Effective coupling: beta_eff smoothly blends inertial (sigma→0)
+        # and algebraic (sigma→∞) momentum treatment at each face.
         beta = dt * self.A_flow / self.dx
+        beta_eff = beta / (1.0 + sigma)
+
+        # ── Pressure tridiagonal (with implicit friction resistance) ──
         a_tri = np.zeros(N); b_tri = np.zeros(N)
         c_tri = np.zeros(N); d_tri = np.zeros(N)
 
         for i in range(N):
             alpha_coeff = self.V_cell * drho_dp[i] / dt
-            beta_left = 0.0 if (self.inlet_closed and i == 0) else (0.0 if i == 0 else beta)
-            beta_right = beta
 
-            a_tri[i] = -beta_left if i > 0 else 0.0
-            c_tri[i] = -beta_right if i < N - 1 else 0.0
-            b_tri[i] = alpha_coeff + beta_left + beta_right
+            # Face coupling using beta_eff (no floors needed)
+            bL = 0.0 if (self.inlet_closed and i == 0) else (
+                0.0 if i == 0 else beta_eff[i])
+            bR = 0.0 if (i == N - 1 and outlet_choked) else beta_eff[i + 1]
+
+            a_tri[i] = -bL if i > 0 else 0.0
+            c_tri[i] = -bR if i < N - 1 else 0.0
+            b_tri[i] = alpha_coeff + bL + bR
             d_tri[i] = alpha_coeff * p_old[i]
-            d_tri[i] += (mdot_old[i] - mdot_old[i + 1]) - dt * (fric[i] - fric[i + 1])
+
+            # RHS: mass residual + friction (with implicit friction correction)
+            d_tri[i] += (mdot_old[i] - mdot_old[i + 1])
+            d_tri[i] -= dt * (fric[i] / (1.0 + sigma[i])
+                            - fric[i + 1] / (1.0 + sigma[i + 1]))
 
             if i == N - 1:
-                d_tri[i] += beta_right * self.p_out
+                if outlet_choked:
+                    d_tri[i] += (mdot_old[N] - mdot_crit)
+                else:
+                    d_tri[i] += bR * self.p_out
 
         p[:] = self._thomas_solve(a_tri, b_tri, c_tri, d_tri)
+
         for i in range(N):
+            if not np.isfinite(p[i]):
+                p[i] = p_old[i]
             p[i] = max(self.bridge.p_min, min(self.bridge.p_max, p[i]))
 
-        # ── Momentum ──
+        # ── Momentum (with implicit friction) ──
         mdot[0] = 0.0  # wall BC
         for i in range(1, N):
-            mdot[i] = mdot_old[i] + beta * (p[i - 1] - p[i]) - dt * fric[i]
-        mdot[N] = mdot_old[N] + beta * (p[N - 1] - self.p_out) - dt * fric[N]
+            mdot[i] = (mdot_old[i] + beta_eff[i] * (p[i - 1] - p[i])
+                       - dt * fric[i] / (1.0 + sigma[i]))
 
-        # ── Void fraction transport (explicit) ──
+        # Outlet with critical flow limiter
+        mdot_mom = (mdot_old[N] + beta_eff[N] * (p[N - 1] - self.p_out)
+                    - dt * fric[N] / (1.0 + sigma[N]))
+        if self.use_critical_flow and mdot_mom > 0:
+            mdot[N] = min(mdot_mom, mdot_crit)
+        else:
+            mdot[N] = mdot_mom
+
+        # ── Drift-flux phasic mass flows from bridge (if available) ──
+        # The Modelica model computes mdot_v/mdot_l via drift-flux algebraic slip.
+        # If available, use them; otherwise fall back to HEM-like mdot*alpha.
+        has_drift_flux = self.bridge.has('mdot_v') and self.bridge.has('mdot_l')
+        if has_drift_flux:
+            mdot_v_face = self.bridge.get('mdot_v')
+            mdot_l_face = self.bridge.get('mdot_l')
+        else:
+            mdot_v_face = None
+            mdot_l_face = None
+
+        # ── Void fraction transport (conservative form, explicit) ──
+        # Update alpha*rho_v as a product, then extract alpha by dividing by new rho_v.
+        # This is the conservative form that correctly handles rapid rho_v changes
+        # during depressurization. Ref: C++ prototype five_eq_model.cpp:394-399.
         for i in range(N):
             al = alpha_old[i]
             rv = max(rho_v[i], 0.01)
 
-            # Donor-cell void fraction advection
-            if mdot[i] >= 0:
-                alpha_in = alpha_old[i - 1] if i > 0 else al
+            if has_drift_flux:
+                flux_v = mdot_v_face[i] - mdot_v_face[i + 1]
             else:
-                alpha_in = al
-            if mdot[i + 1] >= 0:
-                alpha_out = al
-            else:
-                alpha_out = alpha_old[i + 1] if i < N - 1 else al
+                if mdot[i] >= 0:
+                    alpha_in = alpha_old[i - 1] if i > 0 else al
+                else:
+                    alpha_in = al
+                if mdot[i + 1] >= 0:
+                    alpha_out = al
+                else:
+                    alpha_out = alpha_old[i + 1] if i < N - 1 else al
+                flux_v = mdot[i] * alpha_in - mdot[i + 1] * alpha_out
 
-            flux_v = mdot[i] * alpha_in - mdot[i + 1] * alpha_out
+            # Conservative: update alpha*rho_v product
             alpha_rho_v_new = al * rv + dt / self.V_cell * (flux_v + self.V_cell * Gamma[i])
 
-            rv_new = max(rho_v[i], 0.01)  # Use old-state rho_v for explicit update
-            alpha[i] = max(0.0, min(1.0, alpha_rho_v_new / rv_new))
+            # Extract alpha using rho_v at NEW pressure (semi-implicit coupling)
+            rv_new = max(rho_v[i], 0.01)  # TODO: evaluate at new p when bridge supports it
+            alpha_new = max(0.0, min(1.0, alpha_rho_v_new / rv_new))
 
-        # ── Phasic energy (explicit) ──
+            # Nucleation floor: when flashing is active, maintain minimum void
+            # to prevent advective washout of the nucleation seed.
+            # Ref: C++ prototype five_eq_model.cpp:415-417.
+            if Gamma[i] > 0:
+                alpha_new = max(alpha_new, 1e-3)
+
+            alpha[i] = alpha_new
+
+        # ── Phasic energy (explicit, using _old enthalpy values) ──
+        # All advection uses h_l_old/h_v_old to prevent directional bias from
+        # sequential cell updates. Ref: C++ prototype five_eq_model.cpp:339-340.
         dp_dt = (p - p_old) / dt
 
         for i in range(N):
             al = alpha_old[i]
 
             # Liquid energy
-            m_l = (1 - al) * rho_l[i] * self.V_cell
-            if m_l > 1e-12:
-                # Donor-cell liquid enthalpy
-                if mdot[i] >= 0:
-                    h_in = h_l[i - 1] if i > 0 else h_l[i]
+            m_l = max((1 - al) * rho_l[i] * self.V_cell, 1e-12)
+            if (1 - al) > 1e-6:
+                if has_drift_flux:
+                    ml_in = mdot_l_face[i]
+                    ml_out = mdot_l_face[i + 1]
                 else:
-                    h_in = h_l[i]
-                if mdot[i + 1] >= 0:
-                    h_out = h_l[i]
-                else:
-                    h_out = h_l[i + 1] if i < N - 1 else h_l[i]
+                    al_in = alpha_old[i - 1] if i > 0 and mdot[i] >= 0 else al
+                    al_out = al if mdot[i + 1] >= 0 else (alpha_old[i + 1] if i < N - 1 else al)
+                    ml_in = mdot[i] * (1 - al_in)
+                    ml_out = mdot[i + 1] * (1 - al_out)
 
-                al_in = alpha_old[i - 1] if i > 0 and mdot[i] >= 0 else al
-                al_out = al if mdot[i + 1] >= 0 else (alpha_old[i + 1] if i < N - 1 else al)
+                # Donor-cell using OLD enthalpy values
+                flow_in = ml_in if has_drift_flux else mdot[i]
+                flow_out = ml_out if has_drift_flux else mdot[i + 1]
+                h_in = h_l_old[i - 1] if (i > 0 and flow_in >= 0) else h_l_old[i]
+                h_out = h_l_old[i] if flow_out >= 0 else (h_l_old[i + 1] if i < N - 1 else h_l_old[i])
 
-                ml_in = mdot[i] * (1 - al_in)
-                ml_out = mdot[i + 1] * (1 - al_out)
-
-                flux = ml_in * (h_in - h_l[i]) - ml_out * (h_out - h_l[i])
+                flux = ml_in * (h_in - h_l_old[i]) - ml_out * (h_out - h_l_old[i])
                 pw = (1 - al) * self.V_cell * dp_dt[i]
                 qi = q_i_l[i] * self.V_cell
-                phase = -Gamma[i] * h_l[i] * self.V_cell
+                phase = -Gamma[i] * h_l_old[i] * self.V_cell
 
-                h_l[i] = h_l[i] + dt / m_l * (flux + pw + qi + phase)
+                h_l[i] = h_l_old[i] + dt / m_l * (flux + pw + qi + phase)
                 h_l[i] = max(1e4, min(h_l[i], h_sat_v[i]))
             else:
                 h_l[i] = h_sat_l[i]
 
             # Vapour energy
-            m_v = al * rho_v[i] * self.V_cell
-            if m_v > 1e-12:
-                if mdot[i] >= 0:
-                    hv_in = h_v[i - 1] if i > 0 else h_v[i]
+            m_v = max(al * rho_v[i] * self.V_cell, 1e-12)
+            if al > 1e-6:
+                if has_drift_flux:
+                    mv_in = mdot_v_face[i]
+                    mv_out = mdot_v_face[i + 1]
                 else:
-                    hv_in = h_v[i]
-                if mdot[i + 1] >= 0:
-                    hv_out = h_v[i]
-                else:
-                    hv_out = h_v[i + 1] if i < N - 1 else h_v[i]
+                    al_in = alpha_old[i - 1] if i > 0 and mdot[i] >= 0 else al
+                    al_out = al if mdot[i + 1] >= 0 else (alpha_old[i + 1] if i < N - 1 else al)
+                    mv_in = mdot[i] * al_in
+                    mv_out = mdot[i + 1] * al_out
 
-                al_in = alpha_old[i - 1] if i > 0 and mdot[i] >= 0 else al
-                al_out = al if mdot[i + 1] >= 0 else (alpha_old[i + 1] if i < N - 1 else al)
+                # Donor-cell using OLD enthalpy values
+                flow_in_v = mv_in if has_drift_flux else mdot[i]
+                flow_out_v = mv_out if has_drift_flux else mdot[i + 1]
+                hv_in = h_v_old[i - 1] if (i > 0 and flow_in_v >= 0) else h_v_old[i]
+                hv_out = h_v_old[i] if flow_out_v >= 0 else (h_v_old[i + 1] if i < N - 1 else h_v_old[i])
 
-                mv_in = mdot[i] * al_in
-                mv_out = mdot[i + 1] * al_out
-
-                flux_v = mv_in * (hv_in - h_v[i]) - mv_out * (hv_out - h_v[i])
+                flux_v = mv_in * (hv_in - h_v_old[i]) - mv_out * (hv_out - h_v_old[i])
                 pw_v = al * self.V_cell * dp_dt[i]
                 qi_v = q_i_v[i] * self.V_cell
-                phase_v = Gamma[i] * h_v[i] * self.V_cell
+                phase_v = Gamma[i] * h_v_old[i] * self.V_cell
 
-                h_v[i] = h_v[i] + dt / m_v * (flux_v + pw_v + qi_v + phase_v)
-                h_v[i] = max(1e4, min(h_v[i], 4e6))
+                h_v[i] = h_v_old[i] + dt / m_v * (flux_v + pw_v + qi_v + phase_v)
+                h_v[i] = max(h_sat_v[i], min(h_v[i], 4e6))  # Floor at h_sat_v, not 1e4
             else:
                 h_v[i] = h_sat_v[i]

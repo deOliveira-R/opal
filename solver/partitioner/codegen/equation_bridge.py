@@ -57,7 +57,17 @@ class OMEquationBridge:
                       'Gamma', 'q_i_l', 'q_i_v', 'V_gj', 'a_i', 'alpha_eff',
                       'T_l', 'T_sat_cell', 'h_sat_l', 'h_sat_v']:
             self._build_var_group(name, self.N)
-        self._build_var_group('Phi2', self.N + 1)
+        # Face-level variables (N+1 entries)
+        for name in ['Phi2', 'mdot_v', 'mdot_l', 'j_face',
+                      'alpha_face', 'rho_l_face', 'rho_v_face', 'V_gj_face']:
+            self._build_var_group(name, self.N + 1)
+
+        # Scalar bridge variables (critical flow, etc.)
+        # mdot_crit is a scalar (not array), so build manually
+        mdot_crit_name = f'{self.prefix}.mdot_crit'
+        if mdot_crit_name in self.info.all_vars:
+            idx = self.info.all_vars[mdot_crit_name].index
+            self._var_groups['mdot_crit'] = self._c_indices([idx])
 
         # mdot: states + dummy states, sorted by Modelica index
         mdot_entries = sorted(
@@ -176,11 +186,27 @@ class OMEquationBridge:
             self._set_group('h_v', h_v)
 
     def _set_group(self, var_name: str, values: np.ndarray):
-        """Write a numpy array to a variable group by name."""
-        if var_name in self._var_groups:
+        """Write a numpy array to a variable group by name.
+
+        Handles -1 sentinels (OM-eliminated variables) by writing only
+        available entries individually.
+        """
+        if var_name not in self._var_groups:
+            return
+        c_idx = self._var_groups[var_name]
+        n = min(len(values), len(c_idx))
+
+        # Check for sentinels
+        has_gaps = any(c_idx[i] == -1 for i in range(n))
+
+        if not has_gaps:
             self.lib.opal_bridge_set_vars(
-                len(values), self._var_groups[var_name],
-                values.ctypes.data_as(self._DP))
+                n, c_idx, values.ctypes.data_as(self._DP))
+        else:
+            # Write entries one by one, skipping eliminated slots
+            for i in range(n):
+                if c_idx[i] >= 0:
+                    self.lib.opal_bridge_set_var(c_idx[i], float(values[i]))
 
     def set_params_from_spec(self, spec, es=None):
         """Write parameters from a Pipe1DGridSpec + EquationSystem.
@@ -188,6 +214,10 @@ class OMEquationBridge:
         If `es` (EquationSystem from xml_reader) is provided, ALL parameter
         values are read from the extracted XML — the authoritative source.
         Otherwise, maps known spec fields to parameter names.
+
+        IMPORTANT: starts from zeros. Pass `es` (EquationSystem from XML) to
+        load ALL parameter values from Modelica (authoritative). Without `es`,
+        only geometry params from spec are set — closure params like H_i will be 0.
         """
         param_values = np.zeros(self.info.n_params)
 
@@ -197,7 +227,16 @@ class OMEquationBridge:
                 try:
                     p = es.param(pname)
                     if p.value is not None:
-                        param_values[pinfo.index] = float(p.value)
+                        # Handle booleans (OM stores as 'true'/'false' strings)
+                        if isinstance(p.value, str):
+                            if p.value.lower() == 'true':
+                                param_values[pinfo.index] = 1.0
+                            elif p.value.lower() == 'false':
+                                param_values[pinfo.index] = 0.0
+                            else:
+                                param_values[pinfo.index] = float(p.value)
+                        else:
+                            param_values[pinfo.index] = float(p.value)
                 except (KeyError, TypeError, ValueError):
                     pass
 
@@ -243,13 +282,48 @@ class OMEquationBridge:
         return out
 
     def get(self, var_name: str) -> np.ndarray:
-        """Generic getter: read a variable group by short name (e.g., 'rho_face')."""
+        """Generic getter: read a variable group by short name (e.g., 'rho_face').
+
+        Handles OM variable elimination: entries with index -1 (sentinel) are
+        filled from the nearest available neighbor. This happens when OM inlines
+        boundary values during compilation — the physics IS computed, just not
+        stored as a separate named variable.
+        """
         if var_name not in self._var_groups:
             raise KeyError(f"Variable group '{var_name}' not found. "
                            f"Available: {sorted(self._var_groups.keys())}")
         c_idx = self._var_groups[var_name]
         n = len(c_idx)
-        return self._get_array(c_idx, n)
+
+        # Check for sentinel entries (-1 = eliminated by OM)
+        has_gaps = any(c_idx[i] == -1 for i in range(n))
+
+        if not has_gaps:
+            return self._get_array(c_idx, n)
+
+        # Read available entries, fill gaps from nearest neighbor
+        out = np.zeros(n)
+        for i in range(n):
+            if c_idx[i] >= 0:
+                out[i] = self.lib.opal_bridge_get_var(c_idx[i])
+            else:
+                out[i] = float('nan')  # Mark for filling
+
+        # Fill NaN gaps from nearest available neighbor
+        for i in range(n):
+            if np.isnan(out[i]):
+                # Search forward
+                for j in range(i + 1, n):
+                    if not np.isnan(out[j]):
+                        out[i] = out[j]
+                        break
+                else:
+                    # Search backward
+                    for j in range(i - 1, -1, -1):
+                        if not np.isnan(out[j]):
+                            out[i] = out[j]
+                            break
+        return out
 
     def has(self, var_name: str) -> bool:
         """Check if a variable group exists in this model."""

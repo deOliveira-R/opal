@@ -143,17 +143,34 @@ class Parameterized5EqSolver:
             h_l_safe = max(self.h_l_min, h_l[i])
             h_v_safe = max(self.h_l_min * 10, h_v[i])
 
-            fp_l = self.fluid.evaluate(p_safe, h_l_safe)
-            fp_v = self.fluid.evaluate(p_safe, h_v_safe)
-            rho_l[i] = max(fp_l.rho, 1.0)
-            rho_v[i] = max(fp_v.rho, self.rv_floor_abs)
-            rho_m[i] = (1 - alpha[i]) * rho_l[i] + alpha[i] * rho_v[i]
-            T_l[i] = fp_l.T
-
+            # Saturation properties first (needed for metastable checks)
             pp = self.fluid.evaluate_phasic(p_safe)
             T_sat[i] = pp.T_sat
             h_sat_l[i] = pp.h_sat_l
             h_sat_v[i] = pp.h_sat_v
+
+            # Liquid properties with metastable extension
+            # When h_l > h_f (superheated liquid after depressurization):
+            #   rho_l = rho_f(p), not rho_ph(p, h_l) which gives two-phase mixture
+            #   T_l = T_sat + (h_l - h_f)/cp_l, not T_sat (equilibrium)
+            # Ref: RELAP5/MOD3 Vol I §3.2; matches Pipe1D_DriftFlux.mo lines 105-127
+            fp_l = self.fluid.evaluate(p_safe, h_l_safe)
+            if h_l_safe <= h_sat_l[i]:
+                rho_l[i] = max(fp_l.rho, 1.0)
+                T_l[i] = fp_l.T
+            else:
+                rho_l[i] = max(pp.rho_l, 1.0)
+                T_l[i] = T_sat[i] + (h_l_safe - h_sat_l[i]) / 4200.0
+
+            # Vapor properties with metastable extension
+            # When h_v < h_g: rho_v = rho_g(p), not rho_ph(p, h_v) which gives mixture
+            # Matches Pipe1D_DriftFlux.mo lines 109-112
+            fp_v = self.fluid.evaluate(p_safe, h_v_safe)
+            if h_v_safe >= h_sat_v[i]:
+                rho_v[i] = max(fp_v.rho, self.rv_floor_abs)
+            else:
+                rho_v[i] = max(pp.rho_v, self.rv_floor_abs)
+            rho_m[i] = (1 - alpha[i]) * rho_l[i] + alpha[i] * rho_v[i]
 
             h_mix = (1 - alpha[i]) * h_l[i] + alpha[i] * h_v[i]
             h_mix = max(self.h_l_min, min(self.h_v_max, h_mix))

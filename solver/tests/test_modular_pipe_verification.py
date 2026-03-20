@@ -634,12 +634,17 @@ class TestExtractionLevelBindings:
             "Must bind rho_outlet to rho_m[N]"
 
     def test_driftflux_drho_dp_at_h_mix_in_source(self):
-        """Verify DriftFlux evaluates drho_dp at h_mix, not h_l."""
+        """Verify DriftFlux evaluates drho_dp at h_mix for semi-implicit stability.
+
+        The 5-eq model uses h_mix (not phasic h_l/h_v) for the pressure
+        linearization because the mixture compressibility includes the thermal
+        (saturation curve shift) effect needed by the semi-implicit scheme.
+        """
         text = (OPAL_ROOT / "library" / "Pipes" / "Pipe1D_DriftFlux.mo").read_text()
         assert "drho_dp_h(p[i], h_mix[i])" in text, \
-            "drho_dp must be evaluated at h_mix[i]"
+            "drho_dp must be evaluated at h_mix[i] for semi-implicit stability"
         assert "drho_dp_h(p[i], h_l[i])" not in text, \
-            "drho_dp must NOT be evaluated at h_l[i]"
+            "drho_dp must NOT be evaluated at h_l[i] alone"
 
     def test_hem_drho_dp_at_h_in_source(self):
         """Verify HEM evaluates drho_dp at h[i], not h_mix."""

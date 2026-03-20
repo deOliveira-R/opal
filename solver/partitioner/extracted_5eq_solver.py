@@ -80,18 +80,33 @@ class Extracted5EqSolver:
             h_l_safe = max(h_l[i], 1e4)
             h_v_safe = max(h_v[i], 1e5)
 
-            fp_l = self.fluid.evaluate(p_safe, h_l_safe)
-            fp_v = self.fluid.evaluate(p_safe, h_v_safe)
-            rho_l[i] = max(fp_l.rho, 1.0)
-            rho_v[i] = max(fp_v.rho, 0.01)
-            rho_m[i] = (1 - alpha[i]) * rho_l[i] + alpha[i] * rho_v[i]
-            T_l[i] = fp_l.T
-
+            # Saturation properties first (needed for metastable checks)
             pp = self.fluid.evaluate_phasic(p_safe)
             T_sat[i] = pp.T_sat
             h_sat_l[i] = pp.h_sat_l
             h_sat_v[i] = pp.h_sat_v
             sigma_arr[i] = pp.sigma
+
+            # Liquid properties with metastable extension
+            # When h_l > h_f: rho_l = rho_f(p), T_l = T_sat + (h_l - h_f)/cp_l
+            # Ref: RELAP5/MOD3 Vol I §3.2; matches Pipe1D_DriftFlux.mo lines 105-127
+            fp_l = self.fluid.evaluate(p_safe, h_l_safe)
+            if h_l_safe <= h_sat_l[i]:
+                rho_l[i] = max(fp_l.rho, 1.0)
+                T_l[i] = fp_l.T
+            else:
+                rho_l[i] = max(pp.rho_l, 1.0)
+                T_l[i] = T_sat[i] + (h_l_safe - h_sat_l[i]) / 4200.0
+
+            # Vapor properties with metastable extension
+            # When h_v < h_g: rho_v = rho_g(p), not rho_ph(p, h_v) which gives mixture
+            # Matches Pipe1D_DriftFlux.mo lines 109-112
+            fp_v = self.fluid.evaluate(p_safe, h_v_safe)
+            if h_v_safe >= h_sat_v[i]:
+                rho_v[i] = max(fp_v.rho, 0.01)
+            else:
+                rho_v[i] = max(pp.rho_v, 0.01)
+            rho_m[i] = (1 - alpha[i]) * rho_l[i] + alpha[i] * rho_v[i]
 
             # Mixture properties for pressure linearization
             h_mix = (1 - alpha[i]) * h_l[i] + alpha[i] * h_v[i]

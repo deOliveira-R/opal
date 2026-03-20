@@ -185,12 +185,22 @@ package Water "OPAL water medium — unified IAPWS-IF97 API with event-free regi
     annotation(Inline=true);
   end rho_g;
 
+  function cp_f "Saturated liquid specific heat [J/(kg*K)] from pressure"
+    input Real p "Pressure [Pa]";
+    output Real cp_val;
+  algorithm
+    // cp at the saturated liquid state = Region 1 cp at (p, T_sat(p))
+    cp_val := IF97.Region1.cp_pT(p, IF97.Saturation.T_sat(p));
+    annotation(Inline=true);
+  end cp_f;
+
   function sigma "Surface tension [N/m] from pressure (IAPWS-IF97)"
     input Real p "Pressure [Pa]";
     output Real sigma_val;
   protected
-    Real T_s = IF97.Saturation.T_sat(p);
-    Real tau = 1 - T_s / 647.096 "Reduced temperature distance from critical";
+    Real p_safe = max(p, 700.0) "Floor at triple point to prevent T_sat failure";
+    Real T_s = IF97.Saturation.T_sat(p_safe);
+    Real tau = max(1 - T_s / 647.096, 1e-10) "Prevent negative tau near/above critical";
   algorithm
     // IAPWS 1994 correlation for surface tension of water
     // sigma = 0.2358 * tau^1.256 * (1 - 0.625 * tau)

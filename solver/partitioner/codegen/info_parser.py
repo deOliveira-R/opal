@@ -70,12 +70,21 @@ class ModelInfo:
         return self.parameters[name].index
 
     def vars_by_pattern(self, prefix: str, n: int) -> list[int]:
-        """Get indices for an array variable, e.g., vars_by_pattern('pipe.p', 3) → [6,7,8]."""
+        """Get indices for an array variable, e.g., vars_by_pattern('pipe.p', 3) → [6,7,8].
+
+        Returns a list of length n. If OM eliminated an entry (boundary inlining),
+        the index is -1 (sentinel). Callers must handle -1 entries.
+        """
         indices = []
         for i in range(1, n + 1):
             name = f"{prefix}[{i}]"
             if name in self.all_vars:
                 indices.append(self.all_vars[name].index)
+            else:
+                indices.append(-1)  # Sentinel: variable eliminated by OM
+        # Only return if at least one entry was found
+        if all(idx == -1 for idx in indices):
+            return []
         return indices
 
     def summary(self) -> str:
