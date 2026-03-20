@@ -20,10 +20,11 @@ See `docs/architecture.md` Cardinal Rule.
 - `Pipes/` — 1D pipe components
   - `PartialPipe1D.mo` — Base class: geometry, connectors, face densities, momentum (with Phi2), critical flow
   - `Pipe1D.mo` — 3-equation HEM (extends PartialPipe1D + mixture energy)
-  - `Pipe1D_DriftFlux.mo` — 5-equation drift-flux (extends PartialPipe1D + phasic energy, closures)
+  - `Pipe1D_DriftFlux.mo` — 5-equation drift-flux (extends PartialPipe1D + phasic energy, closures, drift-flux split)
+  - `PartialPipe1D` features: selectable critical flow (Ransom-Trapp/Henry-Fauske), time-varying C_d_eff, gravity
   - Concrete models provide: `rho_cell`, `Phi2`, `h_mix_outlet`, `rho_outlet`, properties, mass conservation, energy
 - `Media/` — Thermodynamic property packages
-  - `PartialMedium.mo` — Abstract interface (rho_ph, drho_dp_h, drho_dh_p, T_ph, T_sat, h_f, h_g, h_fg, rho_f, rho_g, sigma)
+  - `PartialMedium.mo` — Abstract interface (14 functions: rho_ph, drho_dp_h, drho_dh_p, T_ph, T_sat, h_f, h_g, h_fg, rho_f, rho_g, cp_f, k_f, mu_f, sigma)
   - `SimpleFluid.mo` — Linear verification fluid (hand-verifiable)
   - `Water.mo` — IAPWS-IF97 Regions 1, 2, 4 (pure Modelica)
   - `IF97/` — Gibbs functions, saturation, derivatives (Constants, Region1, Region2, Saturation, Derivatives)
@@ -37,7 +38,7 @@ See `docs/architecture.md` Cardinal Rule.
   - `FluidPort.mo` — Stream connector (p, m_flow, h_outflow)
 - `Numerics/` — Numerical methods in Modelica
   - `Limiters.mo` — TVD slope limiters (minmod, vanLeer, superbee, mc) + muscl_face
-  - `CriticalFlow.mo` — Ransom-Trapp critical flow model
+  - `CriticalFlow.mo` — Ransom-Trapp + Henry-Fauske critical flow models (selectable)
   - `TwoPhaseFriction.mo` — Martinelli-Nelson two-phase friction multiplier
 
 ### Planned (Phase 3+)
