@@ -410,9 +410,9 @@ def generate_bridge_c(info: ModelInfo, model_c: Path, functions_c: Path,
     lines.append('')
 
     # Generic API (model-independent)
-    _gen_generic_api(lines, info, func_sigs)
+    media_names = _gen_generic_api(lines, info, func_sigs)
 
-    return '\n'.join(lines)
+    return '\n'.join(lines), media_names
 
 
 def _gen_generic_api(lines: list, info: ModelInfo, func_sigs: list):
@@ -467,25 +467,27 @@ def _gen_generic_api(lines: list, info: ModelInfo, func_sigs: list):
     lines.append('')
 
     # Media function wrappers (model-independent API names)
-    _gen_media_wrappers(lines, func_sigs)
+    media_names = _gen_media_wrappers(lines, func_sigs)
+
+    return media_names  # returned so build_bridge can write the manifest
 
 
-def _gen_media_wrappers(lines: list, func_sigs: list):
+def _gen_media_wrappers(lines: list, func_sigs: list) -> list[str]:
     """Generate clean wrappers for media functions compiled into the bridge.
 
-    Every bridge .so exports the same API: opal_bridge_rho_ph(p, h), etc.
-    The internal OM function name varies by media package but the wrapper
-    name is fixed — model-independent.
+    Returns the list of wrapper names for the manifest JSON.
     """
     from .build_codegen import detect_medium_prefix, make_opal_name
 
     names = [f['name'] for f in func_sigs]
     medium_prefix = detect_medium_prefix(names)
+    wrapper_names = []
 
     lines.append('/* ── Media function wrappers (model-independent API) ── */')
     for f in func_sigs:
         short_name = make_opal_name(f['name'], medium_prefix)
         wrapper_name = 'opal_bridge_' + short_name.removeprefix('opal_')
+        wrapper_names.append(wrapper_name)
 
         wrapper_params = [(t, n) for t, n in f['params'] if 'threadData' not in t]
         param_decl = ', '.join(f'double {n}' for _, n in wrapper_params)
@@ -496,6 +498,8 @@ def _gen_media_wrappers(lines: list, func_sigs: list):
         lines.append(f'    return {f["name"]}(&_td, {param_call});')
         lines.append('}')
         lines.append('')
+
+    return wrapper_names
 
 
 def build_bridge(model_c: Path, functions_c: Path, functions_h: Path,
@@ -518,9 +522,14 @@ def build_bridge(model_c: Path, functions_c: Path, functions_h: Path,
     if output_so is None:
         output_so = model_c.parent / f'opal_bridge_{model_name}.so'
 
-    c_code = generate_bridge_c(info, model_c, functions_c, functions_h)
+    c_code, media_names = generate_bridge_c(info, model_c, functions_c, functions_h)
     gen_c = output_so.with_suffix('.c')
     gen_c.write_text(c_code)
+
+    # Write manifest JSON (media wrapper names for OMEquationBridge discovery)
+    import json
+    manifest = {'model': model_name, 'media_wrappers': media_names or []}
+    output_so.with_suffix('.json').write_text(json.dumps(manifest, indent=2))
 
     cmd = [
         'cc', '-shared', '-fPIC', '-O2',

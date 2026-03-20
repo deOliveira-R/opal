@@ -156,9 +156,6 @@ class BridgeSolver:
         # for consistency with the implicit pressure solve. This is the
         # standard approach in semi-implicit TH codes (RELAP5, TRACE).
         for i in range(N):
-            if rho_cell[i] < 0.01:
-                continue
-
             # Donor-cell face enthalpies (upwind selection with new mdot)
             if mdot[i] >= 0:
                 h_in = h[i - 1] if i > 0 else h[0]

@@ -91,24 +91,40 @@ class OMEquationBridge:
     def _find_media_fn(self, suffix: str, argtypes: list):
         """Find a media function wrapper by suffix (e.g., 'rho_ph').
 
-        The bridge exports media wrappers with names like:
-          opal_bridge_rho_ph (SimpleFluid, short prefix)
-          opal_bridge_WaterTest_pipe_Medium_rho_ph (Water, qualified prefix)
-        We scan for any exported function ending in the suffix.
+        Uses the manifest JSON emitted by bridge_codegen.py alongside the .so.
+        Falls back to ctypes probing with known naming patterns.
         """
-        import subprocess
         D = self._D
-        result = subprocess.run(['nm', '-gU', str(self.lib._name)],
-                                capture_output=True, text=True)
-        for line in result.stdout.split('\n'):
-            parts = line.split()
-            if len(parts) >= 3:
-                sym = parts[2].lstrip('_')
-                if sym.startswith('opal_bridge_') and sym.endswith(f'_{suffix}'):
-                    fn = getattr(self.lib, sym)
-                    fn.restype = D
-                    fn.argtypes = argtypes
-                    return fn
+
+        # Try loading the manifest (emitted by bridge_codegen.py)
+        manifest_path = Path(str(self.lib._name)).with_suffix('.json')
+        if manifest_path.exists():
+            import json
+            manifest = json.loads(manifest_path.read_text())
+            for name in manifest.get('media_wrappers', []):
+                if name.endswith(f'_{suffix}'):
+                    try:
+                        fn = getattr(self.lib, name)
+                        fn.restype = D
+                        fn.argtypes = argtypes
+                        return fn
+                    except AttributeError:
+                        continue
+
+        # Fallback: try common patterns via ctypes probing
+        candidates = [
+            f'opal_bridge_{suffix}',
+            f'opal_bridge_{self.info.model_name}_{self.prefix}_Medium_{suffix}',
+        ]
+        for name in candidates:
+            try:
+                fn = getattr(self.lib, name)
+                fn.restype = D
+                fn.argtypes = argtypes
+                return fn
+            except AttributeError:
+                continue
+
         return None
 
     def _c_indices(self, indices: list[int]) -> ctypes.Array:
