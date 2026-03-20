@@ -209,6 +209,21 @@ package Water "OPAL water medium — unified IAPWS-IF97 API with event-free regi
     annotation(Inline=true);
   end k_f;
 
+  function mu_f "Saturated liquid dynamic viscosity [Pa*s] from pressure"
+    input Real p "Pressure [Pa]";
+    output Real mu_val;
+  protected
+    Real p_safe = max(p, 700.0);
+    Real T_s = IF97.Saturation.T_sat(p_safe);
+    Real T_star = T_s / 647.096 "Reduced temperature";
+  algorithm
+    // Log-quadratic fit to IAPWS 2008 saturated liquid viscosity, 0.1-15 MPa.
+    // mu_f = exp(a2*T*^2 + a1*T* + a0), T* = T_sat/T_c.
+    // Fitted against 9 data points from iapws oracle. Max error: 3.9%.
+    mu_val := exp(4.1410 * T_star^2 - 9.8872 * T_star - 3.8801);
+    annotation(Inline=true);
+  end mu_f;
+
   function sigma "Surface tension [N/m] from pressure (IAPWS-IF97)"
     input Real p "Pressure [Pa]";
     output Real sigma_val;

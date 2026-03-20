@@ -90,6 +90,14 @@ package SimpleFluid "Synthetic test fluid — linear properties for rigorous two
     annotation(Inline=true);
   end cp_f;
 
+  function mu_f "Saturated liquid dynamic viscosity [Pa*s] — constant"
+    input Real p "Pressure [Pa]";
+    output Real mu_val;
+  algorithm
+    mu_val := 1e-4 "Typical water value at ~7 MPa (91 µPa·s)";
+    annotation(Inline=true);
+  end mu_f;
+
   function k_f "Saturated liquid thermal conductivity [W/(m*K)] — constant"
     input Real p "Pressure [Pa]";
     output Real k_val;
@@ -104,7 +112,7 @@ package SimpleFluid "Synthetic test fluid — linear properties for rigorous two
   algorithm
     // Typical water surface tension at ~10 MPa (~0.02 N/m)
     // Linear decrease toward critical point
-    sigma_val := 0.06 - 0.04 * (p - p_ref) / p_ref;
+    sigma_val := max(0.06 - 0.04 * (p - p_ref) / p_ref, 1e-6);
     annotation(Inline=true);
   end sigma;
 

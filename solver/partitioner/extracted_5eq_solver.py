@@ -96,7 +96,8 @@ class Extracted5EqSolver:
                 T_l[i] = fp_l.T
             else:
                 rho_l[i] = max(pp.rho_l, 1.0)
-                T_l[i] = T_sat[i] + (h_l_safe - h_sat_l[i]) / 4200.0
+                cp_l = pp.cp_l if hasattr(pp, 'cp_l') and pp.cp_l > 0 else 4200.0
+                T_l[i] = T_sat[i] + (h_l_safe - h_sat_l[i]) / cp_l
 
             # Vapor properties with metastable extension
             # When h_v < h_g: rho_v = rho_g(p), not rho_ph(p, h_v) which gives mixture

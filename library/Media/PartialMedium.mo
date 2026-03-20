@@ -70,6 +70,11 @@ partial package PartialMedium
     output Real k_val;
   end k_f;
 
+  function mu_f "Saturated liquid dynamic viscosity [Pa*s] from pressure"
+    input Real p "Pressure [Pa]";
+    output Real mu_val;
+  end mu_f;
+
   function sigma "Surface tension [N/m] from pressure"
     input Real p "Pressure [Pa]";
     output Real sigma_val;
@@ -80,7 +85,7 @@ partial package PartialMedium
 <p>All media (SimpleFluid, Water) implement these functions:</p>
 <ul>
 <li>Mixture: <code>rho_ph</code>, <code>T_ph</code>, <code>drho_dp_h</code>, <code>drho_dh_p</code></li>
-<li>Phasic: <code>T_sat</code>, <code>h_f</code>, <code>h_g</code>, <code>h_fg</code>, <code>rho_f</code>, <code>rho_g</code>, <code>cp_f</code>, <code>k_f</code></li>
+<li>Phasic: <code>T_sat</code>, <code>h_f</code>, <code>h_g</code>, <code>h_fg</code>, <code>rho_f</code>, <code>rho_g</code>, <code>cp_f</code>, <code>k_f</code>, <code>mu_f</code></li>
 </ul>
 <p>Components use <code>replaceable package Medium constrainedby PartialMedium</code>
 to allow fluid swapping without changing equations.</p>

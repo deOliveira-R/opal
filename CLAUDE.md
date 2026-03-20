@@ -8,7 +8,7 @@ Architecture: "Option 4" — extract equations from OpenModelica, route to purpo
 
 ## Current Phase
 
-**Phase 3 preparation.** Feasibility (Phase 0), single-phase solver (Phase 1), two-phase solver (Phase 2), and Modelica parity (Phase 2.5) complete. Edwards blowdown validated at 79.8% MAPE through the Modelica extraction pipeline. Now preparing for multi-component systems (Phase 3).
+**Phase 3 preparation.** Feasibility (Phase 0), single-phase solver (Phase 1), two-phase solver (Phase 2), and Modelica parity (Phase 2.5) complete. Edwards blowdown validated at **26.9% MAPE** through the full Modelica→OM→bridge pipeline (True Case 2: zero physics in solver). Now preparing for multi-component systems (Phase 3).
 
 ## Cardinal Rule
 
@@ -27,7 +27,7 @@ opal/
 ├── solver/            # Extraction pipeline + numerical solvers
 │   ├── partitioner/   #   xml_reader, pipe1d_mapper, equation_classifier,
 │   │                  #   model_spec, extracted_solver, parameterized_5eq_solver
-│   ├── tests/         #   549 tests (330 C++ reference + 219 Modelica-side)
+│   ├── tests/         #   797 tests (C++ reference + Modelica + bridge + QA gaps)
 │   ├── two_phase/     #   Compiled .so for C++ property evaluation + tests
 │   └── single_phase/  #   Compiled .so for Phase 1 tests
 ├── feasibility/       # Phase 0: extraction tests — COMPLETE
@@ -75,7 +75,22 @@ Full phase descriptions: `@docs/architecture.md`
 |-------|---------------|------|
 | Modelica HEM + IAPWS | Pipe1D.mo + Water.mo | 100.7% |
 | Modelica HEM + IAPWS + critical flow | + CriticalFlow.mo | 81.0% |
-| Modelica 5-eq drift-flux | Pipe1D_DriftFlux.mo (all closures) | 79.8% |
+| 5-eq Python (metastable fix) | C++ fluid + Python closures | 30.0% |
+| **5-eq Bridge (True Case 2)** | **ALL from Modelica** | **26.9%** |
+
+Key features in the 26.9% result: metastable T_l via cp_f(p), drift-flux phasic split (V_gj + C_0),
+physics-based interfacial HT (Ranz-Marshall + geometric IAC), Martinelli-Nelson Phi2,
+Ransom-Trapp critical flow, implicit friction resistance, break opening ramp.
+See `docs/validation/edwards/LESSONS_LEARNED.md` for full analysis.
+
+## Current Capabilities (QA Audit 2026-03-20)
+
+**Working:** 1D pipe (HEM + 5-eq drift-flux), SimpleFluid + IAPWS-IF97 (R1/R2/R4),
+wall/pressure/break BCs, critical flow, two-phase friction, MUSCL, full extraction pipeline.
+
+**Missing for Phase 3:** Multi-component coupling, pump/valve/HX components, heat structure
+coupling, transport properties (μ, k), Region 3 IAPWS, time-varying BC extraction,
+subsystem partitioner. See QA audit report for details.
 
 ## Working With Claude
 
