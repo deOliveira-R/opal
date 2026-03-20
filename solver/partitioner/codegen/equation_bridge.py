@@ -85,9 +85,31 @@ class OMEquationBridge:
         self.lib.opal_bridge_get_n_vars.restype = I
         self.lib.opal_bridge_get_n_params.restype = I
 
-        # Media function wrappers
-        self.lib.opal_bridge_rho_ph.restype = D
-        self.lib.opal_bridge_rho_ph.argtypes = [D, D]
+        # Media function: find the rho_ph wrapper (name varies by media package)
+        self._rho_ph_fn = self._find_media_fn('rho_ph', [D, D])
+
+    def _find_media_fn(self, suffix: str, argtypes: list):
+        """Find a media function wrapper by suffix (e.g., 'rho_ph').
+
+        The bridge exports media wrappers with names like:
+          opal_bridge_rho_ph (SimpleFluid, short prefix)
+          opal_bridge_WaterTest_pipe_Medium_rho_ph (Water, qualified prefix)
+        We scan for any exported function ending in the suffix.
+        """
+        import subprocess
+        D = self._D
+        result = subprocess.run(['nm', '-gU', str(self.lib._name)],
+                                capture_output=True, text=True)
+        for line in result.stdout.split('\n'):
+            parts = line.split()
+            if len(parts) >= 3:
+                sym = parts[2].lstrip('_')
+                if sym.startswith('opal_bridge_') and sym.endswith(f'_{suffix}'):
+                    fn = getattr(self.lib, sym)
+                    fn.restype = D
+                    fn.argtypes = argtypes
+                    return fn
+        return None
 
     def _c_indices(self, indices: list[int]) -> ctypes.Array:
         """Convert Python index list to a ctypes int array (allocated once)."""
@@ -164,11 +186,13 @@ class OMEquationBridge:
 
     def get_rho_cell(self) -> np.ndarray:
         """Cell densities from rho_ph(p[i], h[i]) via bridge media wrapper."""
+        if self._rho_ph_fn is None:
+            raise RuntimeError("No rho_ph media function found in bridge .so")
         p_vals = self._get_array(self._p_idx, self.N)
         h_vals = self._get_array(self._h_idx, self.N)
         out = np.zeros(self.N)
         for i in range(self.N):
-            out[i] = self.lib.opal_bridge_rho_ph(p_vals[i], h_vals[i])
+            out[i] = self._rho_ph_fn(p_vals[i], h_vals[i])
         return out
 
     def get_all_vars(self) -> np.ndarray:
