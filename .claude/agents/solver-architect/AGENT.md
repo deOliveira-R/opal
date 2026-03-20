@@ -18,21 +18,28 @@ You are the solver architecture specialist for the OPAL thermal-hydraulic simula
 ```
 Modelica model (.mo)
     |
-    v  OpenModelica (dumpXMLDAE, translateModel)
-Extracted equations (XML) + compiled C code
+    v  OpenModelica (dumpXMLDAE + translateModel)
+Extracted equations (XML) + compiled C code (.so)
     |
-    v  Extraction pipeline (Python)
-    xml_reader -> pipe1d_mapper -> equation_classifier
+    v  Case 1: xml_reader → pipe1d_mapper → Parameterized5EqSolver
+    v  Case 2: bridge_codegen → OMEquationBridge → BridgeDriftFluxSolver (PRODUCTION)
     |
-    v  Semi-implicit solver (Python)
-    extracted_solver (3-eq HEM) or parameterized_5eq_solver (5-eq drift-flux)
-    |
-    v  Results (compared against experimental data)
+    v  Results (Edwards blowdown: 28.2% MAPE, all physics from Modelica)
 ```
 
 Two OM outputs work together:
-- `dumpXMLDAE(backEnd)` produces equation **structure** (partitioner uses this)
-- `translateModel` produces compiled **C code** (solver runtime evaluation -- Case 2, in progress)
+- `dumpXMLDAE(backEnd)` → equation **structure** (partitioner, Case 1)
+- `translateModel` → compiled **C code** (bridge solver runtime, Case 2 — **PRODUCTION**)
+
+### Key Numerical Techniques (discovered during Edwards validation)
+- **Implicit friction resistance**: `beta_eff = beta/(1+sigma)` — principled tridiagonal
+  stabilization derived from semi-implicit friction. No lazy drho_dp floors.
+- **Mixture h_mix for drho_dp**: thermal compressibility needed by semi-implicit scheme.
+  Phasic drho_dp is theoretically correct for 5-eq but numerically insufficient.
+- **Conservative void in solver**: Modelica writes non-conservative `rho_v*der(alpha)`,
+  solver does conservative `alpha*rho_v` product update. Correct operator splitting.
+- **OM parameter caveat**: `max(param_a, param_b)` evaluated at compile time, not runtime.
+  Use variables instead of parameter-parameter expressions if runtime tuning needed.
 
 ### Layer 1: Modelica Models
 - Components in `library/` -- pipes, pumps, vessels, boundary conditions, media

@@ -150,3 +150,21 @@ external/venv/bin/python -m pytest docs/math/opal_sympy/tests/test_all.py -v
 5. **When someone wants to skip testing:** The cost of finding a bug during development is 10x less than finding it in production. Two bugs escaped 32 tests because those tests lacked term-level verification. Do not repeat this.
 
 6. **When reviewing Modelica changes:** The same 6 failure modes apply to `.mo` files. A sign flip in a Modelica closure propagates through extraction into the solver. Verify that extraction-level tests (`test_drift_flux_modelica.py`, `test_extracted_solver.py`) cover the changed equations.
+
+## Current State (2026-03-20)
+
+### Test Suite: 830 tests across 24+ files
+- `test_bridge_5eq.py` — 27 tests: bridge solver properties, conservative void, energy terms, drift-flux identity
+- `test_5eq_coverage_gaps.py` — 46+ tests: V_gj, Phi2, metastable T_l, flow reversal, critical flow (RT+HF), Henry-Fauske (21 L0 tests)
+- `test_mms_convergence.py` — 24 tests: HEM + two-phase MMS with donor-cell and MUSCL
+- `test_drift_flux_modelica.py` — 69 tests: 5-eq closures vs hand calcs
+- `test_equation_bridge.py` — 42 tests: info parser, token rewriter, bridge parity
+
+### Known Gaps
+- Void-pressure coupling limits 5-eq MMS convergence for alpha and h_v (rate ~0.2 instead of ≥1.0)
+- 5-eq MMS with closures active not yet tested (current uses H_i=0)
+- No MMS for the bridge solver path (only C++ TwoPhaseSolver)
+- No multi-component system tests
+
+### Key Lesson from This Session
+A non-conservative void fraction equation escaped QA because ALL void tests ran at constant pressure where the dropped term (alpha*der(rho_v)) is zero. **Test under conditions that exercise the physics feature being verified.** For depressurization bugs, test under depressurization.
