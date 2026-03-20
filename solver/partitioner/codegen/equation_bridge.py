@@ -1,15 +1,13 @@
 """
-equation_bridge.py — Python wrapper for the OM equation-level C bridge.
+equation_bridge.py — Python wrapper for the generic OM equation bridge.
 
-Provides a clean API over the compiled bridge .so:
-  bridge = OMEquationBridge(so_path, info)
-  bridge.set_state(p, h, mdot)
-  bridge.evaluate()
-  rho = bridge.get_rho_face()
+The C bridge provides ONLY index-level access (set_vars/get_vars by integer index).
+This Python wrapper adds name-to-index mapping using ModelInfo from _info.json.
 
-This replaces BOTH the FluidPackage property calls AND the Python
-reimplementations of face density, donor-cell, closures, etc.
-The solver becomes a pure numerical engine.
+    bridge = OMEquationBridge(so_path, info)
+    bridge.set_state(p, h, mdot)       # maps variable names to indices
+    bridge.evaluate()                   # calls OM equations in BLT order
+    rho_face = bridge.get_rho_face()   # reads by index, returns numpy array
 """
 
 import ctypes
@@ -20,48 +18,46 @@ from .info_parser import ModelInfo
 
 
 class OMEquationBridge:
-    """Direct bridge to OM-generated per-equation C functions.
+    """Generic bridge to OM-generated per-equation C functions.
 
-    All algebraic evaluation (properties, face densities, donor-cell enthalpies,
-    closures) happens in a single C call to opal_bridge_evaluate(). The Python
-    solver only needs to set state, evaluate, and read results.
+    All name-to-index mapping happens here in Python, driven by ModelInfo.
+    The C bridge is model-independent (only flat arrays + evaluate).
     """
 
     def __init__(self, so_path, info: ModelInfo):
-        """
-        Args:
-            so_path: Path to compiled opal_bridge_{Model}.so
-            info: Parsed ModelInfo from _info.json
-        """
         self.lib = ctypes.CDLL(str(so_path))
         self.info = info
-        self.prefix = self._detect_prefix()
-        self.N = self._detect_N()
 
         self._D = ctypes.c_double
         self._I = ctypes.c_int
         self._DP = ctypes.POINTER(ctypes.c_double)
+        self._IP = ctypes.POINTER(ctypes.c_int)
 
         self._setup_signatures()
 
-        # Cache variable group indices for fast access
-        self._p_idx = info.vars_by_pattern(f'{self.prefix}.p', self.N)
-        self._h_idx = info.vars_by_pattern(f'{self.prefix}.h', self.N)
-        self._rho_face_idx = info.vars_by_pattern(f'{self.prefix}.rho_face', self.N + 1)
-        self._h_face_idx = info.vars_by_pattern(f'{self.prefix}.h_face', self.N + 1)
-        self._drho_dp_idx = info.vars_by_pattern(f'{self.prefix}.drho_dp', self.N)
-        self._drho_dh_idx = info.vars_by_pattern(f'{self.prefix}.drho_dh', self.N)
-        self._T_cell_idx = info.vars_by_pattern(f'{self.prefix}.T_cell', self.N)
+        # Detect model structure from info
+        self.prefix = self._detect_prefix()
+        self.N = self._detect_N()
 
-        # mdot indices (states + dummy states, sorted by Modelica index)
-        self._mdot_idx = sorted(
+        # Build index arrays for variable groups (computed once, reused every step)
+        self._p_idx = self._c_indices(info.vars_by_pattern(f'{self.prefix}.p', self.N))
+        self._h_idx = self._c_indices(info.vars_by_pattern(f'{self.prefix}.h', self.N))
+        self._rho_face_idx = self._c_indices(info.vars_by_pattern(f'{self.prefix}.rho_face', self.N + 1))
+        self._h_face_idx = self._c_indices(info.vars_by_pattern(f'{self.prefix}.h_face', self.N + 1))
+        self._drho_dp_idx = self._c_indices(info.vars_by_pattern(f'{self.prefix}.drho_dp', self.N))
+        self._drho_dh_idx = self._c_indices(info.vars_by_pattern(f'{self.prefix}.drho_dh', self.N))
+        self._T_cell_idx = self._c_indices(info.vars_by_pattern(f'{self.prefix}.T_cell', self.N))
+
+        # mdot: states + dummy states, sorted by Modelica index
+        mdot_entries = sorted(
             [(int(name.split('[')[1].rstrip(']')), vi.index)
              for name, vi in info.all_vars.items()
              if f'{self.prefix}.mdot[' in name and vi.kind in ('state', 'dummy state')],
             key=lambda x: x[0]
         )
+        self._mdot_idx = self._c_indices([idx for _, idx in mdot_entries])
 
-        # Pressure bounds (from SimpleFluid defaults — override via set_pressure_bounds)
+        # Pressure bounds (defaults — can be overridden)
         self.p_min = 1e4
         self.p_max = 50e6
 
@@ -75,137 +71,110 @@ class OMEquationBridge:
         return len([n for n in self.info.states if n.startswith(f'{self.prefix}.p[')])
 
     def _setup_signatures(self):
-        """Configure ctypes function signatures."""
-        D, I, DP = self._D, self._I, self._DP
-        self.lib.opal_bridge_set_state.argtypes = [I, DP, I, DP, I, DP]
+        """Configure ctypes function signatures for the generic C API."""
+        D, I, DP, IP = self._D, self._I, self._DP, self._IP
+
+        self.lib.opal_bridge_set_var.argtypes = [I, D]
+        self.lib.opal_bridge_get_var.argtypes = [I]
+        self.lib.opal_bridge_get_var.restype = D
+        self.lib.opal_bridge_set_vars.argtypes = [I, IP, DP]
+        self.lib.opal_bridge_get_vars.argtypes = [I, IP, DP]
+        self.lib.opal_bridge_set_param.argtypes = [I, D]
         self.lib.opal_bridge_set_params.argtypes = [I, DP]
         self.lib.opal_bridge_evaluate.argtypes = []
-        self.lib.opal_bridge_get_rho_face.argtypes = [I, DP]
-        self.lib.opal_bridge_get_h_face.argtypes = [I, DP]
-        self.lib.opal_bridge_get_drho_dp.argtypes = [I, DP]
-        self.lib.opal_bridge_get_drho_dh.argtypes = [I, DP]
-        self.lib.opal_bridge_get_T_cell.argtypes = [I, DP]
-        self.lib.opal_bridge_get_all_vars.argtypes = [I, DP]
-        self.lib.opal_bridge_get_N.restype = I
         self.lib.opal_bridge_get_n_vars.restype = I
         self.lib.opal_bridge_get_n_params.restype = I
 
-    def set_params_from_spec(self, spec):
-        """Write parameters from a Pipe1DGridSpec or ExtractedModelSpec.
+        # Media function wrappers
+        self.lib.opal_bridge_rho_ph.restype = D
+        self.lib.opal_bridge_rho_ph.argtypes = [D, D]
 
-        Reads geometry and boundary parameters by name from the info map.
-        """
-        import math
+    def _c_indices(self, indices: list[int]) -> ctypes.Array:
+        """Convert Python index list to a ctypes int array (allocated once)."""
+        return (ctypes.c_int * len(indices))(*indices)
+
+    # ── State set/get (name-aware, index-driven) ──
+
+    def set_state(self, p: np.ndarray, h: np.ndarray, mdot: np.ndarray):
+        """Write current state into the bridge flat arrays."""
+        self.lib.opal_bridge_set_vars(len(p), self._p_idx,
+                                       p.ctypes.data_as(self._DP))
+        self.lib.opal_bridge_set_vars(len(h), self._h_idx,
+                                       h.ctypes.data_as(self._DP))
+        self.lib.opal_bridge_set_vars(len(mdot), self._mdot_idx,
+                                       mdot.ctypes.data_as(self._DP))
+
+    def set_params_from_spec(self, spec):
+        """Write parameters from a Pipe1DGridSpec."""
         param_values = np.zeros(self.info.n_params)
 
         # Map spec attributes to parameter names
-        param_map = {
+        name_to_value = {
             f'{self.prefix}.A_flow': spec.A_flow,
             f'{self.prefix}.D_h': spec.D_h,
             f'{self.prefix}.dx': spec.dx,
             f'{self.prefix}.f_D': spec.f_D,
             f'{self.prefix}.V_cell': spec.V_cell,
         }
-
-        # Try to get L and D from spec
         if hasattr(spec, 'N'):
-            N = spec.N
-            L = spec.dx * N
-            D = spec.D_h
-            param_map[f'{self.prefix}.L'] = L
-            param_map[f'{self.prefix}.D'] = D
+            name_to_value[f'{self.prefix}.L'] = spec.dx * spec.N
+            name_to_value[f'{self.prefix}.D'] = spec.D_h
 
-        # Outlet pressure/enthalpy from boundary
-        if hasattr(spec, 'p_out') and spec.p_out is not None:
-            # Find the boundary parameter name (e.g., atm.p_set)
-            for pname, pinfo in self.info.parameters.items():
-                if pname.endswith('.p_set'):
-                    param_values[pinfo.index] = spec.p_out
-                if pname.endswith('.h_set') and hasattr(spec, 'h_out') and spec.h_out:
-                    param_values[pinfo.index] = spec.h_out
-
-        # Initial conditions
-        if hasattr(spec, 'p0') and spec.p0:
-            for pname, pinfo in self.info.parameters.items():
-                if pname == f'{self.prefix}.p_init':
-                    param_values[pinfo.index] = spec.p0[0]
-        if hasattr(spec, 'h0') and spec.h0:
-            for pname, pinfo in self.info.parameters.items():
-                if pname == f'{self.prefix}.h_init':
-                    param_values[pinfo.index] = spec.h0[0]
-
-        # Write known parameters
-        for pname, value in param_map.items():
-            if pname in self.info.parameters:
-                param_values[self.info.parameters[pname].index] = value
+        for pname, pinfo in self.info.parameters.items():
+            if pname in name_to_value:
+                param_values[pinfo.index] = name_to_value[pname]
+            elif pname.endswith('.p_set') and hasattr(spec, 'p_out') and spec.p_out:
+                param_values[pinfo.index] = spec.p_out
+            elif pname.endswith('.h_set') and hasattr(spec, 'h_out') and spec.h_out:
+                param_values[pinfo.index] = spec.h_out
+            elif pname == f'{self.prefix}.p_init' and hasattr(spec, 'p0') and spec.p0:
+                param_values[pinfo.index] = spec.p0[0]
+            elif pname == f'{self.prefix}.h_init' and hasattr(spec, 'h0') and spec.h0:
+                param_values[pinfo.index] = spec.h0[0]
 
         self.lib.opal_bridge_set_params(
             self.info.n_params, param_values.ctypes.data_as(self._DP))
 
-    def set_state(self, p: np.ndarray, h: np.ndarray, mdot: np.ndarray):
-        """Write current state into the bridge arrays."""
-        self.lib.opal_bridge_set_state(
-            len(p), p.ctypes.data_as(self._DP),
-            len(h), h.ctypes.data_as(self._DP),
-            len(mdot), mdot.ctypes.data_as(self._DP),
-        )
-
     def evaluate(self):
-        """Call all algebraic OM equations in BLT order.
-
-        After this call, all derived quantities (rho, rho_face, h_face,
-        drho_dp, drho_dh, T_cell, etc.) are computed and readable.
-        """
+        """Call all algebraic OM equations in BLT order."""
         self.lib.opal_bridge_evaluate()
 
-    def get_rho_face(self) -> np.ndarray:
-        """Face densities rho_face[1..N+1] (N+1 values, 0-indexed in output)."""
-        out = np.zeros(self.N + 1)
-        self.lib.opal_bridge_get_rho_face(self.N + 1, out.ctypes.data_as(self._DP))
+    # ── Named getters (Python maps names to indices, C does array[index]) ──
+
+    def _get_array(self, c_indices, n: int) -> np.ndarray:
+        """Generic getter: read n values at the given ctypes index array."""
+        out = np.zeros(n)
+        self.lib.opal_bridge_get_vars(n, c_indices, out.ctypes.data_as(self._DP))
         return out
+
+    def get_rho_face(self) -> np.ndarray:
+        return self._get_array(self._rho_face_idx, self.N + 1)
 
     def get_drho_dp(self) -> np.ndarray:
-        """Pressure derivative drho_dp[1..N] (N values, 0-indexed in output)."""
-        out = np.zeros(self.N)
-        self.lib.opal_bridge_get_drho_dp(self.N, out.ctypes.data_as(self._DP))
-        return out
+        return self._get_array(self._drho_dp_idx, self.N)
 
     def get_drho_dh(self) -> np.ndarray:
-        """Enthalpy derivative drho_dh[1..N] (N values, 0-indexed in output)."""
-        out = np.zeros(self.N)
-        self.lib.opal_bridge_get_drho_dh(self.N, out.ctypes.data_as(self._DP))
-        return out
+        return self._get_array(self._drho_dh_idx, self.N)
 
     def get_h_face(self) -> np.ndarray:
-        """Donor-cell face enthalpies h_face[1..N+1] (N+1 values, 0-indexed)."""
-        out = np.zeros(self.N + 1)
-        self.lib.opal_bridge_get_h_face(self.N + 1, out.ctypes.data_as(self._DP))
-        return out
+        return self._get_array(self._h_face_idx, self.N + 1)
 
     def get_T_cell(self) -> np.ndarray:
-        """Cell temperatures T_cell[1..N] (N values, 0-indexed)."""
-        out = np.zeros(self.N)
-        self.lib.opal_bridge_get_T_cell(self.N, out.ctypes.data_as(self._DP))
-        return out
+        return self._get_array(self._T_cell_idx, self.N)
 
     def get_rho_cell(self) -> np.ndarray:
-        """Cell densities rho[1..N] computed from rho_ph(p[i], h[i]).
-        Uses the compiled media function directly (not from OM variables)."""
+        """Cell densities from rho_ph(p[i], h[i]) via bridge media wrapper."""
+        p_vals = self._get_array(self._p_idx, self.N)
+        h_vals = self._get_array(self._h_idx, self.N)
         out = np.zeros(self.N)
-        try:
-            self.lib.opal_bridge_get_rho_cell.argtypes = [self._I, self._DP]
-            self.lib.opal_bridge_get_rho_cell(self.N, out.ctypes.data_as(self._DP))
-        except AttributeError:
-            # Fallback: compute from rho_face (boundary = cell density)
-            rho_face = self.get_rho_face()
-            out[0] = rho_face[0]
-            out[-1] = rho_face[-1]
-            for i in range(1, self.N - 1):
-                out[i] = 2 * rho_face[i] - out[i - 1]
+        for i in range(self.N):
+            out[i] = self.lib.opal_bridge_rho_ph(p_vals[i], h_vals[i])
         return out
 
     def get_all_vars(self) -> np.ndarray:
         """Full variable array (for debugging)."""
-        out = np.zeros(self.info.n_vars)
-        self.lib.opal_bridge_get_all_vars(self.info.n_vars, out.ctypes.data_as(self._DP))
+        n = self.lib.opal_bridge_get_n_vars()
+        indices = self._c_indices(list(range(n)))
+        out = np.zeros(n)
+        self.lib.opal_bridge_get_vars(n, indices, out.ctypes.data_as(self._DP))
         return out

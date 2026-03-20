@@ -384,130 +384,93 @@ def generate_bridge_c(info: ModelInfo, model_c: Path, functions_c: Path,
     lines.append('}')
     lines.append('')
 
-    # State setter
-    _gen_state_setter(lines, info)
-
-    # Parameter setter
-    _gen_param_setter(lines, info)
-
-    # Getters for variable groups
-    _gen_getters(lines, info, func_sigs)
+    # Generic API (model-independent)
+    _gen_generic_api(lines, info, func_sigs)
 
     return '\n'.join(lines)
 
 
-def _gen_state_setter(lines: list, info: ModelInfo):
-    """Generate opal_bridge_set_state() function."""
-    prefix = _detect_prefix(info)
-    N = _detect_N(info, prefix)
+def _gen_generic_api(lines: list, info: ModelInfo, func_sigs: list):
+    """Generate the generic bridge API — works for ANY model.
 
-    p_indices = info.vars_by_pattern(f'{prefix}.p', N)
-    h_indices = info.vars_by_pattern(f'{prefix}.h', N)
+    The C bridge provides only index-level access. All name-to-index
+    mapping lives in Python (via info_parser.py + equation_bridge.py).
+    """
+    n_vars = info.n_vars
+    n_params = info.n_params
 
-    # mdot: find state and dummy-state mdot variables (NOT derivatives)
-    mdot_names = sorted(
-        [(name, vi.index) for name, vi in info.all_vars.items()
-         if f'{prefix}.mdot[' in name and vi.kind in ('state', 'dummy state')],
-        key=lambda x: int(x[0].split('[')[1].rstrip(']'))
-    )
+    lines.append('/* ══════════════════════════════════════════════════════ */')
+    lines.append('/* Generic bridge API — same for every model             */')
+    lines.append('/* ══════════════════════════════════════════════════════ */')
+    lines.append('')
 
-    lines.append(f'/* State setter: write p[N], h[N], mdot into opal_vars */')
-    lines.append(f'void opal_bridge_set_state(int n_p, double* p, int n_h, double* h,')
-    lines.append(f'                           int n_mdot, double* mdot) {{')
-
-    for i, idx in enumerate(p_indices):
-        lines.append(f'    if ({i} < n_p) opal_vars[{idx}] = p[{i}];')
-    for i, idx in enumerate(h_indices):
-        lines.append(f'    if ({i} < n_h) opal_vars[{idx}] = h[{i}];')
-    for i, (name, idx) in enumerate(mdot_names):
-        lines.append(f'    if ({i} < n_mdot) opal_vars[{idx}] = mdot[{i}]; /* {name} */')
-
+    # Single variable get/set
+    lines.append('void opal_bridge_set_var(int index, double value) {')
+    lines.append(f'    if (index >= 0 && index < {n_vars}) opal_vars[index] = value;')
+    lines.append('}')
+    lines.append(f'double opal_bridge_get_var(int index) {{')
+    lines.append(f'    return (index >= 0 && index < {n_vars}) ? opal_vars[index] : 0.0;')
     lines.append('}')
     lines.append('')
 
+    # Batch variable get/set (hot path — called every timestep)
+    lines.append('void opal_bridge_set_vars(int n, int* indices, double* values) {')
+    lines.append(f'    for (int i = 0; i < n; i++)')
+    lines.append(f'        if (indices[i] >= 0 && indices[i] < {n_vars})')
+    lines.append(f'            opal_vars[indices[i]] = values[i];')
+    lines.append('}')
+    lines.append('void opal_bridge_get_vars(int n, int* indices, double* values) {')
+    lines.append(f'    for (int i = 0; i < n; i++)')
+    lines.append(f'        values[i] = (indices[i] >= 0 && indices[i] < {n_vars})')
+    lines.append(f'                   ? opal_vars[indices[i]] : 0.0;')
+    lines.append('}')
+    lines.append('')
 
-def _gen_param_setter(lines: list, info: ModelInfo):
-    """Generate opal_bridge_set_params() function."""
-    lines.append(f'/* Parameter setter: write all {info.n_params} parameters */')
-    lines.append(f'void opal_bridge_set_params(int n, double* values) {{')
-    lines.append(f'    for (int i = 0; i < n && i < {info.n_params}; i++)')
+    # Parameter set (single + bulk)
+    lines.append('void opal_bridge_set_param(int index, double value) {')
+    lines.append(f'    if (index >= 0 && index < {n_params}) opal_params[index] = value;')
+    lines.append('}')
+    lines.append('void opal_bridge_set_params(int n, double* values) {')
+    lines.append(f'    for (int i = 0; i < n && i < {n_params}; i++)')
     lines.append(f'        opal_params[i] = values[i];')
     lines.append('}')
     lines.append('')
 
+    # Metadata
+    lines.append(f'int opal_bridge_get_n_vars(void) {{ return {n_vars}; }}')
+    lines.append(f'int opal_bridge_get_n_params(void) {{ return {n_params}; }}')
+    lines.append('')
 
-def _gen_getters(lines: list, info: ModelInfo, func_sigs: list = None):
-    """Generate getter functions for property groups."""
-    prefix = _detect_prefix(info)
-    N = _detect_N(info, prefix)
+    # Media function wrappers (model-independent API names)
+    _gen_media_wrappers(lines, func_sigs)
 
-    # Helper to generate a getter for an array variable
-    def _getter(func_name, var_pattern, count, comment):
-        indices = info.vars_by_pattern(var_pattern, count)
-        lines.append(f'/* {comment} */')
-        lines.append(f'void {func_name}(int n, double* out) {{')
-        for i, idx in enumerate(indices):
-            lines.append(f'    if ({i} < n) out[{i}] = opal_vars[{idx}];')
-        lines.append('}')
-        lines.append('')
 
-    _getter('opal_bridge_get_rho_face', f'{prefix}.rho_face', N + 1,
-            f'Face densities rho_face[1..{N+1}]')
-    _getter('opal_bridge_get_h_face', f'{prefix}.h_face', N + 1,
-            f'Donor-cell face enthalpies h_face[1..{N+1}]')
-    _getter('opal_bridge_get_drho_dp', f'{prefix}.drho_dp', N,
-            f'Pressure derivative drho_dp[1..{N}]')
-    _getter('opal_bridge_get_drho_dh', f'{prefix}.drho_dh', N,
-            f'Enthalpy derivative drho_dh[1..{N}]')
-    _getter('opal_bridge_get_T_cell', f'{prefix}.T_cell', N,
-            f'Cell temperature T_cell[1..{N}]')
+def _gen_media_wrappers(lines: list, func_sigs: list):
+    """Generate clean wrappers for media functions compiled into the bridge.
 
-    # rho_cell: OM may eliminate some pipe.rho[i] variables (inlined into rho_face).
-    # Compute cell density directly from rho_ph(p[i], h[i]) using the compiled media function.
-    p_indices = info.vars_by_pattern(f'{prefix}.p', N)
-    h_indices = info.vars_by_pattern(f'{prefix}.h', N)
+    Every bridge .so exports the same API: opal_bridge_rho_ph(p, h), etc.
+    The internal OM function name varies by media package but the wrapper
+    name is fixed — model-independent.
+    """
+    from .build_codegen import detect_medium_prefix, make_opal_name
 
-    # Find the rho_ph media function name from the function signatures
-    rho_ph_func = None
+    names = [f['name'] for f in func_sigs]
+    medium_prefix = detect_medium_prefix(names)
+
+    lines.append('/* ── Media function wrappers (model-independent API) ── */')
     for f in func_sigs:
-        if f['name'].endswith('rho__ph') and len(f['params']) == 3:  # threadData, p, h
-            rho_ph_func = f['name']
-            break
+        short_name = make_opal_name(f['name'], medium_prefix)
+        wrapper_name = 'opal_bridge_' + short_name.removeprefix('opal_')
 
-    if rho_ph_func and p_indices and h_indices:
-        lines.append(f'/* Cell density: computed from rho_ph(p[i], h[i]) */')
-        lines.append(f'void opal_bridge_get_rho_cell(int n, double* out) {{')
-        for i in range(min(N, len(p_indices), len(h_indices))):
-            lines.append(f'    if ({i} < n) out[{i}] = {rho_ph_func}(&_td, '
-                         f'opal_vars[{p_indices[i]}], opal_vars[{h_indices[i]}]);')
+        wrapper_params = [(t, n) for t, n in f['params'] if 'threadData' not in t]
+        param_decl = ', '.join(f'double {n}' for _, n in wrapper_params)
+        param_call = ', '.join(n for _, n in wrapper_params)
+
+        c_ret = 'double' if f['return_type'] == 'modelica_real' else 'long'
+        lines.append(f'{c_ret} {wrapper_name}({param_decl}) {{')
+        lines.append(f'    return {f["name"]}(&_td, {param_call});')
         lines.append('}')
         lines.append('')
-
-    # Generic getter: copy all vars
-    lines.append(f'void opal_bridge_get_all_vars(int n, double* out) {{')
-    lines.append(f'    for (int i = 0; i < n && i < {info.n_vars}; i++)')
-    lines.append(f'        out[i] = opal_vars[i];')
-    lines.append('}')
-    lines.append('')
-
-    # N getter
-    lines.append(f'int opal_bridge_get_N(void) {{ return {N}; }}')
-    lines.append(f'int opal_bridge_get_n_vars(void) {{ return {info.n_vars}; }}')
-    lines.append(f'int opal_bridge_get_n_params(void) {{ return {info.n_params}; }}')
-    lines.append('')
-
-
-def _detect_prefix(info: ModelInfo) -> str:
-    """Detect the component prefix from state variable names."""
-    for name in info.states:
-        if '.p[' in name:
-            return name.split('.p[')[0]
-    raise ValueError("Cannot detect prefix — no {prefix}.p[i] state found")
-
-
-def _detect_N(info: ModelInfo, prefix: str) -> int:
-    """Detect N (number of cells) from pressure state count."""
-    return len([n for n in info.states if n.startswith(f'{prefix}.p[')])
 
 
 def build_bridge(model_c: Path, functions_c: Path, functions_h: Path,
