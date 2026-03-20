@@ -100,13 +100,31 @@ equation
   // Phasic property evaluation (via replaceable Medium)
   // ─────────────────────────────────────────────────────────────────
   for i in 1:N loop
-    rho_l[i] = Medium.rho_ph(p[i], h_l[i]);
-    rho_v[i] = Medium.rho_ph(p[i], h_v[i]);
+    // Phasic densities: use saturated values when enthalpy crosses saturation
+    // (metastable extension — rho_l should be liquid density, not two-phase mixture)
+    rho_l[i] = if h_l[i] <= Medium.h_f(p[i]) then
+                 Medium.rho_ph(p[i], h_l[i])
+               else
+                 Medium.rho_f(p[i]);
+    rho_v[i] = if h_v[i] >= Medium.h_g(p[i]) then
+                 Medium.rho_ph(p[i], h_v[i])
+               else
+                 Medium.rho_g(p[i]);
     rho_m[i] = (1 - alpha[i]) * rho_l[i] + alpha[i] * rho_v[i];
-    T_l[i] = Medium.T_ph(p[i], h_l[i]);
     T_sat_cell[i] = Medium.T_sat(p[i]);
     h_sat_l[i] = Medium.h_f(p[i]);
     h_sat_v[i] = Medium.h_g(p[i]);
+
+    // Liquid temperature: metastable extension beyond saturation.
+    // When h_l > h_f (superheated liquid after depressurization), the equilibrium
+    // T_ph returns T_sat. For the 5-eq model we need the actual liquid temperature
+    // to drive interfacial heat transfer and flashing.
+    // T_l = T_sat + (h_l - h_f) / cp_l, where cp_l ≈ 4200 J/(kg·K) for water.
+    // Ref: RELAP5/MOD3 Vol I §3.2 — metastable liquid state extension.
+    T_l[i] = if h_l[i] <= h_sat_l[i] then
+               Medium.T_ph(p[i], h_l[i])
+             else
+               T_sat_cell[i] + (h_l[i] - h_sat_l[i]) / 4200.0;
 
     // Mixture derivatives for pressure linearisation
     drho_dp[i] = Medium.drho_dp_h(p[i], h_mix[i]);
