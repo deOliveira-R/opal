@@ -108,6 +108,11 @@ dt = 5e-5
 t_end = 0.6
 n_steps = int(t_end / dt)
 
+# Break opening ramp: Edwards experiment has a ~1.5ms glass disk break time.
+# The discharge coefficient ramps from 0 to C_d_final over t_open.
+# Ref: Edwards & O'Brien (1970) — glass disk shattering time ~1-2 ms.
+t_open = 3.0e-3  # 3.0 ms effective opening time (glass disk + expansion geometry)
+
 gauge_stations = edwards_blowdown["gauge_stations"]
 gs_cells = {}
 for name, gs in gauge_stations.items():
@@ -131,6 +136,8 @@ for step in range(n_steps):
         history.append((t, p.copy(), alpha.copy(), h_l.copy(), h_v.copy(), mdot.copy()))
         next_save_idx += 1
 
+    # Apply break opening ramp: C_d ramps linearly from 0 to 1 over t_open
+    solver.C_d_factor = min(t / t_open, 1.0) if t_open > 0 else 1.0
     solver.step(p, alpha, h_l, h_v, mdot, dt)
     t += dt
 

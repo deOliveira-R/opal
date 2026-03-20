@@ -149,11 +149,14 @@ class BridgeDriftFluxSolver:
         # ══════════════════════════════════════════════════════════
 
         # ── Critical flow (from Modelica via bridge) ──
+        # The C_d_factor allows time-varying discharge coefficient (e.g., break
+        # opening ramp). Set solver.C_d_factor before calling step().
         mdot_crit = 1e10
         outlet_choked = False
         if self.use_critical_flow and self.bridge.has('mdot_crit'):
             mdot_crit_arr = self.bridge.get('mdot_crit')
             mdot_crit = mdot_crit_arr[0] if len(mdot_crit_arr) > 0 else 1e10
+            mdot_crit *= getattr(self, 'C_d_factor', 1.0)
             outlet_choked = mdot_old[N] > 0
 
         # ── Friction with implicit resistance (semi-implicit friction treatment) ──
