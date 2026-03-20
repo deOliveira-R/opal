@@ -23,14 +23,17 @@ class BridgeDriftFluxSolver:
     phasic energy) from Python.
     """
 
-    def __init__(self, bridge: OMEquationBridge, spec, es=None):
+    def __init__(self, bridge: OMEquationBridge, spec, es=None,
+                 reconstruction='donor_cell'):
         """
         Args:
             bridge: OMEquationBridge with compiled Modelica model
             spec: Pipe1DGridSpec (geometry, BCs)
             es: EquationSystem from XML — pass this to load ALL parameter values
                 from Modelica (H_i, C_0, etc.). Without es, only geometry is set.
+            reconstruction: 'donor_cell' (1st order) or 'muscl' (2nd order, minmod TVD)
         """
+        self.reconstruction = reconstruction
         self.bridge = bridge
         self.N = bridge.N
         self.spec = spec
@@ -54,6 +57,48 @@ class BridgeDriftFluxSolver:
 
         # Set bridge parameters from spec + XML (es provides closure params)
         bridge.set_params_from_spec(spec, es=es)
+
+    @staticmethod
+    def _minmod(a, b):
+        """Minmod slope limiter: TVD, most diffusive limiter."""
+        if a * b <= 0:
+            return 0.0
+        return a if abs(a) < abs(b) else b
+
+    @staticmethod
+    def _muscl_face(field, i, N, mdot_face, bc_left, bc_right):
+        """MUSCL-reconstructed face value with minmod limiter.
+
+        For face i (between cell i-1 and cell i), reconstructs a second-order
+        value using the 4-point stencil [i-2, i-1, i, i+1] with donor-cell
+        upwinding and minmod slope limiting.
+        """
+        if mdot_face >= 0:
+            # Upwind from left: reconstruct at right edge of cell i-1
+            if i <= 0:
+                return bc_left
+            L = field[i - 1]
+            # Slopes
+            dL = (L - (field[i - 2] if i >= 2 else bc_left))
+            dR = (field[i] if i < N else bc_right) - L
+            # Minmod limited slope
+            if dL * dR <= 0:
+                slope = 0.0
+            else:
+                slope = dL if abs(dL) < abs(dR) else dR
+            return L + 0.5 * slope
+        else:
+            # Upwind from right: reconstruct at left edge of cell i
+            if i >= N:
+                return bc_right
+            R = field[i]
+            dL = R - (field[i - 1] if i > 0 else bc_left)
+            dR = (field[i + 1] if i < N - 1 else bc_right) - R
+            if dL * dR <= 0:
+                slope = 0.0
+            else:
+                slope = dL if abs(dL) < abs(dR) else dR
+            return R - 0.5 * slope
 
     @staticmethod
     def _thomas_solve(a, b, c, d):
@@ -222,8 +267,10 @@ class BridgeDriftFluxSolver:
             # Conservative: update alpha*rho_v product
             alpha_rho_v_new = al * rv + dt / self.V_cell * (flux_v + self.V_cell * Gamma[i])
 
-            # Extract alpha using rho_v at NEW pressure (semi-implicit coupling)
-            rv_new = max(rho_v[i], 0.01)  # TODO: evaluate at new p when bridge supports it
+            # Extract alpha using rho_v. Using old-pressure rho_v for now;
+            # new-pressure evaluation accelerates void growth too aggressively
+            # with the current explicit scheme, causing runaway depressurization.
+            rv_new = max(rho_v[i], 0.01)
             alpha_new = max(0.0, min(1.0, alpha_rho_v_new / rv_new))
 
             # Nucleation floor: when flashing is active, maintain minimum void
@@ -254,11 +301,15 @@ class BridgeDriftFluxSolver:
                     ml_in = mdot[i] * (1 - al_in)
                     ml_out = mdot[i + 1] * (1 - al_out)
 
-                # Donor-cell using OLD enthalpy values
+                # Face enthalpy reconstruction using OLD values
                 flow_in = ml_in if has_drift_flux else mdot[i]
                 flow_out = ml_out if has_drift_flux else mdot[i + 1]
-                h_in = h_l_old[i - 1] if (i > 0 and flow_in >= 0) else h_l_old[i]
-                h_out = h_l_old[i] if flow_out >= 0 else (h_l_old[i + 1] if i < N - 1 else h_l_old[i])
+                if self.reconstruction == 'muscl':
+                    h_in = self._muscl_face(h_l_old, i, N, flow_in, h_l_old[0], h_l_old[N-1])
+                    h_out = self._muscl_face(h_l_old, i+1, N, flow_out, h_l_old[0], h_l_old[N-1])
+                else:
+                    h_in = h_l_old[i - 1] if (i > 0 and flow_in >= 0) else h_l_old[i]
+                    h_out = h_l_old[i] if flow_out >= 0 else (h_l_old[i + 1] if i < N - 1 else h_l_old[i])
 
                 flux = ml_in * (h_in - h_l_old[i]) - ml_out * (h_out - h_l_old[i])
                 pw = (1 - al) * self.V_cell * dp_dt[i]
@@ -282,11 +333,15 @@ class BridgeDriftFluxSolver:
                     mv_in = mdot[i] * al_in
                     mv_out = mdot[i + 1] * al_out
 
-                # Donor-cell using OLD enthalpy values
+                # Face enthalpy reconstruction using OLD values
                 flow_in_v = mv_in if has_drift_flux else mdot[i]
                 flow_out_v = mv_out if has_drift_flux else mdot[i + 1]
-                hv_in = h_v_old[i - 1] if (i > 0 and flow_in_v >= 0) else h_v_old[i]
-                hv_out = h_v_old[i] if flow_out_v >= 0 else (h_v_old[i + 1] if i < N - 1 else h_v_old[i])
+                if self.reconstruction == 'muscl':
+                    hv_in = self._muscl_face(h_v_old, i, N, flow_in_v, h_v_old[0], h_v_old[N-1])
+                    hv_out = self._muscl_face(h_v_old, i+1, N, flow_out_v, h_v_old[0], h_v_old[N-1])
+                else:
+                    hv_in = h_v_old[i - 1] if (i > 0 and flow_in_v >= 0) else h_v_old[i]
+                    hv_out = h_v_old[i] if flow_out_v >= 0 else (h_v_old[i + 1] if i < N - 1 else h_v_old[i])
 
                 flux_v = mv_in * (hv_in - h_v_old[i]) - mv_out * (hv_out - h_v_old[i])
                 pw_v = al * self.V_cell * dp_dt[i]

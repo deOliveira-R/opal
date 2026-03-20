@@ -63,18 +63,51 @@ print(f"\nModel: 5-eq drift-flux, N={N}")
 print(f"  {info.summary()}")
 print(f"  Bridge has mdot_v: {bridge.has('mdot_v')}, mdot_l: {bridge.has('mdot_l')}")
 
-# ── Initial conditions (from EdwardsTest_DriftFlux.mo) ──
-p = np.full(N, 7e6)
+# ── Load experimental data ──
+from edwards_blowdown_data import edwards_blowdown
+import iapws
+
+# ── Initial conditions with axial temperature profile ──
+# Edwards experiment has a measured temperature distribution along the pipe.
+# Using this instead of isothermal IC improves MAPE by ~5-8 pts (tested in HEM).
+p_init = 7e6
+p = np.full(N, p_init)
 alpha = np.full(N, 1e-6)
-h_l = np.full(N, 986.6e3)
-h_v = np.full(N, 2772.6e3)
 mdot = np.zeros(N + 1)
+
+# Temperature profile: (x_ft, x_m, T_F, T_K) from Edwards experimental data
+ic = edwards_blowdown["initial_conditions"]
+temp_profile = ic.get("temperature_profile", None)
+
+use_temp_profile = '--temp-profile' in sys.argv  # Pass --temp-profile to enable
+if use_temp_profile and temp_profile is not None:
+    # Interpolate measured T(x) onto cell centers
+    x_meas = np.array([pt[1] for pt in temp_profile])  # x in meters
+    T_meas = np.array([pt[3] for pt in temp_profile])   # T in Kelvin
+    dx = spec.dx
+    x_cells = np.array([(i + 0.5) * dx for i in range(N)])
+    T_cells = np.interp(x_cells, x_meas, T_meas)
+
+    # Convert T(x) to h_l(x) via IAPWS: h = h(p, T)
+    import iapws
+    h_l = np.array([iapws.IAPWS97(P=p_init/1e6, T=T_cells[i]).h * 1e3
+                     for i in range(N)])
+    print(f"  IC: temperature profile from experiment")
+    print(f"    T range: {T_cells.min():.1f} - {T_cells.max():.1f} K")
+    print(f"    h_l range: {h_l.min()/1e3:.1f} - {h_l.max()/1e3:.1f} kJ/kg")
+else:
+    # Fallback: isothermal IC
+    h_l = np.full(N, 986.6e3)
+    print(f"  IC: isothermal T={ic['simplified_isothermal_K']:.1f} K")
+
+# Vapor enthalpy at saturation
+h_v_sat = iapws.IAPWS97(P=p_init/1e6, x=1).h * 1e3
+h_v = np.full(N, h_v_sat)
 
 dt = 5e-5
 t_end = 0.6
 n_steps = int(t_end / dt)
 
-from edwards_blowdown_data import edwards_blowdown
 gauge_stations = edwards_blowdown["gauge_stations"]
 gs_cells = {}
 for name, gs in gauge_stations.items():
