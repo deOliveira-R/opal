@@ -1,5 +1,5 @@
-model EdwardsTest_DriftFlux
-  "Edwards blowdown: 5-eq drift-flux + IAPWS + Ransom-Trapp + two-phase friction"
+model EdwardsTest_DriftFlux_Ramp
+  "Edwards blowdown: 5-eq drift-flux + IAPWS + Ransom-Trapp + ramped break opening"
   library.Boundary.ClosedEnd closed_end;
   library.Pipes.Pipe1D_DriftFlux pipe(
     redeclare package Medium = library.Media.Water,
@@ -8,9 +8,14 @@ model EdwardsTest_DriftFlux
     d_b=3e-4, C_0=1.0, alpha_nucleation=1e-3,
     use_critical_flow=true, C_d=0.87, x_trans=0.10, c_floor=10.0,
     use_two_phase_friction=true);
-  library.Boundary.PressureSource atm(p_set=101325.0, h_set=986.6e3);
+  library.Boundary.RampedBreak break_bc(
+    p_back=101325.0,
+    C_d_final=0.87,
+    t_open=0.003,
+    h_set=986.6e3);
 equation
   connect(closed_end.port, pipe.port_a);
-  connect(pipe.port_b, atm.port);
-  pipe.C_d_eff = pipe.C_d;  // Constant C_d (no ramp)
-end EdwardsTest_DriftFlux;
+  connect(pipe.port_b, break_bc.port);
+  // Override pipe's C_d_eff with time-varying value from RampedBreak
+  pipe.C_d_eff = break_bc.C_d;
+end EdwardsTest_DriftFlux_Ramp;

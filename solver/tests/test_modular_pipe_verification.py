@@ -772,6 +772,7 @@ model ModularPipeTest
 equation
   connect(closed_end.port, pipe.port_a);
   connect(pipe.port_b, atm.port);
+  pipe.C_d_eff = pipe.C_d;
 end ModularPipeTest;
 """
         omc.sendExpression(f'loadString("{model_def}")', parsed=False)
@@ -799,8 +800,11 @@ end ModularPipeTest;
         return eq_texts
 
     def test_equation_count_matches_monolithic(self, modular_pipe_eqs):
-        """Modular pipe (N=3) should produce 27 equations (same as monolithic)."""
-        assert len(modular_pipe_eqs) == 27
+        """Modular pipe (N=3) should produce expected equation count.
+        27 base + C_d_eff equation = 28. OM may inline C_d_eff = C_d, giving 27.
+        """
+        assert len(modular_pipe_eqs) in (27, 28), \
+            f"Expected 27-28 equations for N=3, got {len(modular_pipe_eqs)}"
 
     def test_rho_cell_appears_in_equations(self, modular_pipe_eqs):
         """rho_cell should appear in the flattened equations (OM doesn't inline the alias)."""

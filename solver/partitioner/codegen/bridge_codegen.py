@@ -84,6 +84,9 @@ class CTokenRewriter:
 
     def rewrite(self, body: str, eq_id: int = 0) -> str:
         """Rewrite a single equation function body. Returns the rewritten C code."""
+        # Phase 0: Replace simulation time reference
+        body = body.replace('data->localData[0]->timeValue', 'opal_time')
+
         # Phase 1: Replace data-> accessor chains (token-level scan)
         body = self._replace_accessors(body)
 
@@ -445,6 +448,7 @@ def generate_bridge_c(info: ModelInfo, model_c: Path, functions_c: Path,
     lines.append(f'/* ── Flat data arrays ({info.n_vars} vars, {info.n_params} params) ── */')
     lines.append(f'static double opal_vars[{info.n_vars}];')
     lines.append(f'static double opal_params[{info.n_params}];')
+    lines.append(f'static double opal_time = 0.0;  /* Simulation time for time-varying BCs */')
     lines.append(f'static threadData_t _td = {{0}};')
     lines.append('')
 
@@ -526,6 +530,10 @@ def _gen_generic_api(lines: list, info: ModelInfo, func_sigs: list):
     lines.append(f'        values[i] = (indices[i] >= 0 && indices[i] < {n_vars})')
     lines.append(f'                   ? opal_vars[indices[i]] : 0.0;')
     lines.append('}')
+    lines.append('')
+
+    # Time setter (for models with time-dependent variables like RampedBreak)
+    lines.append('void opal_bridge_set_time(double t) { opal_time = t; }')
     lines.append('')
 
     # Parameter set (single + bulk)

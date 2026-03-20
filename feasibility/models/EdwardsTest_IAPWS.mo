@@ -9,4 +9,5 @@ model EdwardsTest_IAPWS
 equation
   connect(closed_end.port, pipe.port_a);
   connect(pipe.port_b, atm.port);
+  pipe.C_d_eff = pipe.C_d;
 end EdwardsTest_IAPWS;

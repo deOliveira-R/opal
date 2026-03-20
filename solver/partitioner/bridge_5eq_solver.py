@@ -127,6 +127,8 @@ class BridgeDriftFluxSolver:
         # ══════════════════════════════════════════════════════════
         # PHYSICS EVALUATION — ALL from OM-generated C
         # ══════════════════════════════════════════════════════════
+        # Set simulation time for time-varying BCs (RampedBreak, etc.)
+        self.bridge.set_time(getattr(self, 'time', 0.0))
         self.bridge.set_state(p, alpha=alpha, h_l=h_l, h_v=h_v, mdot=mdot)
         self.bridge.evaluate()
 
@@ -149,14 +151,15 @@ class BridgeDriftFluxSolver:
         # ══════════════════════════════════════════════════════════
 
         # ── Critical flow (from Modelica via bridge) ──
-        # The C_d_factor allows time-varying discharge coefficient (e.g., break
-        # opening ramp). Set solver.C_d_factor before calling step().
+        # mdot_crit already incorporates C_d_eff (time-varying if RampedBreak is used).
+        # The C_d_factor attribute is kept for backward compatibility but should be
+        # unnecessary when the Modelica model handles the ramp via C_d_eff.
         mdot_crit = 1e10
         outlet_choked = False
         if self.use_critical_flow and self.bridge.has('mdot_crit'):
             mdot_crit_arr = self.bridge.get('mdot_crit')
             mdot_crit = mdot_crit_arr[0] if len(mdot_crit_arr) > 0 else 1e10
-            mdot_crit *= getattr(self, 'C_d_factor', 1.0)
+            mdot_crit *= getattr(self, 'C_d_factor', 1.0)  # Legacy; prefer Modelica C_d_eff
             outlet_choked = mdot_old[N] > 0
 
         # ── Friction with implicit resistance (semi-implicit friction treatment) ──

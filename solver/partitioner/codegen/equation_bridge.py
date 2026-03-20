@@ -109,6 +109,13 @@ class OMEquationBridge:
         self.lib.opal_bridge_set_params.argtypes = [I, DP]
         self.lib.opal_bridge_evaluate.argtypes = []
         self.lib.opal_bridge_get_n_vars.restype = I
+
+        # Time setter (for models with time-dependent variables)
+        try:
+            self.lib.opal_bridge_set_time.argtypes = [D]
+            self._has_time = True
+        except AttributeError:
+            self._has_time = False
         self.lib.opal_bridge_get_n_params.restype = I
 
         # Media function: find the rho_ph wrapper (name varies by media package)
@@ -268,6 +275,14 @@ class OMEquationBridge:
 
         self.lib.opal_bridge_set_params(
             self.info.n_params, param_values.ctypes.data_as(self._DP))
+
+    def set_time(self, t: float):
+        """Set the simulation time for models with time-dependent variables.
+
+        Required for RampedBreak and other time-varying BCs.
+        """
+        if self._has_time:
+            self.lib.opal_bridge_set_time(t)
 
     def evaluate(self):
         """Call all algebraic OM equations in BLT order."""
