@@ -229,19 +229,17 @@ class OMEquationBridge:
         param_values = np.zeros(self.info.n_params)
 
         if es is not None:
-            # First pass: read parameters from the extracted XML (authoritative)
+            # First pass: read Real parameters from the extracted XML (authoritative).
+            # OM has separate index spaces for Real, Integer, and Boolean parameters.
+            # opal_params[] maps to realParameter[], so only Real params are written.
             for pname, pinfo in self.info.parameters.items():
+                if pinfo.var_type != "Real":
+                    continue
                 try:
                     p = es.param(pname)
                     if p.value is not None:
-                        # Handle booleans (OM stores as 'true'/'false' strings)
                         if isinstance(p.value, str):
-                            if p.value.lower() == 'true':
-                                param_values[pinfo.index] = 1.0
-                            elif p.value.lower() == 'false':
-                                param_values[pinfo.index] = 0.0
-                            else:
-                                param_values[pinfo.index] = float(p.value)
+                            param_values[pinfo.index] = float(p.value)
                         else:
                             param_values[pinfo.index] = float(p.value)
                 except (KeyError, TypeError, ValueError):
@@ -262,6 +260,8 @@ class OMEquationBridge:
                 name_to_value[f'{self.prefix}.D'] = spec.D_h
 
             for pname, pinfo in self.info.parameters.items():
+                if pinfo.var_type != "Real":
+                    continue
                 if pname in name_to_value:
                     param_values[pinfo.index] = name_to_value[pname]
                 elif pname.endswith('.p_set') and hasattr(spec, 'p_out') and spec.p_out:

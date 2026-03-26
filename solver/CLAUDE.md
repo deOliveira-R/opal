@@ -43,7 +43,8 @@ Case 2: Modelica (.mo) → OM translateModel → C code → bridge_codegen → .
 
 | File | What |
 |------|------|
-| `edwards_bridge_5eq_validation.py` | **5-eq bridge Edwards (28.2% MAPE, production)** |
+| `edwards_bridge_5eq_validation.py --model hf_ramp` | **5-eq bridge, HF+Ramp (28.3% MAPE, canonical)** |
+| `edwards_bridge_5eq_validation.py --model ramp` | 5-eq bridge, RT+Ramp (31.8% MAPE) |
 | `edwards_5eq_modelica_validation.py` | 5-eq Case 1 Edwards (30% MAPE) |
 | `edwards_modelica_validation.py` | HEM + IAPWS + critical flow (81% MAPE) |
 

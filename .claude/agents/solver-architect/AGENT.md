@@ -24,7 +24,7 @@ Extracted equations (XML) + compiled C code (.so)
     v  Case 1: xml_reader → pipe1d_mapper → Parameterized5EqSolver
     v  Case 2: bridge_codegen → OMEquationBridge → BridgeDriftFluxSolver (PRODUCTION)
     |
-    v  Results (Edwards blowdown: 28.2% MAPE, all physics from Modelica)
+    v  Results (Edwards blowdown: 28.3% MAPE, all physics from Modelica)
 ```
 
 Two OM outputs work together:
@@ -124,7 +124,9 @@ CFL constraint: dt < rho * V / |mdot| (explicit transport stability)
 |-------|---------------|------|
 | Modelica HEM + IAPWS | Pipe1D.mo + Water.mo | 100.7% |
 | Modelica HEM + IAPWS + critical flow | + CriticalFlow.mo | 81.0% |
-| Modelica 5-eq drift-flux | Pipe1D_DriftFlux.mo (all closures) | 79.8% |
+| 5-eq Python (metastable fix) | C++ fluid + Python closures | 30.0% |
+| 5-eq Bridge, RT + Ramp | ALL from Modelica | 31.8% |
+| **5-eq Bridge, HF + Ramp** | **ALL from Modelica** | **28.3%** |
 
 ## Key Files
 
@@ -156,7 +158,7 @@ CFL constraint: dt < rho * V / |mdot| (explicit transport stability)
 ## Running Tests
 
 ```bash
-# Full test suite (549 tests)
+# Full test suite (830 tests)
 cd /Users/rodrigo/git/OPAL && external/venv/bin/python -m pytest solver/tests/ -v
 
 # Extraction pipeline tests only

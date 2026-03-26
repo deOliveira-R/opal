@@ -21,6 +21,7 @@ class VarInfo:
     kind: str       # "state", "derivative", "variable", "dummy state", "parameter"
     index: int      # position in realVars[] or realParameter[]
     comment: str = ""
+    var_type: str = "Real"  # "Real", "Integer", "Boolean" — from OM's type field
 
 
 @dataclass
@@ -122,7 +123,9 @@ def parse_info_json(path: Path) -> ModelInfo:
         index = vdata.get("index", 0)
         comment = vdata.get("comment", "")
 
-        vi = VarInfo(name=name, kind=kind, index=index, comment=comment)
+        var_type = vdata.get("type", "Real")
+        vi = VarInfo(name=name, kind=kind, index=index, comment=comment,
+                     var_type=var_type)
 
         if kind == "parameter":
             info.parameters[name] = vi

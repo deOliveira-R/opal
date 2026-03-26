@@ -314,7 +314,7 @@ Additional conservation checks:
 - Physics-based interfacial HT: Ranz-Marshall (Nu=2 conduction limit) + geometric IAC (6*alpha*(1-alpha)/d_b)
 - Transport properties: cp_f(p), k_f(p), mu_f(p) in PartialMedium (IAPWS polynomial fits)
 - Selectable critical flow: Ransom-Trapp (model=1) or Henry-Fauske (model=2)
-- Edwards blowdown: 28.2% MAPE via full Modelica→OM→bridge pipeline
+- Edwards blowdown: 28.3% MAPE via full Modelica→OM→bridge pipeline (HF+Ramp canonical)
 - 830 tests, all passing
 
 ### Key Physics for Edwards

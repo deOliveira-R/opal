@@ -17,7 +17,8 @@ feeds into the OPAL Claude Skill for future validation work.
 | 5-eq Python (metastable fix) | 30.0% | T_l = T_sat + dh/cp_f when h_l > h_f | Metastable liquid extension is the single most important physics feature |
 | 5-eq Bridge (initial) | ~36% | All physics from Modelica pipeline | Pipeline works end-to-end; OM variable elimination needs handling |
 | 5-eq Bridge (implicit friction) | 28.4% | Semi-implicit friction for tridiagonal stability | drho_dp at h_mix + implicit friction = correct semi-implicit scheme |
-| 5-eq Bridge (break ramp) | 26.9% | 3ms break opening ramp | Break opening dynamics are first-order for near-break stations |
+| 5-eq Bridge, RT + Ramp (Modelica ramp) | 31.8% | RampedBreak BC moved fully into Modelica | Break ramp is now extracted from Modelica, not hardcoded in Python |
+| 5-eq Bridge, HF + Ramp (Modelica ramp) | 28.3% | Henry-Fauske replaces Ransom-Trapp | Non-equilibrium critical flow better for sharp-edged glass disk break |
 
 ## Physics Features and Why They Matter
 
@@ -160,12 +161,66 @@ is a physical modeling question that depends on the break geometry (L/D ratio).
 The C_d parameter has a different physical meaning in each model: 0.87 for
 Ransom-Trapp (semi-empirical), 0.61 for Henry-Fauske (sharp-edged orifice theory).
 
-## Remaining Gaps (as of 2026-03-20)
+### 8. Mesh convergence study (anti-convergence)
+**Impact: N=24 is the practical mesh; finer meshes diverge**
 
-1. **GS-1 late-time error (~43%)**: Depressurization still too fast after 200ms.
+Mesh convergence study with N=12, 24, 48, 96 (CFL-scaled dt):
+
+| N | dx (m) | dt (µs) | MAPE | GS-1 | GS-7 | Wall time |
+|---|--------|---------|------|------|------|-----------|
+| 12 | 0.341 | 100 | 23.1% | 46.5% | 16.8% | 3.6 s |
+| 24 | 0.171 | 50 | 28.3% | 43.7% | 24.6% | 13.8 s |
+| 48 | 0.085 | 25 | 39.9% | 43.2% | 36.2% | 55.6 s |
+| 96 | 0.043 | 12.5 | 49.9% | 50.7% | 44.5% | 220.9 s |
+
+MAPE *increases* with refinement — classic anti-convergence. N=96 is clearly unstable:
+pressure collapses to vacuum by 250 ms, outlet mass flow reaches -112 kg/s (unphysical
+inflow). N=48 shows similar late-time instability.
+
+**Root cause:** The semi-implicit scheme treats only pressure implicitly. Void fraction
+and phasic enthalpies use explicit donor-cell transport, which has a CFL limit on the
+material Courant number (u·dt/dx). Scaling dt ∝ dx preserves the acoustic CFL but not
+the transport CFL — as N increases, the higher-velocity cells (near-break) exceed the
+transport CFL. Numerical diffusion from donor-cell at N=12/24 stabilizes the solution;
+at N=48/96 it is insufficient.
+
+**Key insights:**
+- N=12 giving the lowest MAPE (23.1%) is error cancellation: coarse-grid numerical
+  diffusion happens to smooth the solution toward experimental data. This is not
+  convergence — it is a fortuitous balance of errors.
+- N=24 (28.3%) is the defensible production mesh: fine enough for reasonable spatial
+  resolution (~2.3 D/cell) but coarse enough that the explicit transport is stable.
+- Achieving mesh convergence would require implicit treatment of the transport terms
+  (void fraction, enthalpy advection), not just the pressure equation. This is a known
+  limitation of semi-implicit staggered-mesh schemes for two-phase flow.
+- The anti-convergence should be reported honestly in any publication: it identifies the
+  solver's spatial resolution limit and motivates future implicit transport work.
+
+## Remaining Gaps (as of 2026-03-22)
+
+1. **GS-1 late-time error (~43.7%)**: Depressurization still too fast after 200ms.
    Physics-based H_i (d_b=3e-4, Nu=2) gives weaker flashing than tuned H_i=1e7.
    May need turbulence-enhanced Nu or pressure-dependent d_b.
 2. **No flow regime map**: Single bubbly-flow drift-flux correlation everywhere.
-3. **N=24 spatial resolution**: 2.3 diameters per cell. N=48 study needed.
+3. **Mesh anti-convergence**: Explicit transport CFL limits practical resolution to
+   N~24. Implicit transport needed for mesh-converged solutions (see §8 above).
 4. **Integer parameter limitation**: OM bridge cannot handle integerParameter
    references; critical_flow_model uses Real instead of Integer (with OM warning).
+
+## Architecture Notes (2026-03-22)
+
+- **Break ramp fully in Modelica**: The break opening ramp is now implemented in
+  `Boundary/RampedBreak.mo` and extracted via the bridge. There is no Python-side
+  ramp override. This is the canonical approach.
+- **Parameter type collision bug (fixed)**: OM uses separate index spaces for Real,
+  Integer, and Boolean parameters, but the info.json reports a single `index` field.
+  Integer parameters (e.g., `pipe.N=24`, index=0) were overwriting Real parameters
+  (e.g., `break_bc.C_d_final=0.87`, also index=0) in the bridge's `set_params`
+  call. Fixed by adding `var_type` to VarInfo and filtering on `type=="Real"` in
+  `set_params_from_spec`. This bug was latent in all prior results but only manifested
+  when the RampedBreak model introduced a critical Real parameter at index 0.
+- **Henry-Fauske better than Ransom-Trapp for this benchmark**: HF (frozen flow, N=0)
+  gives 28.3% vs RT's 31.8%. For sharp-edged breaks (L/D ≈ 0), the liquid at the
+  break plane exits as metastable liquid without equilibrium flashing. HF captures
+  this physically; RT's equilibrium blend reduces discharge rate artificially.
+  Choice of critical flow model depends on break geometry (L/D ratio).

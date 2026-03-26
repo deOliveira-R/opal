@@ -1,0 +1,20 @@
+{
+  "model": "ramp",
+  "critical_flow": "Ransom-Trapp",
+  "ramp_source": "Modelica RampedBreak",
+  "N": 24,
+  "dt": 5e-05,
+  "t_end": 0.6,
+  "overall_mape": 31.83,
+  "per_station": {
+    "GS-1": 56.83,
+    "GS-2": 28.6,
+    "GS-3": 24.44,
+    "GS-4": 29.71,
+    "GS-5": 24.27,
+    "GS-6": 32.08,
+    "GS-7": 26.92
+  },
+  "wall_time_s": 13.77,
+  "steps_per_second": 871.0
+}

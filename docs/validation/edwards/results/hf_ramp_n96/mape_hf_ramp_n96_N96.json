@@ -1,0 +1,20 @@
+{
+  "model": "hf_ramp_n96",
+  "critical_flow": "Henry-Fauske",
+  "ramp_source": "Modelica RampedBreak",
+  "N": 96,
+  "dt": 1.25e-05,
+  "t_end": 0.6,
+  "overall_mape": 49.94,
+  "per_station": {
+    "GS-1": 50.74,
+    "GS-2": 50.42,
+    "GS-3": 42.38,
+    "GS-4": 51.63,
+    "GS-5": 52.41,
+    "GS-6": 57.49,
+    "GS-7": 44.48
+  },
+  "wall_time_s": 220.91,
+  "steps_per_second": 217.0
+}
