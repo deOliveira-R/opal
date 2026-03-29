@@ -18,6 +18,30 @@ model Pipe1D_DriftFlux
      Future: Nu = 2 + 0.6*Re^0.5*Pr^0.33 (Ranz-Marshall) when slip velocity added.";
   parameter Real C_0 = 1.13 "Drift-flux distribution parameter [-]";
   parameter Real alpha_nucleation = 1e-3 "Nucleation onset void fraction [-]";
+  // Flashing model selection — direct weights avoid OM CSE bug where
+  // parameter arithmetic (min/max/clamp) gets pre-evaluated to $cseN with
+  // value=None in the XML, causing the bridge to set them to 0.
+  // Set exactly ONE of these to 1.0 (or leave both at 0 for baseline).
+  parameter Real use_inception = 0
+    "1.0 to enable d_b_eff inception model. WARNING: causes runaway evaporation
+     in rapid depressurization (53.4% vs 28.3% baseline on Edwards). The 100x H_i
+     enhancement has no inertial rate limiter — a_i grows with alpha creating positive
+     feedback. Parked for research. Ref: Shin & Jones (1993), Blinkov et al. (1993).";
+  parameter Real use_relaxation = 0
+    "1.0 to enable Jones/Lahey relaxation model. RECOMMENDED for rapid depressurization.
+     H_eff = (1-alpha)*rho_l*cp_f/tau_flash. Self-limiting: H_eff decreases monotonically
+     with alpha (less liquid = less flashing potential). Unlike geometric H_i which peaks
+     at alpha=0.5. Ref: Jones (1982), Lahey & Moody (1993), RELAP5/MOD3 Vol I.";
+  parameter Real d_b_flash = 3e-5
+    "Nucleation bubble diameter [m] (use_inception=1 only). Default 30um.";
+  parameter Real alpha_flash = 0.05
+    "Void fraction above which d_b_eff returns to bulk d_b [-] (use_inception=1 only)";
+  parameter Real tau_flash = 0.005
+    "Flashing relaxation time [s] (use_relaxation=1). Controls how fast superheated
+     liquid generates vapour relative to geometric model. Smaller = faster flashing.
+     H_eff_relax = alpha*(1-alpha)*rho_l*cp_f/tau, giving enhancement ratio over
+     geometric H_geo of: rho_l*cp_f*d_b^2 / (6*Nu*k_f*tau). At tau=0.005, ratio~10x.
+     Ref: Jones (1982), Lahey (1978). Typical range: 0.001-0.05s.";
 
   // Generic source terms (phasic)
   parameter Real S_energy_l[N] = zeros(N) "Liquid energy source per cell [W]";
@@ -57,6 +81,7 @@ model Pipe1D_DriftFlux
   Real a_i[N] "Interfacial area concentration [1/m]";
   Real h_i[N] "Interfacial film heat transfer coefficient [W/(m^2*K)]";
   Real alpha_eff[N] "Effective void fraction (with nucleation) [-]";
+  Real d_b_eff[N] "Effective bubble diameter (reduced during flashing inception) [m]";
 
   // Drift-flux (per cell)
   Real V_gj[N] "Drift velocity [m/s]";
@@ -164,20 +189,45 @@ equation
     alpha_eff[i] = if T_l[i] > T_sat_cell[i] and alpha[i] < alpha_nucleation
                    then alpha_nucleation else alpha[i];
 
+    // Effective bubble diameter: ramp from d_b_flash to d_b with void fraction.
+    // use_inception=0: d_b_eff = d_b (baseline).
+    // use_inception=1: d_b_eff blends from d_b_flash to d_b over [alpha_nucleation, alpha_flash].
+    //   WARNING: causes runaway in rapid depressurization (see use_inception parameter note).
+    d_b_eff[i] = max(d_b - use_inception * (d_b - d_b_flash)
+                     * (1 - noEvent(min(max((alpha_eff[i] - alpha_nucleation)
+                                           / (alpha_flash - alpha_nucleation), 0.0), 1.0))),
+                     d_b_min);
+
     // Interfacial area concentration [1/m] — bubbly flow geometry
-    // a_i = 6*alpha*(1-alpha)/d_b for monodisperse spherical bubbles.
-    // The (1-alpha) factor smoothly reduces area at high void (bubbly→annular).
+    // a_i = 6*alpha*(1-alpha)/d_b_eff for monodisperse spherical bubbles.
     // Ref: Ishii & Hibiki, "Thermo-Fluid Dynamics of Two-Phase Flow", Ch. 9
-    a_i[i] = 6 * alpha_eff[i] * (1 - alpha_eff[i]) / d_b;
+    a_i[i] = 6 * alpha_eff[i] * (1 - alpha_eff[i]) / d_b_eff[i];
 
     // Interfacial film heat transfer coefficient [W/(m^2*K)]
     // Nu = 2 for conduction around sphere (Ranz-Marshall at Re_b = 0, no-slip).
-    // k_f from pressure-dependent saturated liquid thermal conductivity.
     // Ref: Ranz & Marshall (1952), conduction limit.
-    h_i[i] = Nu_i * Medium.k_f(p[i]) / d_b;
+    h_i[i] = Nu_i * Medium.k_f(p[i]) / d_b_eff[i];
 
-    // Volumetric interfacial heat transfer [W/m^3] = h_i * a_i * dT
-    q_i_l[i] = h_i[i] * a_i[i] * (T_sat_cell[i] - T_l[i]);
+    // Volumetric interfacial heat transfer [W/m^3]
+    // Split into condensation (T_l < T_sat) and evaporation (T_l > T_sat) to apply
+    // the Jones/Lahey relaxation ONLY to the evaporation direction.
+    //
+    // Condensation: q_cond = h_i*a_i * max(T_sat-T_l, 0)  [always geometric]
+    // Evaporation:  q_evap = -H_eff_evap * max(T_l-T_sat, 0)
+    //   H_eff_evap = h_i*a_i + use_relaxation * (H_relax - h_i*a_i)
+    //   H_relax = α*(1-α)*ρ_l*cp_f/τ  (area-weighted relaxation)
+    //   The α*(1-α) factor ensures H_relax scales with interfacial area, same as
+    //   geometric H_geo ~ α*(1-α)/d_b². The enhancement ratio is then independent
+    //   of α: ratio = ρ_l*cp_f*d_b² / (6*Nu*k_f*τ). Self-limiting at both α→0
+    //   (no bubbles) and α→1 (no liquid).
+    // Ref: Jones (1982), Lahey & Moody (1993), RELAP5/MOD3 Vol I §3.2.
+    q_i_l[i] = h_i[i] * a_i[i] * noEvent(max(T_sat_cell[i] - T_l[i], 0.0))
+              - (h_i[i] * a_i[i]
+                 + use_relaxation
+                   * (alpha_eff[i] * (1 - alpha_eff[i]) * rho_l[i]
+                      * Medium.cp_f(p[i]) / tau_flash
+                      - h_i[i] * a_i[i]))
+                * noEvent(max(T_l[i] - T_sat_cell[i], 0.0));
 
     // Mass transfer from interfacial heat
     Gamma[i] = -q_i_l[i] / max(h_sat_v[i] - h_sat_l[i], 1.0);
@@ -185,7 +235,8 @@ equation
     // Vapour heat: interface energy balance
     q_i_v[i] = -Gamma[i] * (h_v[i] - h_l[i]) - q_i_l[i];
 
-    // Zuber-Findlay drift velocity
+    // Zuber-Findlay drift velocity (uses bulk d_b, not d_b_eff —
+    // drift is set by established bubble population, not nucleation-scale bubbles)
     // V_gj = 1.41 * [σ * g * Δρ / ρ_l²]^0.25 * 4α(1-α)
     // Ref: Ishii & Hibiki, "Thermo-Fluid Dynamics of Two-Phase Flow", Eq. 11.21
     V_gj[i] = 1.41 * (Medium.sigma(p[i]) * 9.81 *

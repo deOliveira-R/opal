@@ -350,6 +350,108 @@ solver, no confounding variables), then port to 6-eq.
 
 ---
 
+## Session 3: Flashing Inception Model (2026-03-29)
+
+### What Was Built
+
+| Component | File | Status |
+|-----------|------|--------|
+| Flashing inception d_b_eff | `library/Pipes/Pipe1D_DriftFlux.mo` → `use_inception` | Complete, parked (runaway) |
+| Jones/Lahey relaxation | `library/Pipes/Pipe1D_DriftFlux.mo` → `use_relaxation` | Complete, validated |
+| Semi-implicit void coupling | `solver/partitioner/bridge_5eq_solver.py` | Complete |
+| OM GreaterEq codegen fix | `solver/partitioner/codegen/bridge_codegen.py` | Complete |
+| Edwards flash test case | `feasibility/models/EdwardsTest_DriftFlux_HF_Ramp_Flash.mo` | Complete |
+| L0 QA tests | `solver/tests/test_flash_inception.py` | 35 tests, all pass |
+
+### Results Summary
+
+| Configuration | Pressure MAPE | Void MAE (GS-5) | Notes |
+|---|---|---|---|
+| 5-eq baseline (old solver) | 28.3% | 0.226 | Previous canonical |
+| **5-eq baseline (void coupling)** | **21.4%** | 0.274 | Semi-implicit coupling alone |
+| **5-eq + Jones/Lahey relaxation** | **23.0%** | **0.145** | tau=0.025s, x_ne=0.14 |
+| d_b_eff inception (parked) | 53.4% | — | Runaway evaporation |
+| RELAP5-Modified | ~27% | 0.111 | Reference |
+
+### Key Findings
+
+**1. Enhanced H_i alone worsens MAPE — the solver coupling was the bottleneck.**
+
+Every attempt to increase the interfacial HT coefficient without solver changes made MAPE
+worse. The root cause: the explicit void transport runs ahead of the implicit pressure solve.
+At baseline Gamma, the coupling stability ratio is ~0.02 (safe). At >50x enhancement,
+it exceeds 1.0 (unstable). The semi-implicit void-pressure coupling (linearized dGamma/dp
+on the pressure diagonal) restores stability.
+
+**2. The semi-implicit coupling improves the baseline by 7 percentage points.**
+
+Even without enhanced flashing, adding the void-pressure coupling improved MAPE from 28.3%
+to 21.4% — beating RELAP5's ~27% pressure prediction. The improvement is concentrated at
+interior stations (GS-3 through GS-7), consistent with better pressure-void consistency.
+
+**3. The Jones/Lahey relaxation model halves void MAE at GS-5.**
+
+With `use_relaxation=1, tau_flash=0.025s, x_ne=0.14`:
+- Void MAE: 0.274 → 0.145 (approaching RELAP5's 0.111)
+- Alpha at 200ms: 0.397 vs experiment 0.35 (good match)
+- Void onset still late: 170ms vs experiment ~10ms
+- Pressure MAPE trade-off: +1.6% (21.4% → 23.0%)
+
+**4. d_b_eff inception model causes runaway — parked.**
+
+The geometric d_b_eff approach (use_inception=1) enhances H_i by 100x at nucleation but
+has no inertial rate limiter. H_i grows with alpha through a_i, creating positive feedback.
+53.4% MAPE vs 28.3% baseline. The Jones/Lahey model avoids this because H_relax =
+alpha*(1-alpha)*rho_l*cp_f/tau is self-limiting at both alpha limits.
+
+**5. OM CSE bug discovered and workaround found.**
+
+OpenModelica pre-evaluates parameter expressions like `min(max(flash_model-1, 0), 1)` into
+CSE (Common Subexpression Elimination) parameters ($cseN) with value=None in the XML.
+The bridge initializes these to 0, making parameter-derived switches inoperable. Workaround:
+use direct control parameters (use_inception, use_relaxation) instead of computing weights
+from a selector parameter. This avoids the CSE path entirely.
+
+**6. OM GreaterEq codegen gap fixed.**
+
+When Modelica code uses `if param >= 1 then ... else ...`, OM generates bare `GreaterEq()`
+C function calls that the bridge codegen didn't define. Fixed by adding comparison function
+macros (#define GreaterEq, Greater, LessEq, Less) to the bridge C header.
+
+### Errors Detected by L0 Methodology
+
+**Error 1: Bidirectional Relaxation Overwhelms Condensation (SIGN/MAGNITUDE)**
+First implementation applied relaxation H_eff to BOTH condensation and evaporation
+directions. At subcooled conditions, H_relax is 10^6x geometric, pumping massive heat
+into liquid (Gamma=-3392 at step 0). Fixed by splitting q_i_l into condensation (geometric)
+and evaporation (relaxation) components using max(T_sat-T_l, 0) and max(T_l-T_sat, 0).
+
+**Error 2: Explicit Void Source Wrong Sign (SIGN)**
+First solver fix attempt added V*(rho_v-rho_l)/rho_v*Gamma to pressure RHS (negative
+during evaporation). Should have been -V*(rho_v-rho_l)/rho_v*Gamma = +V*(rho_l-rho_v)/rho_v*Gamma
+(positive, opposing depressurization). Wrong sign caused 597.5% MAPE. Corrected by switching
+to semi-implicit diagonal treatment instead of explicit RHS.
+
+**Error 3: OM CSE Silently Zeroes Parameter Switches (INFRASTRUCTURE)**
+flash_model=2 in the .mo file was correctly compiled (XML shows 2.0), but the derived
+CSE parameter $cse58 = min(max(flash_model-1, 0), 1) had value=None in XML, defaulting
+to 0.0 in the bridge. Result: relaxation model completely inactive, simulation identical
+to baseline. Detected by comparing trace output against known-different expected behavior.
+
+### Remaining Gaps
+
+1. **Void onset timing**: Both models start voiding at GS-5 ~170ms late vs experiment (~10ms).
+   The depressurization wave reaches GS-5 quickly (~2ms), but T_sat must drop below T_l (~502K)
+   which requires p < ~2.85 MPa. Investigation needed: is the pressure wave speed correct?
+
+2. **tau_flash calibration**: tau=0.025s gives ~2x geometric enhancement. The optimal value
+   may differ for different geometries/conditions. Need sensitivity study.
+
+3. **Port to 6-eq**: The relaxation model and solver coupling should be applied to
+   `Pipe1D_TwoFluid.mo` and `bridge_6eq_solver.py`.
+
+---
+
 ## References
 
 - RELAP5/MOD3 Code Manual, Volume I, Ch 3 — two-fluid field equations

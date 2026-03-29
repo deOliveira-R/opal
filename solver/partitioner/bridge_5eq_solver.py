@@ -142,6 +142,8 @@ class BridgeDriftFluxSolver:
         q_i_v = self.bridge.get('q_i_v')
         h_sat_l = self.bridge.get('h_sat_l')
         h_sat_v = self.bridge.get('h_sat_v')
+        T_l = self.bridge.get('T_l')
+        T_sat = self.bridge.get('T_sat_cell')
 
         # Phi2 may have N or N+1 entries depending on model
         Phi2 = self.bridge.get('Phi2') if self.bridge.has('Phi2') else np.ones(N + 1)
@@ -216,6 +218,33 @@ class BridgeDriftFluxSolver:
                     d_tri[i] += (mdot_old[N] - mdot_crit)
                 else:
                     d_tri[i] += bR * self.p_out
+
+            # Semi-implicit void-pressure coupling.
+            # Evaporation (Gamma > 0) creates void → changes mixture density.
+            # The explicit void update runs ahead of the implicit pressure solve.
+            # Linearize Gamma w.r.t. pressure to add stabilizing diagonal term:
+            #   Gamma(p_new) ≈ Gamma + dGamma/dp * dp
+            #   dGamma/dp ≈ -Gamma * dT_sat/dp / max(T_l - T_sat, eps)
+            #   (higher p → higher T_sat → less superheat → less Gamma)
+            # Void source contribution to mass conservation:
+            #   S_void = V * (rho_l - rho_v) / rho_v * Gamma  [kg/s]
+            # Semi-implicit: move dS/dp to diagonal (stabilizing, positive):
+            #   void_diag = -V * (rho_l - rho_v) / rho_v * dGamma/dp
+            # Only active during evaporation (Gamma > 0, T_l > T_sat).
+            # At baseline (weak Gamma), this term is negligible.
+            if Gamma[i] > 0 and T_l[i] > T_sat[i]:
+                rv_i = max(rho_v[i], 0.01)
+                superheat = max(T_l[i] - T_sat[i], 0.1)
+                h_fg = max(h_sat_v[i] - h_sat_l[i], 1.0)
+                # Clausius-Clapeyron: dT_sat/dp ≈ T_sat * (1/rho_v - 1/rho_l) / h_fg
+                dTsat_dp = T_sat[i] * (1.0 / rv_i - 1.0 / max(rho_l[i], 1.0)) / h_fg
+                # dGamma/dp < 0 (more pressure → less superheat → less evaporation)
+                dGamma_dp = -Gamma[i] * dTsat_dp / superheat
+                # Diagonal contribution (positive → stabilizing)
+                void_diag = -self.V_cell * (rho_l[i] - rho_v[i]) / rv_i * dGamma_dp
+                if void_diag > 0:
+                    b_tri[i] += void_diag
+                    d_tri[i] += void_diag * p_old[i]
 
         p[:] = self._thomas_solve(a_tri, b_tri, c_tri, d_tri)
 

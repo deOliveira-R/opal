@@ -84,10 +84,15 @@ MODEL_REGISTRY = {
         'EdwardsTest_DriftFlux_HF_Ramp_N96_info.json',
         'EdwardsTest_DriftFlux_HF_Ramp_N96.xml',
     ),
+    'hf_ramp_flash': (
+        'opal_bridge_EdwardsTest_DriftFlux_HF_Ramp_Flash.so',
+        'EdwardsTest_DriftFlux_HF_Ramp_Flash_info.json',
+        'EdwardsTest_DriftFlux_HF_Ramp_Flash.xml',
+    ),
 }
 
 # Models where the break ramp is handled by Modelica RampedBreak
-MODELICA_RAMP_MODELS = {'ramp', 'hf_ramp', 'hf_ramp_n12', 'hf_ramp_n48', 'hf_ramp_n96'}
+MODELICA_RAMP_MODELS = {'ramp', 'hf_ramp', 'hf_ramp_n12', 'hf_ramp_n48', 'hf_ramp_n96', 'hf_ramp_flash'}
 # Models where the break ramp must be applied Python-side (legacy)
 PYTHON_RAMP_MODELS = {'base', 'hf'}
 # Break opening time for legacy Python ramp (Edwards glass disk ~1-2ms + geometry)
