@@ -365,13 +365,15 @@ solver, no confounding variables), then port to 6-eq.
 
 ### Results Summary
 
-| Configuration | Pressure MAPE | Void MAE (GS-5) | Notes |
-|---|---|---|---|
-| 5-eq baseline (old solver) | 28.3% | 0.226 | Previous canonical |
-| **5-eq baseline (void coupling)** | **21.4%** | 0.274 | Semi-implicit coupling alone |
-| **5-eq + Jones/Lahey relaxation** | **23.0%** | **0.145** | tau=0.025s, x_ne=0.14 |
-| d_b_eff inception (parked) | 53.4% | — | Runaway evaporation |
-| RELAP5-Modified | ~27% | 0.111 | Reference |
+| Configuration | Pressure MAPE | Void MAE (GS-5) | Void Onset (GS-5) | Notes |
+|---|---|---|---|---|
+| 5-eq baseline (old solver) | 28.3% | 0.226 | ~220 ms | Previous canonical |
+| **5-eq baseline (void coupling)** | **21.6%** | 0.264 | ~220 ms | Semi-implicit coupling alone |
+| **5-eq + Jones/Lahey relaxation** | **23.0%** | **0.140** | ~170 ms | tau=0.025s, x_ne=0.14 |
+| 5-eq + phasic drho_dp (reverted) | 75.7% | 0.466 | **6.5 ms** | Correct onset, pressure overshoots |
+| d_b_eff inception (parked) | 53.4% | — | — | Runaway evaporation |
+| RELAP5-Modified | ~27% | 0.111 | — | Reference |
+| Experiment | — | — | ~10 ms | — |
 
 ### Key Findings
 
@@ -438,17 +440,163 @@ CSE parameter $cse58 = min(max(flash_model-1, 0), 1) had value=None in XML, defa
 to 0.0 in the bridge. Result: relaxation model completely inactive, simulation identical
 to baseline. Detected by comparing trace output against known-different expected behavior.
 
-### Remaining Gaps
+### drho_dp Investigation: Why Void Onset Is Late
 
-1. **Void onset timing**: Both models start voiding at GS-5 ~170ms late vs experiment (~10ms).
-   The depressurization wave reaches GS-5 quickly (~2ms), but T_sat must drop below T_l (~502K)
-   which requires p < ~2.85 MPa. Investigation needed: is the pressure wave speed correct?
+**Problem:** Void onset at GS-5 is 170ms in simulation vs ~10ms in experiment.
 
-2. **tau_flash calibration**: tau=0.025s gives ~2x geometric enhancement. The optimal value
-   may differ for different geometries/conditions. Need sensitivity study.
+**Root cause:** `drho_dp(p, h_mix)` jumps 2400x when h_mix crosses h_f during
+depressurization. At p ≈ 2.85 MPa, the mixture enthalpy crosses from Region 1
+(subcooled, drho_dp ~ 5e-7) to Region 4 (two-phase, drho_dp ~ 1.2e-3). The
+pressure tridiagonal diagonal (alpha_coeff = V*drho_dp/dt) increases 2400x,
+freezing the pressure at ~2.7 MPa for 150ms.
 
-3. **Port to 6-eq**: The relaxation model and solver coupling should be applied to
-   `Pipe1D_TwoFluid.mo` and `bridge_6eq_solver.py`.
+**Attempted fix:** Phasic drho_dp evaluated at capped phasic enthalpies:
+```
+drho_dp = (1-alpha) * drho_dp_h(p, min(h_l, h_f-100))
+        + alpha * drho_dp_h(p, max(h_v, h_g+100))
+```
+**Result:** Void onset correct (6.5ms!) but pressure overshoots to atmospheric
+(75.7% MAPE). Pure mechanical compressibility (~5e-7) is 1000x too small for
+the semi-implicit scheme — the rarefaction wave amplitude is unbounded.
+
+**Also found:** IAPWS `region_ph` uses strict inequality `h < h_f` for Region 1.
+At `h = h_f` exactly, evaluation falls into Region 4 (two-phase). Requires a
+margin (h_f - 100) to stay in Region 1.
+
+**Physics reviewer conclusion (correcting initial diagnosis):**
+
+`drho_dp(p, h_mix)` is the **correct** effective compressibility for the semi-implicit
+scheme — NOT a compensating error or double-counting. When enthalpies are frozen
+during the pressure solve, the mixture-enthalpy parameterization anticipates the
+density change that void growth will cause. The experimental data at GS-5 **confirms**
+the pressure stall is physical: depressurization rate drops 1000x at the saturation
+crossing (~2.85 MPa), matching the thermal compressibility jump.
+
+Phasic drho_dp is correct only with fully implicit void-pressure coupling (RELAP5-style
+block matrix where dalpha/dp enters the pressure diagonal without the dt multiplier).
+
+**Solver architect evaluated 7 intermediate fixes — none work:**
+
+| Fix | Why It Fails |
+|-----|-------------|
+| Alpha-blended drho_dp | At critical transition, alpha ~ 0, blend = pure phasic |
+| Cap mixture drho_dp | Tuning parameter with no physics derivation |
+| Smooth R1/R4 transition | No blending width gives the right time constant |
+| Saturation-line drho_dp (drho_f/dp) | Negative sign — ill-conditions the tridiagonal |
+| Saturation-tracking compressibility | Makes the problem worse (reduces effective drho_dp) |
+| Energy coupling correction | Wrong direction (reduces drho_dp by 30%) |
+| Existing dGamma/dp diagonal | Correct but negligible (4 orders of magnitude too small) |
+
+### L0 Tests Written: 42 tests in `solver/tests/test_flash_inception.py`
+
+| Category | Tests | Coverage |
+|----------|-------|----------|
+| d_b_eff inception model | 6 | Passthrough, nucleation, bulk, monotonicity, continuity, mid-ramp |
+| Baseline equivalence (use_relaxation=0) | 4 | Subcooled, superheated, equilibrium, sweep |
+| Relaxation model signs & magnitudes | 9 | H_relax literal, ratio, alpha-independence, self-limiting |
+| Nucleation onset interaction | 1 | Floor + relaxation |
+| Interface energy balance | 10 | 5 states × 2 models |
+| Void-pressure coupling | 7 | Sign, scaling, hand calc with literal |
+| Depressurization flashing (Gap 4) | 4 | Superheat, Gamma sign, hard-coded literal, condensation preserved |
+| Small-superheat realizability | 1 | Gamma at 0.001 K superheat |
+
+### Errors Detected by L0 Methodology
+
+**Error 1: Bidirectional Relaxation Overwhelms Condensation (SIGN/MAGNITUDE)**
+First implementation applied relaxation H_eff to BOTH condensation and evaporation
+directions. At subcooled conditions, H_relax is 10^6x geometric, pumping massive heat
+into liquid (Gamma=-3392 at step 0). Fixed by splitting q_i_l into condensation (geometric)
+and evaporation (relaxation) components using max(T_sat-T_l, 0) and max(T_l-T_sat, 0).
+
+**Error 2: Explicit Void Source Wrong Sign (SIGN)**
+First solver fix attempt added V*(rho_v-rho_l)/rho_v*Gamma to pressure RHS (negative
+during evaporation). Correct sign is positive (evaporation opposes depressurization in
+rigid pipe). Wrong sign caused 597.5% MAPE. Corrected by switching to semi-implicit
+diagonal treatment instead of explicit RHS.
+
+**Error 3: OM CSE Silently Zeroes Parameter Switches (INFRASTRUCTURE)**
+flash_model=2 in the .mo file was correctly compiled (XML shows 2.0), but the derived
+CSE parameter $cse58 = min(max(flash_model-1, 0), 1) had value=None in XML, defaulting
+to 0.0 in the bridge. Result: relaxation model completely inactive, simulation identical
+to baseline. Detected by comparing trace output against known-different expected behavior.
+
+**Error 4: d_b_eff Inception Runaway (PHYSICS/RATE-LIMITING)**
+Geometric d_b_eff model enhances H_i by 100x at nucleation but has no inertial rate
+limiter. Bubble growth is instantaneous and a_i grows with alpha, creating positive
+feedback. 53.4% MAPE vs 28.3% baseline. Parked in favor of Jones/Lahey relaxation.
+
+**Error 5: OM Bare GreaterEq() Codegen Gap (INFRASTRUCTURE)**
+OM generates bare GreaterEq() C function calls for `if param >= 1 then...else...`.
+Bridge codegen only handled relationhysteresis() wrappers, not bare calls. Fixed by
+adding #define macros for GreaterEq/Greater/LessEq/Less.
+
+**Error 6: IAPWS Region Boundary in drho_dp_h (INFRASTRUCTURE)**
+min(h_l, h_sat_l) passes h = h_f exactly. Water.mo's region_ph uses strict inequality
+(h < h_f), so h = h_f evaluates in two-phase Region 4 — returning the giant drho_dp
+we tried to avoid. Requires margin (h_f - 100) to stay in Region 1.
+
+---
+
+## Roadmap for Next Session
+
+### Current State (2026-03-29, end of Session 3)
+
+- **930 tests pass** (888 pre-existing + 42 new flash inception)
+- **Pressure MAPE: 21.6%** (baseline with semi-implicit coupling, beats RELAP5 ~27%)
+- **Void MAE at GS-5: 0.140** (with Jones/Lahey, approaching RELAP5 0.111)
+- **Void onset at GS-5: 170ms** (experiment: ~10ms — known limitation from drho_dp stall)
+
+### Priority 1: Predictor-Corrector Pressure Solve (HIGH — unlocks phasic drho_dp)
+
+The solver architect identified this as the cheapest path to fixing the void onset delay.
+Run two Thomas solves per timestep:
+1. First solve with h_mix drho_dp (current, provides thermal damping)
+2. Update void + energy explicitly
+3. Re-evaluate drho_dp with the new state
+4. Second Thomas solve (corrects for the void change)
+
+This effectively halves the "lag" between pressure and void without requiring a full
+block-coupled matrix. Estimated implementation: 20-30 lines in `bridge_5eq_solver.py`.
+Expected result: void onset moves from 170ms toward 30-50ms.
+
+### Priority 2: Port Flashing Model to 6-eq (MEDIUM)
+
+Apply the same changes to the 6-eq two-fluid model:
+- `library/Pipes/Pipe1D_TwoFluid.mo`: add use_relaxation, tau_flash, split q_i_l
+- `solver/partitioner/bridge_6eq_solver.py`: add semi-implicit void coupling + T_l/T_sat reads
+- `feasibility/models/EdwardsTest_TwoFluid_HF_Ramp_Flash.mo`: new test case
+
+The 6-eq model has v_rel directly available, enabling Ranz-Marshall Nu as an additional
+enhancement (not possible in 5-eq where v_rel is algebraic, not explicit).
+
+### Priority 3: Block-Coupled Pressure Solve (HIGH — major infrastructure)
+
+Replace the scalar N×N pressure tridiagonal with a block-coupled system that
+simultaneously solves p, alpha (and optionally h_l, h_v) per cell. This provides:
+- Correct phasic drho_dp (no thermal compressibility double-counting)
+- Implicit void-pressure coupling (dalpha/dp on LHS, not proportional to dt)
+- Correct void onset timing (~10ms)
+
+This is a significant solver architecture change (~200-300 lines). The current Thomas
+algorithm becomes a block Thomas algorithm with 2×2 or 3×3 blocks per cell.
+
+### Priority 4: tau_flash Sensitivity Study (LOW)
+
+tau_flash=0.025 gives ~2x geometric enhancement at Edwards conditions. Systematic sweep
+of tau_flash = [0.001, 0.005, 0.01, 0.025, 0.05, 0.1] to map the pressure-void trade-off.
+This requires multiple recompilations (one per tau value) unless a runtime parameter
+override is implemented in the bridge.
+
+### Key Files Modified in Session 3
+
+| File | What Changed |
+|------|-------------|
+| `library/Pipes/Pipe1D_DriftFlux.mo` | use_inception, use_relaxation, tau_flash, d_b_eff, split q_i_l, phasic drho_dp comment |
+| `solver/partitioner/bridge_5eq_solver.py` | Semi-implicit void coupling (dGamma/dp diagonal), T_l/T_sat reads, removed dead drho_dh |
+| `solver/partitioner/codegen/bridge_codegen.py` | GreaterEq/Greater/LessEq/Less C macros |
+| `solver/edwards_bridge_5eq_validation.py` | hf_ramp_flash model registry |
+| `feasibility/models/EdwardsTest_DriftFlux_HF_Ramp_Flash.mo` | Created (use_relaxation=1, tau=0.025, x_ne=0.14) |
+| `solver/tests/test_flash_inception.py` | Created (42 L0 tests) |
 
 ---
 
