@@ -6,7 +6,7 @@ transfer) from OM-generated C via the equation bridge. The solver provides
 ONLY the semi-implicit numerical method.
 
 State variables: p[N], alpha[N], h_l[N], h_v[N], mdot[N+1]
-Bridge provides: rho_l, rho_v, rho_m, rho_face, drho_dp, drho_dh,
+Bridge provides: rho_l, rho_v, rho_m, rho_face, drho_dp,
     Gamma, q_i_l, q_i_v, Phi2, T_l, T_sat_cell, h_sat_l, h_sat_v, h_mix
 """
 
@@ -133,7 +133,10 @@ class BridgeDriftFluxSolver:
         self.bridge.evaluate()
 
         drho_dp = self.bridge.get('drho_dp')
-        drho_dh = self.bridge.get('drho_dh')
+        # Note: drho_dh is available from the bridge but unused by the semi-implicit
+        # scheme — enthalpies are frozen during the pressure solve, so the drho_dh
+        # coupling term is zero by construction. The h_mix-evaluated drho_dp already
+        # captures the effective compressibility including thermal effects.
         rho_face = self.bridge.get('rho_face')
         rho_l = self.bridge.get('rho_l')
         rho_v = self.bridge.get('rho_v')

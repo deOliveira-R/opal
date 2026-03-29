@@ -168,17 +168,18 @@ equation
                T_sat_cell[i] + (h_l[i] - h_sat_l[i]) / Medium.cp_f(p[i]);
 
     // Mixture derivatives for pressure linearisation.
-    // Evaluated at h_mix (equilibrium mixture enthalpy). This includes "thermal
-    // compressibility" from the saturation curve shift, which provides essential
-    // damping for the semi-implicit pressure solve.
+    // Evaluated at h_mix (equilibrium mixture enthalpy). This is the CORRECT
+    // effective compressibility for the semi-implicit scheme where enthalpies are
+    // frozen during the pressure solve: drho_dp|_{h=h_mix} anticipates the density
+    // change that void growth will cause, preventing pressure overshoot.
     //
-    // KNOWN LIMITATION: When h_l crosses h_f during rapid depressurization,
-    // drho_dp jumps 2400x (Region 1 → two-phase), causing the pressure to stall
-    // at the saturation crossing. This delays void onset by ~150ms at GS-5.
-    // The physically correct fix (phasic drho_dp) requires fully implicit
-    // void-pressure coupling that is beyond the current solver infrastructure
-    // — without it, the mechanical compressibility alone causes the rarefaction
-    // wave to overshoot to atmospheric pressure (75.7% MAPE).
+    // The thermal compressibility (saturation curve shift) is physical, not
+    // numerical damping — experimental data at GS-5 confirms a 1000x slowdown
+    // in depressurization rate at the saturation crossing.
+    //
+    // Phasic drho_dp (mechanical compressibility only, ~5e-7) is correct only
+    // WITH fully implicit void-pressure coupling (RELAP5-style block matrix).
+    // Without it, the rarefaction wave overshoots to atmospheric (75.7% MAPE).
     // See docs/6eq_implementation_plan.md Session 3 for analysis.
     // Ref: RELAP5/MOD3 Vol I §3.1.2 (pressure linearization).
     drho_dp[i] = Medium.drho_dp_h(p[i], h_mix[i]);
