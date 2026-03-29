@@ -52,14 +52,16 @@ class OMEquationBridge:
         self._build_var_group('h', self.N)
         self._build_var_group('h_face', self.N + 1)
 
-        # DriftFlux-specific (present if model uses Pipe1D_DriftFlux)
+        # DriftFlux/TwoFluid-specific (present if model uses Pipe1D_DriftFlux or Pipe1D_TwoFluid)
         for name in ['alpha', 'h_l', 'h_v', 'h_mix', 'rho_l', 'rho_v', 'rho_m',
                       'Gamma', 'q_i_l', 'q_i_v', 'V_gj', 'a_i', 'alpha_eff',
                       'T_l', 'T_sat_cell', 'h_sat_l', 'h_sat_v']:
             self._build_var_group(name, self.N)
         # Face-level variables (N+1 entries)
         for name in ['Phi2', 'mdot_v', 'mdot_l', 'j_face',
-                      'alpha_face', 'rho_l_face', 'rho_v_face', 'V_gj_face']:
+                      'alpha_face', 'rho_l_face', 'rho_v_face', 'V_gj_face',
+                      # TwoFluid-specific face variables
+                      'v_l', 'v_v', 'F_drag', 'fric_l', 'fric_v']:
             self._build_var_group(name, self.N + 1)
 
         # Scalar bridge variables (critical flow, etc.)
@@ -174,11 +176,13 @@ class OMEquationBridge:
     # ── State set/get (name-aware, index-driven) ──
 
     def set_state(self, p: np.ndarray, h: np.ndarray = None, mdot: np.ndarray = None,
-                  alpha: np.ndarray = None, h_l: np.ndarray = None, h_v: np.ndarray = None):
+                  alpha: np.ndarray = None, h_l: np.ndarray = None, h_v: np.ndarray = None,
+                  mdot_l: np.ndarray = None, mdot_v: np.ndarray = None):
         """Write current state into the bridge flat arrays.
 
         HEM: set_state(p, h=h, mdot=mdot)
         5-eq: set_state(p, mdot=mdot, alpha=alpha, h_l=h_l, h_v=h_v)
+        6-eq: set_state(p, alpha=alpha, h_l=h_l, h_v=h_v, mdot_l=mdot_l, mdot_v=mdot_v)
         """
         self._set_group('p', p)
         if mdot is not None:
@@ -191,6 +195,10 @@ class OMEquationBridge:
             self._set_group('h_l', h_l)
         if h_v is not None:
             self._set_group('h_v', h_v)
+        if mdot_l is not None:
+            self._set_group('mdot_l', mdot_l)
+        if mdot_v is not None:
+            self._set_group('mdot_v', mdot_v)
 
     def _set_group(self, var_name: str, values: np.ndarray):
         """Write a numpy array to a variable group by name.

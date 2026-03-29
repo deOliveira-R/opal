@@ -1,0 +1,22 @@
+{
+  "model": "6eq_hf_ramp",
+  "equations": "6-eq two-fluid",
+  "critical_flow": "Henry-Fauske",
+  "ramp_source": "Modelica RampedBreak",
+  "interfacial_drag": "Ishii bubbly (Schiller-Naumann)",
+  "N": 24,
+  "dt": 5e-05,
+  "t_end": 0.6,
+  "overall_mape": 39.49,
+  "per_station": {
+    "GS-1": 17.34,
+    "GS-2": 15.34,
+    "GS-3": 32.95,
+    "GS-4": 47.79,
+    "GS-5": 57.12,
+    "GS-6": 62.01,
+    "GS-7": 43.87
+  },
+  "wall_time_s": 14.83,
+  "steps_per_second": 809.0
+}
