@@ -168,14 +168,18 @@ equation
                T_sat_cell[i] + (h_l[i] - h_sat_l[i]) / Medium.cp_f(p[i]);
 
     // Mixture derivatives for pressure linearisation.
-    // Evaluated at h_mix (equilibrium mixture enthalpy), NOT at phasic enthalpies.
-    // This provides the "effective compressibility" that includes both mechanical
-    // (sound speed) and thermal (saturation curve shift) effects. The thermal
-    // compressibility is essential for the semi-implicit scheme: it allows the
-    // pressure equation to implicitly account for density changes from phase
-    // change, which is treated explicitly in the void fraction transport.
-    // Without it, the scheme requires acoustic-CFL timesteps (dt ~ dx/c).
-    // This is the standard approach in RELAP5, TRACE, and system codes.
+    // Evaluated at h_mix (equilibrium mixture enthalpy). This includes "thermal
+    // compressibility" from the saturation curve shift, which provides essential
+    // damping for the semi-implicit pressure solve.
+    //
+    // KNOWN LIMITATION: When h_l crosses h_f during rapid depressurization,
+    // drho_dp jumps 2400x (Region 1 → two-phase), causing the pressure to stall
+    // at the saturation crossing. This delays void onset by ~150ms at GS-5.
+    // The physically correct fix (phasic drho_dp) requires fully implicit
+    // void-pressure coupling that is beyond the current solver infrastructure
+    // — without it, the mechanical compressibility alone causes the rarefaction
+    // wave to overshoot to atmospheric pressure (75.7% MAPE).
+    // See docs/6eq_implementation_plan.md Session 3 for analysis.
     // Ref: RELAP5/MOD3 Vol I §3.1.2 (pressure linearization).
     drho_dp[i] = Medium.drho_dp_h(p[i], h_mix[i]);
     drho_dh[i] = Medium.drho_dh_p(p[i], h_mix[i]);
