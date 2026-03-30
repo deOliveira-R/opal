@@ -173,6 +173,15 @@ PYTHONPATH=solver/two_phase external/venv/bin/python -m pytest solver/tests/test
 
 ---
 
+## Pre-Implementation Checklist
+
+**Before writing or modifying solver/extraction code**, read and apply the checklist at `.claude/commands/checklist.md`. It contains:
+- **FM1-FM10**: AI failure modes (sign flip, variable swap, missing negation, factor error, index error, convention drift, regime overapplication, feedback loop, boundary/edge value, silent pipeline corruption)
+- **P1-P5**: Pipeline integrity checks (parameter arrival, codegen completeness, variable completeness, activation verification, regime boundaries)
+- **S1-S4**: Scheme stability checks (feedback loops, coupled corrections, iteration convergence, rate limiting)
+
+Apply these checks DURING implementation, not after. Every new term needs sign + magnitude verification at a hand-calculated reference state.
+
 ## Implement -> Smoke Test -> Hand Off Workflow
 
 When you build or modify solver/extraction code, follow this loop:
