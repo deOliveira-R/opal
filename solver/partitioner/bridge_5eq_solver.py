@@ -24,7 +24,8 @@ class BridgeDriftFluxSolver:
     """
 
     def __init__(self, bridge: OMEquationBridge, spec, es=None,
-                 reconstruction='donor_cell'):
+                 reconstruction='donor_cell', use_block_coupling=False,
+                 corrector_steps=0):
         """
         Args:
             bridge: OMEquationBridge with compiled Modelica model
@@ -32,8 +33,16 @@ class BridgeDriftFluxSolver:
             es: EquationSystem from XML — pass this to load ALL parameter values
                 from Modelica (H_i, C_0, etc.). Without es, only geometry is set.
             reconstruction: 'donor_cell' (1st order) or 'muscl' (2nd order, minmod TVD)
+            use_block_coupling: if True, use Schur complement block-coupled
+                pressure-void solve instead of sequential (explicit void transport)
+            corrector_steps: number of predictor-corrector iterations (0=none, 1=one
+                corrector pass). Each corrector re-evaluates the bridge at the
+                predicted state and re-solves pressure, reducing the lag between
+                pressure and void fraction.
         """
         self.reconstruction = reconstruction
+        self.use_block_coupling = use_block_coupling
+        self.corrector_steps = corrector_steps
         self.bridge = bridge
         self.N = bridge.N
         self.spec = spec
@@ -151,6 +160,14 @@ class BridgeDriftFluxSolver:
         # Phi2 may have N or N+1 entries depending on model
         Phi2 = self.bridge.get('Phi2') if self.bridge.has('Phi2') else np.ones(N + 1)
 
+        # Phasic compressibility for block-coupled pressure-void solve
+        block_active = (self.use_block_coupling
+                        and self.bridge.has('drho_l_dp')
+                        and self.bridge.has('drho_v_dp'))
+        if block_active:
+            drho_l_dp = self.bridge.get('drho_l_dp')
+            drho_v_dp = self.bridge.get('drho_v_dp')
+
         # ══════════════════════════════════════════════════════════
         # NUMERICAL METHOD ONLY BELOW
         # ══════════════════════════════════════════════════════════
@@ -194,13 +211,27 @@ class BridgeDriftFluxSolver:
         beta = dt * self.A_flow / self.dx
         beta_eff = beta / (1.0 + sigma)
 
+        # ── Drift-flux phasic mass flows from bridge (if available) ──
+        # Read before pressure assembly (needed for R2 in block-coupled mode).
+        has_drift_flux = self.bridge.has('mdot_v') and self.bridge.has('mdot_l')
+        if has_drift_flux:
+            mdot_v_face = self.bridge.get('mdot_v')
+            mdot_l_face = self.bridge.get('mdot_l')
+        else:
+            mdot_v_face = None
+            mdot_l_face = None
+
         # ── Pressure tridiagonal (with implicit friction resistance) ──
         a_tri = np.zeros(N); b_tri = np.zeros(N)
         c_tri = np.zeros(N); d_tri = np.zeros(N)
 
-        for i in range(N):
-            alpha_coeff = self.V_cell * drho_dp[i] / dt
+        # Block-coupled: store Schur complement coefficients for alpha back-substitution
+        if block_active:
+            _A21 = np.zeros(N)
+            _A22 = np.zeros(N)
+            _R2 = np.zeros(N)
 
+        for i in range(N):
             # Face coupling using beta_eff (no floors needed)
             bL = 0.0 if (self.inlet_closed and i == 0) else (
                 0.0 if i == 0 else beta_eff[i])
@@ -208,46 +239,79 @@ class BridgeDriftFluxSolver:
 
             a_tri[i] = -bL if i > 0 else 0.0
             c_tri[i] = -bR if i < N - 1 else 0.0
-            b_tri[i] = alpha_coeff + bL + bR
-            d_tri[i] = alpha_coeff * p_old[i]
 
-            # RHS: mass residual + friction (with implicit friction correction)
-            d_tri[i] += (mdot_old[i] - mdot_old[i + 1])
-            d_tri[i] -= dt * (fric[i] / (1.0 + sigma[i])
-                            - fric[i + 1] / (1.0 + sigma[i + 1]))
+            if block_active:
+                # ── Block-coupled: smooth drho_dp transition at saturation ──
+                # At small α (onset): use Schur phasic compressibility (no 2400x
+                # jump, allows void onset). At moderate α: transition to h_mix
+                # compressibility (correct wave propagation speed). The transition
+                # mirrors the physical thermal equilibration: freshly nucleated
+                # cells behave as mechanical mixtures, while cells with established
+                # void are in thermal quasi-equilibrium.
+                al = alpha_old[i]
+                rv_i = max(rho_v[i], 0.01)
+                rl_i = max(rho_l[i], 1.0)
 
+                # Schur amplification: ρ_l/ρ_v boost on vapor compressibility
+                drho_schur = ((1 - al) * drho_l_dp[i]
+                              + al * (rl_i / rv_i) * drho_v_dp[i])
+
+                # Sigmoid transition: Schur at small α → h_mix at moderate α
+                # alpha_mid=0.05: half-Schur, half-hmix at 5% void
+                ALPHA_MID = 0.05
+                blend = min(al / ALPHA_MID, 1.0)  # linear ramp [0, alpha_mid]
+                drho_eff = (1 - blend) * drho_schur + blend * drho_dp[i]
+                alpha_coeff = self.V_cell / dt * drho_eff
+
+                b_tri[i] = alpha_coeff + bL + bR
+                d_tri[i] = alpha_coeff * p_old[i]
+
+                # RHS: mass residual + friction
+                d_tri[i] += (mdot_old[i] - mdot_old[i + 1])
+                d_tri[i] -= dt * (fric[i] / (1.0 + sigma[i])
+                                - fric[i + 1] / (1.0 + sigma[i + 1]))
+
+                # Semi-implicit void-pressure coupling
+                if Gamma[i] > 0 and T_l[i] > T_sat[i]:
+                    superheat = max(T_l[i] - T_sat[i], 0.1)
+                    h_fg = max(h_sat_v[i] - h_sat_l[i], 1.0)
+                    dTsat_dp = T_sat[i] * (1.0 / rv_i - 1.0 / rl_i) / h_fg
+                    dGamma_dp = -Gamma[i] * dTsat_dp / superheat
+                    void_diag = -self.V_cell * (rho_l[i] - rho_v[i]) / rv_i * dGamma_dp
+                    if void_diag > 0:
+                        b_tri[i] += void_diag
+                        d_tri[i] += void_diag * p_old[i]
+
+            else:
+                # ── Sequential: original h_mix compressibility ──
+                alpha_coeff = self.V_cell * drho_dp[i] / dt
+
+                b_tri[i] = alpha_coeff + bL + bR
+                d_tri[i] = alpha_coeff * p_old[i]
+
+                # RHS: mass residual + friction (with implicit friction correction)
+                d_tri[i] += (mdot_old[i] - mdot_old[i + 1])
+                d_tri[i] -= dt * (fric[i] / (1.0 + sigma[i])
+                                - fric[i + 1] / (1.0 + sigma[i + 1]))
+
+                # Semi-implicit void-pressure coupling (ad-hoc diagonal term).
+                if Gamma[i] > 0 and T_l[i] > T_sat[i]:
+                    rv_i = max(rho_v[i], 0.01)
+                    superheat = max(T_l[i] - T_sat[i], 0.1)
+                    h_fg = max(h_sat_v[i] - h_sat_l[i], 1.0)
+                    dTsat_dp = T_sat[i] * (1.0 / rv_i - 1.0 / max(rho_l[i], 1.0)) / h_fg
+                    dGamma_dp = -Gamma[i] * dTsat_dp / superheat
+                    void_diag = -self.V_cell * (rho_l[i] - rho_v[i]) / rv_i * dGamma_dp
+                    if void_diag > 0:
+                        b_tri[i] += void_diag
+                        d_tri[i] += void_diag * p_old[i]
+
+            # Outlet BC (same for both modes)
             if i == N - 1:
                 if outlet_choked:
                     d_tri[i] += (mdot_old[N] - mdot_crit)
                 else:
                     d_tri[i] += bR * self.p_out
-
-            # Semi-implicit void-pressure coupling.
-            # Evaporation (Gamma > 0) creates void → changes mixture density.
-            # The explicit void update runs ahead of the implicit pressure solve.
-            # Linearize Gamma w.r.t. pressure to add stabilizing diagonal term:
-            #   Gamma(p_new) ≈ Gamma + dGamma/dp * dp
-            #   dGamma/dp ≈ -Gamma * dT_sat/dp / max(T_l - T_sat, eps)
-            #   (higher p → higher T_sat → less superheat → less Gamma)
-            # Void source contribution to mass conservation:
-            #   S_void = V * (rho_l - rho_v) / rho_v * Gamma  [kg/s]
-            # Semi-implicit: move dS/dp to diagonal (stabilizing, positive):
-            #   void_diag = -V * (rho_l - rho_v) / rho_v * dGamma/dp
-            # Only active during evaporation (Gamma > 0, T_l > T_sat).
-            # At baseline (weak Gamma), this term is negligible.
-            if Gamma[i] > 0 and T_l[i] > T_sat[i]:
-                rv_i = max(rho_v[i], 0.01)
-                superheat = max(T_l[i] - T_sat[i], 0.1)
-                h_fg = max(h_sat_v[i] - h_sat_l[i], 1.0)
-                # Clausius-Clapeyron: dT_sat/dp ≈ T_sat * (1/rho_v - 1/rho_l) / h_fg
-                dTsat_dp = T_sat[i] * (1.0 / rv_i - 1.0 / max(rho_l[i], 1.0)) / h_fg
-                # dGamma/dp < 0 (more pressure → less superheat → less evaporation)
-                dGamma_dp = -Gamma[i] * dTsat_dp / superheat
-                # Diagonal contribution (positive → stabilizing)
-                void_diag = -self.V_cell * (rho_l[i] - rho_v[i]) / rv_i * dGamma_dp
-                if void_diag > 0:
-                    b_tri[i] += void_diag
-                    d_tri[i] += void_diag * p_old[i]
 
         p[:] = self._thomas_solve(a_tri, b_tri, c_tri, d_tri)
 
@@ -270,54 +334,37 @@ class BridgeDriftFluxSolver:
         else:
             mdot[N] = mdot_mom
 
-        # ── Drift-flux phasic mass flows from bridge (if available) ──
-        # The Modelica model computes mdot_v/mdot_l via drift-flux algebraic slip.
-        # If available, use them; otherwise fall back to HEM-like mdot*alpha.
-        has_drift_flux = self.bridge.has('mdot_v') and self.bridge.has('mdot_l')
-        if has_drift_flux:
-            mdot_v_face = self.bridge.get('mdot_v')
-            mdot_l_face = self.bridge.get('mdot_l')
-        else:
-            mdot_v_face = None
-            mdot_l_face = None
+        # ── Void fraction update (explicit conservative form for all modes) ──
+        if True:
+            # Conservative: alpha*rho_v product update with old rho_v (avoids
+            # void-density positive feedback — see Session 3 analysis).
+            # Update alpha*rho_v as a product, then extract alpha by dividing by
+            # new rho_v. Handles rapid rho_v changes during depressurization.
+            for i in range(N):
+                al = alpha_old[i]
+                rv = max(rho_v[i], 0.01)
 
-        # ── Void fraction transport (conservative form, explicit) ──
-        # Update alpha*rho_v as a product, then extract alpha by dividing by new rho_v.
-        # This is the conservative form that correctly handles rapid rho_v changes
-        # during depressurization. Ref: C++ prototype five_eq_model.cpp:394-399.
-        for i in range(N):
-            al = alpha_old[i]
-            rv = max(rho_v[i], 0.01)
-
-            if has_drift_flux:
-                flux_v = mdot_v_face[i] - mdot_v_face[i + 1]
-            else:
-                if mdot[i] >= 0:
-                    alpha_in = alpha_old[i - 1] if i > 0 else al
+                if has_drift_flux:
+                    flux_v = mdot_v_face[i] - mdot_v_face[i + 1]
                 else:
-                    alpha_in = al
-                if mdot[i + 1] >= 0:
-                    alpha_out = al
-                else:
-                    alpha_out = alpha_old[i + 1] if i < N - 1 else al
-                flux_v = mdot[i] * alpha_in - mdot[i + 1] * alpha_out
+                    if mdot[i] >= 0:
+                        alpha_in = alpha_old[i - 1] if i > 0 else al
+                    else:
+                        alpha_in = al
+                    if mdot[i + 1] >= 0:
+                        alpha_out = al
+                    else:
+                        alpha_out = alpha_old[i + 1] if i < N - 1 else al
+                    flux_v = mdot[i] * alpha_in - mdot[i + 1] * alpha_out
 
-            # Conservative: update alpha*rho_v product
-            alpha_rho_v_new = al * rv + dt / self.V_cell * (flux_v + self.V_cell * Gamma[i])
+                alpha_rho_v_new = al * rv + dt / self.V_cell * (flux_v + self.V_cell * Gamma[i])
+                rv_new = max(rho_v[i], 0.01)
+                alpha_new = max(0.0, min(1.0, alpha_rho_v_new / rv_new))
 
-            # Extract alpha using rho_v. Using old-pressure rho_v for now;
-            # new-pressure evaluation accelerates void growth too aggressively
-            # with the current explicit scheme, causing runaway depressurization.
-            rv_new = max(rho_v[i], 0.01)
-            alpha_new = max(0.0, min(1.0, alpha_rho_v_new / rv_new))
+                if Gamma[i] > 0:
+                    alpha_new = max(alpha_new, 1e-3)
 
-            # Nucleation floor: when flashing is active, maintain minimum void
-            # to prevent advective washout of the nucleation seed.
-            # Ref: C++ prototype five_eq_model.cpp:415-417.
-            if Gamma[i] > 0:
-                alpha_new = max(alpha_new, 1e-3)
-
-            alpha[i] = alpha_new
+                alpha[i] = alpha_new
 
         # ── Phasic energy (explicit, using _old enthalpy values) ──
         # All advection uses h_l_old/h_v_old to prevent directional bias from
@@ -390,3 +437,103 @@ class BridgeDriftFluxSolver:
                 h_v[i] = max(h_sat_v[i], min(h_v[i], 4e6))  # Floor at h_sat_v, not 1e4
             else:
                 h_v[i] = h_sat_v[i]
+
+        # ── Predictor-corrector: re-solve pressure with updated state ──
+        # After the predictor pass (above), p/alpha/h have been updated.
+        # Re-evaluate the bridge at the predicted state to get updated drho_dp,
+        # then re-solve pressure and momentum. This reduces the lag between
+        # pressure and void, particularly at the saturation crossing where
+        # drho_dp(h_mix) jumps 2400x. The corrector sees the post-void h_mix,
+        # which better reflects the two-phase state.
+        for _corr in range(self.corrector_steps):
+            # Use old enthalpies — energy update shifts h_l toward saturation,
+            # triggering the drho_dp jump in the corrector (counterproductive).
+            # Only p and alpha carry information to the corrector.
+            self.bridge.set_state(p, alpha=alpha, h_l=h_l_old, h_v=h_v_old, mdot=mdot)
+            self.bridge.evaluate()
+
+            drho_dp_c = self.bridge.get('drho_dp')
+            rho_face_c = self.bridge.get('rho_face')
+            Gamma_c = self.bridge.get('Gamma')
+            T_l_c = self.bridge.get('T_l')
+            T_sat_c = self.bridge.get('T_sat_cell')
+            rho_l_c = self.bridge.get('rho_l')
+            rho_v_c = self.bridge.get('rho_v')
+            h_sat_l_c = self.bridge.get('h_sat_l')
+            h_sat_v_c = self.bridge.get('h_sat_v')
+            Phi2_c = self.bridge.get('Phi2') if self.bridge.has('Phi2') else np.ones(N + 1)
+
+            # Re-compute friction at corrected state
+            fric_c = np.zeros(N + 1)
+            sigma_c = np.zeros(N + 1)
+            for i in range(N + 1):
+                phi2_i = Phi2_c[min(i, len(Phi2_c) - 1)]
+                if rho_face_c[i] > 0.01 and np.isfinite(mdot[i]):
+                    f = (phi2_i * K_geom * abs(mdot[i]) * mdot[i]
+                         / (rho_face_c[i] * self.A_flow**2))
+                    fric_c[i] = f if np.isfinite(f) else 0.0
+                    sigma_c[i] = (2 * dt * phi2_i * K_geom * abs(mdot[i])
+                                  / (rho_face_c[i] * self.A_flow**2))
+            beta_eff_c = beta / (1.0 + sigma_c)
+
+            # Re-assemble pressure tridiagonal with corrected drho_dp
+            a_c = np.zeros(N); b_c = np.zeros(N)
+            c_c = np.zeros(N); d_c = np.zeros(N)
+
+            outlet_choked_c = self.use_critical_flow and mdot[N] > 0
+            mdot_crit_c = 1e10
+            if self.use_critical_flow and self.bridge.has('mdot_crit'):
+                arr = self.bridge.get('mdot_crit')
+                mdot_crit_c = arr[0] if len(arr) > 0 else 1e10
+                mdot_crit_c *= getattr(self, 'C_d_factor', 1.0)
+
+            for i in range(N):
+                alpha_coeff_c = self.V_cell * drho_dp_c[i] / dt
+                bL = 0.0 if (self.inlet_closed and i == 0) else (
+                    0.0 if i == 0 else beta_eff_c[i])
+                bR = 0.0 if (i == N - 1 and outlet_choked_c) else beta_eff_c[i + 1]
+
+                a_c[i] = -bL if i > 0 else 0.0
+                c_c[i] = -bR if i < N - 1 else 0.0
+                b_c[i] = alpha_coeff_c + bL + bR
+                d_c[i] = alpha_coeff_c * p_old[i]
+
+                d_c[i] += (mdot_old[i] - mdot_old[i + 1])
+                d_c[i] -= dt * (fric_c[i] / (1.0 + sigma_c[i])
+                                - fric_c[i + 1] / (1.0 + sigma_c[i + 1]))
+
+                if i == N - 1:
+                    if outlet_choked_c:
+                        d_c[i] += (mdot_old[N] - mdot_crit_c)
+                    else:
+                        d_c[i] += bR * self.p_out
+
+                # Semi-implicit void-pressure coupling
+                if Gamma_c[i] > 0 and T_l_c[i] > T_sat_c[i]:
+                    rv_i = max(rho_v_c[i], 0.01)
+                    superheat = max(T_l_c[i] - T_sat_c[i], 0.1)
+                    h_fg = max(h_sat_v_c[i] - h_sat_l_c[i], 1.0)
+                    dTsat_dp = T_sat_c[i] * (1.0 / rv_i - 1.0 / max(rho_l_c[i], 1.0)) / h_fg
+                    dGamma_dp = -Gamma_c[i] * dTsat_dp / superheat
+                    void_diag = -self.V_cell * (rho_l_c[i] - rho_v_c[i]) / rv_i * dGamma_dp
+                    if void_diag > 0:
+                        b_c[i] += void_diag
+                        d_c[i] += void_diag * p_old[i]
+
+            p[:] = self._thomas_solve(a_c, b_c, c_c, d_c)
+            for i in range(N):
+                if not np.isfinite(p[i]):
+                    p[i] = p_old[i]
+                p[i] = max(self.bridge.p_min, min(self.bridge.p_max, p[i]))
+
+            # Re-do momentum
+            mdot[0] = 0.0
+            for i in range(1, N):
+                mdot[i] = (mdot_old[i] + beta_eff_c[i] * (p[i - 1] - p[i])
+                           - dt * fric_c[i] / (1.0 + sigma_c[i]))
+            mdot_mom_c = (mdot_old[N] + beta_eff_c[N] * (p[N - 1] - self.p_out)
+                          - dt * fric_c[N] / (1.0 + sigma_c[N]))
+            if self.use_critical_flow and mdot_mom_c > 0:
+                mdot[N] = min(mdot_mom_c, mdot_crit_c)
+            else:
+                mdot[N] = mdot_mom_c

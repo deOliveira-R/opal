@@ -55,7 +55,8 @@ class OMEquationBridge:
         # DriftFlux/TwoFluid-specific (present if model uses Pipe1D_DriftFlux or Pipe1D_TwoFluid)
         for name in ['alpha', 'h_l', 'h_v', 'h_mix', 'rho_l', 'rho_v', 'rho_m',
                       'Gamma', 'q_i_l', 'q_i_v', 'V_gj', 'a_i', 'alpha_eff',
-                      'T_l', 'T_sat_cell', 'h_sat_l', 'h_sat_v']:
+                      'T_l', 'T_sat_cell', 'h_sat_l', 'h_sat_v',
+                      'drho_l_dp', 'drho_v_dp']:
             self._build_var_group(name, self.N)
         # Face-level variables (N+1 entries)
         for name in ['Phi2', 'mdot_v', 'mdot_l', 'j_face',
@@ -308,9 +309,9 @@ class OMEquationBridge:
         """Generic getter: read a variable group by short name (e.g., 'rho_face').
 
         Handles OM variable elimination: entries with index -1 (sentinel) are
-        filled from the nearest available neighbor. This happens when OM inlines
-        boundary values during compilation — the physics IS computed, just not
-        stored as a separate named variable.
+        filled using algebraic identities where available (e.g., mdot_v = mdot -
+        mdot_l), falling back to nearest-neighbor interpolation. OM commonly
+        eliminates boundary-face variables during compilation.
         """
         if var_name not in self._var_groups:
             raise KeyError(f"Variable group '{var_name}' not found. "
@@ -324,7 +325,7 @@ class OMEquationBridge:
         if not has_gaps:
             return self._get_array(c_idx, n)
 
-        # Read available entries, fill gaps from nearest neighbor
+        # Read available entries, mark gaps
         out = np.zeros(n)
         for i in range(n):
             if c_idx[i] >= 0:
@@ -332,7 +333,23 @@ class OMEquationBridge:
             else:
                 out[i] = float('nan')  # Mark for filling
 
-        # Fill NaN gaps from nearest available neighbor
+        # Fill gaps using algebraic identities (conservation: mdot_v + mdot_l = mdot)
+        if var_name == 'mdot_v' and 'mdot' in self._var_groups and 'mdot_l' in self._var_groups:
+            mdot_total = self.get('mdot')
+            mdot_l = self.get('mdot_l')
+            for i in range(n):
+                if np.isnan(out[i]):
+                    out[i] = mdot_total[i] - mdot_l[i]
+            return out
+        elif var_name == 'mdot_l' and 'mdot' in self._var_groups and 'mdot_v' in self._var_groups:
+            mdot_total = self.get('mdot')
+            mdot_v = self.get('mdot_v')
+            for i in range(n):
+                if np.isnan(out[i]):
+                    out[i] = mdot_total[i] - mdot_v[i]
+            return out
+
+        # Fallback: fill NaN gaps from nearest available neighbor
         for i in range(n):
             if np.isnan(out[i]):
                 # Search forward

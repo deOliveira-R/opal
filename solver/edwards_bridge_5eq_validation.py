@@ -114,6 +114,10 @@ def parse_args(argv=None):
                         help='Save .npz and MAPE JSON to results directory')
     parser.add_argument('--plot', action='store_true',
                         help='Generate plots after run')
+    parser.add_argument('--block-coupled', action='store_true',
+                        help='Use Schur complement block-coupled pressure-void solve')
+    parser.add_argument('--corrector', type=int, default=0,
+                        help='Predictor-corrector iterations (0=none, 1=one corrector)')
     return parser.parse_args(argv)
 
 
@@ -160,7 +164,9 @@ def run_validation(args):
     es = load_equation_system(str(edwards_xml))
     spec = map_pipe1d(es)
 
-    solver = BridgeDriftFluxSolver(bridge, spec, es=es)
+    solver = BridgeDriftFluxSolver(bridge, spec, es=es,
+                                   use_block_coupling=getattr(args, 'block_coupled', False),
+                                   corrector_steps=getattr(args, 'corrector', 0))
 
     print(f"\nModel: 5-eq drift-flux, N={N}")
     print(f"  {info.summary()}")
@@ -303,15 +309,44 @@ def run_validation(args):
 
     overall = np.mean(list(gs_errors.values())) if gs_errors else float('nan')
 
+    # ── Void fraction comparison at GS-5 ──
+    void_exp_path = data_dir / "fig14-gs5.csv"
+    void_mae = float('nan')
+    void_onset_ms = float('nan')
+    if void_exp_path.exists():
+        void_data = np.loadtxt(void_exp_path, delimiter=",")
+        t_void_exp = void_data[:, 0]
+        alpha_void_exp = np.clip(void_data[:, 1], 0.0, 1.0)
+
+        gs5_cell = gs_cells["GS-5"]
+        alpha_sim_gs5 = np.array([rec[2][gs5_cell] for rec in history])
+
+        # Interpolate simulation onto experimental times (within sim range)
+        mask = (t_void_exp >= 0) & (t_void_exp <= t_sim[-1])
+        alpha_interp = np.interp(t_void_exp[mask], t_sim, alpha_sim_gs5)
+        void_mae = np.mean(np.abs(alpha_interp - alpha_void_exp[mask]))
+
+        # Void onset: first time alpha > 0.01
+        for idx in range(len(t_sim)):
+            if alpha_sim_gs5[idx] > 0.01:
+                void_onset_ms = t_sim[idx] * 1000
+                break
+
     print(f"\n{'='*70}")
     print(f"Edwards Blowdown — 5-EQ DRIFT-FLUX via OM Bridge")
     print(f"  Model: {model_name} | Critical flow: {crit_flow} | Ramp: {ramp_source}")
+    if getattr(args, 'block_coupled', False):
+        print(f"  Pressure-void coupling: BLOCK-COUPLED (Schur complement)")
     print(f"{'='*70}")
     print(f"\nMAPE by station:")
     for gs_name in exp_files:
         if gs_name in gs_errors:
             print(f"  {gs_name} (x={gs_x[gs_name]:.1f}m): {gs_errors[gs_name]:.1f}%")
     print(f"\n  Overall MAPE: {overall:.1f}%")
+
+    print(f"\nVoid fraction at GS-5:")
+    print(f"  Void MAE:    {void_mae:.3f}")
+    print(f"  Void onset:  {void_onset_ms:.1f} ms (experiment: 9.5 ms)")
 
     print(f"\nPhysical indicators:")
     print(f"  alpha_max (mid-time):  {alpha_max_mid:.4f}")

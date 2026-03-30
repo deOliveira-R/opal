@@ -14,6 +14,32 @@ See `docs/architecture.md` Cardinal Rule.
 4. **Same model, two modes.** Analysis mode (adaptive) and real-time mode (fixed-step).
 5. **Replaceable media.** All pipes use `replaceable package Medium constrainedby PartialMedium`.
 
+## OpenModelica Pitfalls (Known Failure Modes)
+
+These are silent — OM compiles successfully but physics is corrupted. Check after every `.mo` change.
+
+1. **CSE parameter elimination.** OM's Common Subexpression Elimination replaces
+   parameter expressions like `min(max(flash_model-1, 0), 1)` with `$cseN` variables
+   that have `value=None` in the XML. The bridge initializes these to 0, silently
+   disabling the feature. **Fix:** Use direct control parameters (`use_relaxation`)
+   instead of computed selectors. Avoid arithmetic in parameter expressions.
+
+2. **Bare comparison codegen.** `if param >= 1 then ... else ...` generates bare
+   `GreaterEq()` C function calls. The bridge header must define macros for
+   `GreaterEq`, `Greater`, `LessEq`, `Less`. New comparison patterns in `.mo` files
+   may generate undefined C symbols. **Check:** Bridge .so compiles without errors.
+
+3. **Boundary variable elimination.** OM may eliminate boundary-face variables
+   during symbolic simplification (e.g., `mdot_v[1]` at a wall boundary). The
+   bridge gap-fill must use conservation identities (`mdot_v = mdot - mdot_l`),
+   not nearest-neighbor interpolation. **Check:** `mdot_v + mdot_l = mdot` at ALL
+   faces including boundaries.
+
+4. **Region boundary strict inequalities.** `region_ph` uses `h < h_f` (strict),
+   so `h = h_f` exactly evaluates in Region 4 (two-phase), not Region 1. This
+   causes `drho_dp` to jump 2400x. **Fix:** Use enthalpy clamping margins
+   (`min(h_l, h_f - 100)`) when evaluating phasic derivatives.
+
 ## Subdirectories
 
 ### Implemented

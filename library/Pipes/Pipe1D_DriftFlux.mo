@@ -83,6 +83,10 @@ model Pipe1D_DriftFlux
   Real alpha_eff[N] "Effective void fraction (with nucleation) [-]";
   Real d_b_eff[N] "Effective bubble diameter (reduced during flashing inception) [m]";
 
+  // Phasic mechanical compressibility (for block-coupled pressure-void solve)
+  Real drho_l_dp[N] "Liquid compressibility at h_l [kg/(m^3*Pa)]";
+  Real drho_v_dp[N] "Vapour compressibility at h_v [kg/(m^3*Pa)]";
+
   // Drift-flux (per cell)
   Real V_gj[N] "Drift velocity [m/s]";
 
@@ -184,6 +188,15 @@ equation
     // Ref: RELAP5/MOD3 Vol I §3.1.2 (pressure linearization).
     drho_dp[i] = Medium.drho_dp_h(p[i], h_mix[i]);
     drho_dh[i] = Medium.drho_dh_p(p[i], h_mix[i]);
+
+    // Phasic mechanical compressibility for block-coupled pressure-void solve.
+    // Evaluated in single-phase regions only (Region 1 for liquid, Region 2 for
+    // vapour). The 100 J/kg margin prevents evaluation at h = h_f/h_g exactly,
+    // which falls into Region 4 due to strict inequality in region_ph.
+    // These are used by the Schur complement solver; drho_dp (h_mix) above is
+    // kept for critical flow sound speed and as fallback.
+    drho_l_dp[i] = Medium.drho_dp_h(p[i], noEvent(min(h_l[i], h_sat_l[i] - 100.0)));
+    drho_v_dp[i] = Medium.drho_dp_h(p[i], noEvent(max(h_v[i], h_sat_v[i] + 100.0)));
   end for;
 
   // ─────────────────────────────────────────────────────────────────

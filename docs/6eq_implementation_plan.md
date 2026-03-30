@@ -539,25 +539,88 @@ we tried to avoid. Requires margin (h_f - 100) to stay in Region 1.
 
 ## Roadmap for Next Session
 
-### Current State (2026-03-29, end of Session 3)
+### Current State (2026-03-29, end of Session 4)
 
-- **930 tests pass** (888 pre-existing + 42 new flash inception)
-- **Pressure MAPE: 21.6%** (baseline with semi-implicit coupling, beats RELAP5 ~27%)
-- **Void MAE at GS-5: 0.140** (with Jones/Lahey, approaching RELAP5 0.111)
-- **Void onset at GS-5: 170ms** (experiment: ~10ms — known limitation from drho_dp stall)
+- **931 tests pass** (888 pre-existing + 42 flash inception + 1 mdot_v fix)
+- **Pressure MAPE: 21.4%** (baseline with void coupling + mdot_v boundary fix)
+- **Void MAE at GS-5: 0.149** (with Jones/Lahey relaxation)
+- **Void onset at GS-5: 180ms** (experiment: 9.5ms — known limitation)
+- **Block-coupled onset: 15ms** (correct! but 63% MAPE — unstable wave speed)
 
-### Priority 1: Predictor-Corrector Pressure Solve (HIGH — unlocks phasic drho_dp)
+### Session 4: Block-Coupled Pressure-Void Solve (Attempted)
 
-The solver architect identified this as the cheapest path to fixing the void onset delay.
-Run two Thomas solves per timestep:
-1. First solve with h_mix drho_dp (current, provides thermal damping)
-2. Update void + energy explicitly
-3. Re-evaluate drho_dp with the new state
-4. Second Thomas solve (corrects for the void change)
+**Goal:** Fix void onset delay (180ms → 10ms) using Schur complement block coupling.
 
-This effectively halves the "lag" between pressure and void without requiring a full
-block-coupled matrix. Estimated implementation: 20-30 lines in `bridge_5eq_solver.py`.
-Expected result: void onset moves from 170ms toward 30-50ms.
+**What was built:**
+
+| Component | File | Status |
+|-----------|------|--------|
+| Phasic drho_dp (Region 1/2) | `Pipe1D_DriftFlux.mo` | Complete (drho_l_dp, drho_v_dp) |
+| Bridge variable registration | `equation_bridge.py` | Complete |
+| Schur complement solver | `bridge_5eq_solver.py` → `use_block_coupling` | Complete (experimental) |
+| Predictor-corrector | `bridge_5eq_solver.py` → `corrector_steps` | Complete (experimental) |
+| Void MAE diagnostics | `edwards_bridge_5eq_validation.py` | Complete |
+| mdot_v boundary fix | `equation_bridge.py` → `get()` | Complete (conservation identity) |
+| Bridge recompilation | `opal_bridge_EdwardsTest_DriftFlux_HF_Ramp*.so` | Complete |
+
+**Results:**
+
+| Configuration | Pressure MAPE | Void MAE | Void Onset | Issue |
+|---|---|---|---|---|
+| Baseline (h_mix sequential) | **21.4%** | 0.282 | 180 ms | Onset 19x late |
+| Baseline + flash (Jones/Lahey) | **21.6%** | **0.149** | 140 ms | Best current |
+| Full Schur (phasic diagonal) | 143.5% | 0.366 | **15 ms** | Pressure overshoots |
+| h_mix + Schur void correction | 46.1% | 0.395 | 180 ms | Void feedback instability |
+| Schur with α-blend (0.05) | 63.2% | 0.465 | 15 ms | Wave speed too fast |
+| Predictor-corrector (1 iter) | 48.3% | 0.391 | 300 ms | Energy update counterproductive |
+
+**Key finding: the h_mix drho_dp serves a dual physical role.**
+
+1. **Void onset timing** — the 2400x jump at h=h_f freezes pressure, delaying void onset.
+   Removing the jump (phasic drho_dp) gives correct 15ms onset.
+
+2. **Wave propagation speed** — the h_mix thermal compressibility controls how fast the
+   saturation wave propagates through the pipe. Experimental data confirms the pressure
+   depressurization rate drops 1000x at the saturation crossing.
+
+These roles are INSEPARABLE in the current semi-implicit scheme. The Schur complement
+fixes role 1 but breaks role 2. A fully implicit Newton solve would decouple them
+(~500 lines, major effort). Subcycling at dt/10 might also work.
+
+**What was learned from the predictor-corrector:**
+
+The corrector worsens void onset (370ms → vs baseline 180ms) because the energy update
+in the predictor pushes h_l toward h_f, triggering the drho_dp jump in the corrector pass.
+Using old enthalpies in the corrector helps slightly but not enough. The 2400x jump in
+drho_dp causes iteration DIVERGENCE, not convergence.
+
+**Error detected by Session 4:**
+
+**Error 7: mdot_v Boundary Gap-Fill (INFRASTRUCTURE)**
+OM eliminates `mdot_v[1]` (boundary face). The bridge `get()` method filled it from the
+nearest neighbor (face 2), breaking `mdot_v + mdot_l = mdot` at the boundary. Cell 0
+void transport used the wrong flux. Fixed by computing `mdot_v = mdot - mdot_l` when
+gaps are detected (conservation identity gap-fill in `equation_bridge.py`).
+
+### Updated Priority 1: Fully Implicit Void-Pressure Coupling (HIGH — requires Newton)
+
+The Schur complement approach PROVED the physics is correct (15ms onset) but cannot
+maintain stability at dt=50µs. A fully implicit solve requires:
+
+1. **Newton iteration** within each timestep (2-4 iterations typical)
+2. **Jacobian assembly:** d(residual)/d(p, alpha) per cell — analytically from bridge
+3. **Convergence criterion:** ||residual|| < tol (relative to mass flux)
+4. **Cost:** ~2-4x per step (bridge evaluation per iteration), but allows larger dt
+
+This is the RELAP5/TRACE approach. Estimated implementation: ~500 lines in
+`bridge_5eq_solver.py`, plus analytical Jacobian helpers.
+
+### Priority 2: Port Flashing Model to 6-eq (MEDIUM)
+
+Apply the same changes to the 6-eq two-fluid model:
+- `library/Pipes/Pipe1D_TwoFluid.mo`: add use_relaxation, tau_flash, split q_i_l
+- `solver/partitioner/bridge_6eq_solver.py`: add semi-implicit void coupling + T_l/T_sat reads
+- `feasibility/models/EdwardsTest_TwoFluid_HF_Ramp_Flash.mo`: new test case
 
 ### Priority 2: Port Flashing Model to 6-eq (MEDIUM)
 

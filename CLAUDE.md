@@ -28,15 +28,22 @@ is needed, edit the `.mo` files — never the solver.
 - If something breaks mid-plan — STOP and re-plan
 - Write detailed specs to remove ambiguity
 
-### 2. Use Subagents
+### 2. Use Subagents — and Escalate Early
 - Split complex problems: research, execution, analysis
 - One task per agent for clarity
 - Parallelize thinking, not just execution
+- **If your approach fails twice, STOP.** Spawn solver-architect or
+  physics-reviewer with what you tried and why it failed. Don't burn
+  context window iterating solo — expert agents get fresh context.
+- Use round-trips between specialist agents to narrow down problems
 
-### 3. Verify Before Done
+### 3. Verify Before Done — All Tests Must Pass
 - Never mark done without proof
 - Run tests, check logs, simulate real usage
 - Compare expected vs actual behavior
+- **Run full test suite before committing or ending a session.
+  Zero tolerance for failing tests at session boundary — the next
+  session inherits the mess with no context for why it was left broken.**
 - Ask: "Would a senior engineer approve this?"
 
 ### 4. Demand Elegance
@@ -51,10 +58,10 @@ is needed, edit the `.mo` files — never the solver.
 - Fix CI failures proactively
 
 ### 6. QA Rigor for AI-Generated Code
-- Level 0: every equation term needs sign AND magnitude test
-- Level 1: integration tests with full solver
-- Level 2: validation against experimental data
-- See `solver/tests/QA_AI_CODE_METHODOLOGY.md`
+- Run `/checklist` before writing physics or solver code
+- After implementation, spawn QA agent for full review
+- Fix test gaps BEFORE developing new features
+- See `solver/tests/QA_AI_CODE_METHODOLOGY.md` for L0/L1/L2 methodology
 
 ### 7. Iterate, Don't Guess
 - Add features one at a time, compare to data after each step

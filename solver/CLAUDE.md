@@ -83,6 +83,18 @@ Case 2: Modelica (.mo) → OM translateModel → C code → bridge_codegen → .
 - **Case 1**: `parameterized_5eq_solver.py` — all parameters from Modelica extraction
 - **Case 2**: `bridge_5eq_solver.py` — **ALL physics from OM-generated C (PRODUCTION)**
 
+## After Modelica Changes: Pipeline Verification
+
+The pipeline between Modelica and solver is a failure surface. After any `.mo` change:
+
+1. **Recompile bridge:** `translate_and_build('ModelName')` — must succeed
+2. **Check variable presence:** `bridge.has('new_var')` for any new variables
+3. **Check boundary faces:** Conservation identities at face 0 and face N
+4. **Check activation:** Run with feature ON and OFF — results must differ
+5. **Run `/checklist`** before writing solver code that uses new bridge variables
+
+See `library/CLAUDE.md` "OpenModelica Pitfalls" for known silent failure modes.
+
 ## C++ Prototype (Archived)
 
 The C++ solver source (.hpp, .cpp) has been moved to `archive/cpp_prototype/`.
