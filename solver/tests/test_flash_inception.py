@@ -78,8 +78,17 @@ def compute_d_b_eff(alpha_eff, use_inception, d_b, d_b_flash, d_b_min,
     return max(d_b - use_inception * (d_b - d_b_flash) * (1 - ramp), d_b_min)
 
 
+def compute_tau_eff(tau_flash, T_l, T_sat, tau_flash_n=0, tau_flash_DT_ref=1.0):
+    """Replica of tau_eff computation from Pipe1D_DriftFlux.mo.
+
+    tau_eff = tau_flash / max((T_l - T_sat) / DT_ref, 1.0) ^ n
+    Backward compatible: n=0 → tau_eff = tau_flash.
+    """
+    return tau_flash / max((T_l - T_sat) / tau_flash_DT_ref, 1.0) ** tau_flash_n
+
+
 def compute_q_i_l(p, alpha_eff, h_l, use_relaxation, tau_flash,
-                  Nu_i, d_b_eff):
+                  Nu_i, d_b_eff, tau_flash_n=0, tau_flash_DT_ref=1.0):
     """Replica of q_i_l computation from Pipe1D_DriftFlux.mo (split formula)."""
     T_sat = sf_T_sat(p)
     T_l = sf_T_l(p, h_l)
@@ -91,8 +100,10 @@ def compute_q_i_l(p, alpha_eff, h_l, use_relaxation, tau_flash,
     DT_sub = max(T_sat - T_l, 0.0)  # subcooling (condensation direction)
     DT_sup = max(T_l - T_sat, 0.0)  # superheat (evaporation direction)
 
+    tau_eff = compute_tau_eff(tau_flash, T_l, T_sat, tau_flash_n, tau_flash_DT_ref)
+
     H_geo = h_i * a_i
-    H_relax = alpha_eff * (1 - alpha_eff) * rho_l * CP_L / tau_flash
+    H_relax = alpha_eff * (1 - alpha_eff) * rho_l * CP_L / tau_eff
 
     H_eff_evap = H_geo + use_relaxation * (H_relax - H_geo)
 
@@ -691,3 +702,114 @@ class TestRealizability:
             f"Gamma={Gamma:.4f} should be small at 0.001K superheat"
         assert Gamma == pytest.approx(0.015, rel=0.01), \
             f"Gamma={Gamma:.4f}, expected ~0.015"
+
+
+# ============================================================================
+# Superheat-dependent tau_flash (tau_eff)
+# ============================================================================
+
+class TestSuperHeatTau:
+    """L0 tests for superheat-dependent tau_eff = tau_flash / max(DT/DT_ref, 1)^n."""
+
+    def test_backward_compat_n_zero(self):
+        """tau_flash_n=0: tau_eff = tau_flash for all superheats."""
+        for DT in [-10.0, 0.0, 5.0, 50.0, 200.0]:
+            T_sat = 400.0
+            T_l = T_sat + DT
+            tau = compute_tau_eff(TAU_FLASH, T_l, T_sat, tau_flash_n=0, tau_flash_DT_ref=1.0)
+            assert tau == pytest.approx(TAU_FLASH, rel=1e-15), \
+                f"n=0, DT={DT}: tau_eff={tau}, expected {TAU_FLASH}"
+
+    def test_subcooled_returns_baseline(self):
+        """Subcooled (T_l < T_sat): tau_eff = tau_flash regardless of n."""
+        T_sat = 400.0
+        for n in [0, 0.5, 1.0, 2.0]:
+            tau = compute_tau_eff(TAU_FLASH, T_l=380.0, T_sat=T_sat,
+                                 tau_flash_n=n, tau_flash_DT_ref=1.0)
+            assert tau == pytest.approx(TAU_FLASH, rel=1e-15), \
+                f"n={n}, subcooled: tau_eff={tau}, expected {TAU_FLASH}"
+
+    def test_small_superheat_below_DT_ref(self):
+        """Superheat < DT_ref: tau_eff = tau_flash (max clamps to 1)."""
+        tau = compute_tau_eff(TAU_FLASH, T_l=400.5, T_sat=400.0,
+                             tau_flash_n=1, tau_flash_DT_ref=1.0)
+        assert tau == pytest.approx(TAU_FLASH, rel=1e-15), \
+            f"DT=0.5 < DT_ref=1.0: tau_eff should be tau_flash"
+
+    def test_exact_at_DT_ref(self):
+        """Superheat = DT_ref: tau_eff = tau_flash (boundary, no enhancement)."""
+        tau = compute_tau_eff(TAU_FLASH, T_l=401.0, T_sat=400.0,
+                             tau_flash_n=1, tau_flash_DT_ref=1.0)
+        assert tau == pytest.approx(TAU_FLASH, rel=1e-15)
+
+    def test_linear_n1_20K(self):
+        """n=1, DT=20K, DT_ref=1K: tau_eff = 0.025/20 = 0.00125."""
+        tau = compute_tau_eff(TAU_FLASH, T_l=420.0, T_sat=400.0,
+                             tau_flash_n=1, tau_flash_DT_ref=1.0)
+        assert tau == pytest.approx(0.025 / 20.0, rel=1e-12)
+
+    def test_linear_n1_100K(self):
+        """n=1, DT=100K, DT_ref=1K: tau_eff = 0.025/100 = 0.00025."""
+        tau = compute_tau_eff(TAU_FLASH, T_l=500.0, T_sat=400.0,
+                             tau_flash_n=1, tau_flash_DT_ref=1.0)
+        assert tau == pytest.approx(0.025 / 100.0, rel=1e-12)
+
+    def test_quadratic_n2(self):
+        """n=2, DT=10K: tau_eff = 0.025/100 = 0.00025."""
+        tau = compute_tau_eff(TAU_FLASH, T_l=410.0, T_sat=400.0,
+                             tau_flash_n=2, tau_flash_DT_ref=1.0)
+        assert tau == pytest.approx(0.025 / 100.0, rel=1e-12)
+
+    def test_DT_ref_scaling(self):
+        """DT_ref=5K, n=1, DT=20K: tau_eff = 0.025/4 = 0.00625."""
+        tau = compute_tau_eff(TAU_FLASH, T_l=420.0, T_sat=400.0,
+                             tau_flash_n=1, tau_flash_DT_ref=5.0)
+        assert tau == pytest.approx(0.025 / 4.0, rel=1e-12)
+
+    def test_tau_eff_always_positive(self):
+        """tau_eff > 0 for all physical states (prevents division by zero)."""
+        for DT in [0.0, 0.01, 1.0, 50.0, 200.0]:
+            tau = compute_tau_eff(TAU_FLASH, T_l=400.0 + DT, T_sat=400.0,
+                                 tau_flash_n=1, tau_flash_DT_ref=1.0)
+            assert tau > 0, f"tau_eff must be positive: {tau} at DT={DT}"
+
+    def test_tau_eff_never_exceeds_baseline(self):
+        """tau_eff <= tau_flash always (enhancement, never suppression)."""
+        for DT in [-20.0, 0.0, 5.0, 50.0, 200.0]:
+            tau = compute_tau_eff(TAU_FLASH, T_l=400.0 + DT, T_sat=400.0,
+                                 tau_flash_n=1, tau_flash_DT_ref=1.0)
+            assert tau <= TAU_FLASH + 1e-15, \
+                f"tau_eff should not exceed tau_flash: {tau} > {TAU_FLASH} at DT={DT}"
+
+    def test_q_i_l_enhanced_by_superheat(self):
+        """q_i_l with superheat-dependent tau is stronger than baseline at high superheat.
+        At p=7 MPa with 7.5K superheat and n=1: tau_eff = 0.025/7.5 = 0.00333.
+        H_relax scales as 1/tau_eff, so ~7.5x stronger than baseline."""
+        h_l = sf_h_f(P_NOM)  # equilibrium at 10 MPa → superheated at 7 MPa
+        alpha = ALPHA_NUCLEATION
+
+        q_base, *_ = compute_q_i_l(P_LOW, alpha, h_l, use_relaxation=1,
+                                    tau_flash=TAU_FLASH, Nu_i=NU_I, d_b_eff=D_B,
+                                    tau_flash_n=0)
+        q_enhanced, *_ = compute_q_i_l(P_LOW, alpha, h_l, use_relaxation=1,
+                                        tau_flash=TAU_FLASH, Nu_i=NU_I, d_b_eff=D_B,
+                                        tau_flash_n=1, tau_flash_DT_ref=1.0)
+        # Both should be negative (evaporation)
+        assert q_base < 0 and q_enhanced < 0
+        # Enhanced should be ~7.5x stronger (7.5K superheat, n=1, DT_ref=1K)
+        ratio = q_enhanced / q_base
+        assert ratio == pytest.approx(7.5, rel=0.01), \
+            f"Enhancement ratio: {ratio:.2f}, expected ~7.5"
+
+    def test_condensation_unaffected_by_superheat_tau(self):
+        """Condensation (T_l < T_sat) is unaffected by tau_flash_n."""
+        h_l = sf_h_f(P_NOM) - 50e3  # subcooled
+        alpha = 0.1
+        q_base, *_ = compute_q_i_l(P_NOM, alpha, h_l, use_relaxation=1,
+                                    tau_flash=TAU_FLASH, Nu_i=NU_I, d_b_eff=D_B,
+                                    tau_flash_n=0)
+        q_enhanced, *_ = compute_q_i_l(P_NOM, alpha, h_l, use_relaxation=1,
+                                        tau_flash=TAU_FLASH, Nu_i=NU_I, d_b_eff=D_B,
+                                        tau_flash_n=1, tau_flash_DT_ref=1.0)
+        assert q_base == pytest.approx(q_enhanced, rel=1e-12), \
+            "Condensation should be identical regardless of tau_flash_n"

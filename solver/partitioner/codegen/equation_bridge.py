@@ -56,7 +56,7 @@ class OMEquationBridge:
         for name in ['alpha', 'h_l', 'h_v', 'h_mix', 'rho_l', 'rho_v', 'rho_m',
                       'Gamma', 'q_i_l', 'q_i_v', 'V_gj', 'a_i', 'alpha_eff',
                       'T_l', 'T_sat_cell', 'h_sat_l', 'h_sat_v',
-                      'drho_l_dp', 'drho_v_dp']:
+                      'drho_l_dp', 'drho_v_dp', 'tau_eff']:
             self._build_var_group(name, self.N)
         # Face-level variables (N+1 entries)
         for name in ['Phi2', 'mdot_v', 'mdot_l', 'j_face',

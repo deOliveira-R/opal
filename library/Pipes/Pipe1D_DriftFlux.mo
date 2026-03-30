@@ -42,6 +42,14 @@ model Pipe1D_DriftFlux
      H_eff_relax = alpha*(1-alpha)*rho_l*cp_f/tau, giving enhancement ratio over
      geometric H_geo of: rho_l*cp_f*d_b^2 / (6*Nu*k_f*tau). At tau=0.005, ratio~10x.
      Ref: Jones (1982), Lahey (1978). Typical range: 0.001-0.05s.";
+  parameter Real tau_flash_n = 0
+    "Superheat exponent for tau_flash [-]. 0 = constant (baseline).
+     tau_eff = tau_flash / max(DeltaT/DT_ref, 1)^n. n=1 gives linear speedup
+     with superheat: 20K superheat → 20x faster flashing. Self-limiting because
+     flashing cools the liquid toward T_sat, reducing the driving superheat.";
+  parameter Real tau_flash_DT_ref = 1.0
+    "Reference superheat for tau_flash scaling [K]. tau_eff = tau_flash when
+     superheat <= DT_ref. Default 1K means tau_flash_n=1 gives 1:1 K-to-speedup.";
 
   // Generic source terms (phasic)
   parameter Real S_energy_l[N] = zeros(N) "Liquid energy source per cell [W]";
@@ -82,6 +90,7 @@ model Pipe1D_DriftFlux
   Real h_i[N] "Interfacial film heat transfer coefficient [W/(m^2*K)]";
   Real alpha_eff[N] "Effective void fraction (with nucleation) [-]";
   Real d_b_eff[N] "Effective bubble diameter (reduced during flashing inception) [m]";
+  Real tau_eff[N] "Effective flashing relaxation time (superheat-dependent) [s]";
 
   // Phasic mechanical compressibility (for block-coupled pressure-void solve)
   Real drho_l_dp[N] "Liquid compressibility at h_l [kg/(m^3*Pa)]";
@@ -226,6 +235,13 @@ equation
     // Ref: Ranz & Marshall (1952), conduction limit.
     h_i[i] = Nu_i * Medium.k_f(p[i]) / d_b_eff[i];
 
+    // Superheat-dependent flashing relaxation time [s].
+    // tau_eff = tau_flash / max(DeltaT/DT_ref, 1)^n. Backward compatible: n=0 → tau_eff = tau_flash.
+    // Self-limiting: as flashing cools liquid toward T_sat, superheat decreases → tau_eff increases.
+    tau_eff[i] = tau_flash
+                 / (noEvent(max((T_l[i] - T_sat_cell[i]) / tau_flash_DT_ref, 1.0))
+                    ^ tau_flash_n);
+
     // Volumetric interfacial heat transfer [W/m^3]
     // Split into condensation (T_l < T_sat) and evaporation (T_l > T_sat) to apply
     // the Jones/Lahey relaxation ONLY to the evaporation direction.
@@ -233,17 +249,17 @@ equation
     // Condensation: q_cond = h_i*a_i * max(T_sat-T_l, 0)  [always geometric]
     // Evaporation:  q_evap = -H_eff_evap * max(T_l-T_sat, 0)
     //   H_eff_evap = h_i*a_i + use_relaxation * (H_relax - h_i*a_i)
-    //   H_relax = α*(1-α)*ρ_l*cp_f/τ  (area-weighted relaxation)
+    //   H_relax = α*(1-α)*ρ_l*cp_f/τ_eff  (area-weighted relaxation, superheat-enhanced)
     //   The α*(1-α) factor ensures H_relax scales with interfacial area, same as
     //   geometric H_geo ~ α*(1-α)/d_b². The enhancement ratio is then independent
-    //   of α: ratio = ρ_l*cp_f*d_b² / (6*Nu*k_f*τ). Self-limiting at both α→0
+    //   of α: ratio = ρ_l*cp_f*d_b² / (6*Nu*k_f*τ_eff). Self-limiting at both α→0
     //   (no bubbles) and α→1 (no liquid).
     // Ref: Jones (1982), Lahey & Moody (1993), RELAP5/MOD3 Vol I §3.2.
     q_i_l[i] = h_i[i] * a_i[i] * noEvent(max(T_sat_cell[i] - T_l[i], 0.0))
               - (h_i[i] * a_i[i]
                  + use_relaxation
                    * (alpha_eff[i] * (1 - alpha_eff[i]) * rho_l[i]
-                      * Medium.cp_f(p[i]) / tau_flash
+                      * Medium.cp_f(p[i]) / tau_eff[i]
                       - h_i[i] * a_i[i]))
                 * noEvent(max(T_l[i] - T_sat_cell[i], 0.0));
 
