@@ -1,0 +1,23 @@
+{
+  "model": "v11_balanced",
+  "solver": "BridgeDriftFluxSolver (V11, A12 moderation)",
+  "tau_mix": 0.0004,
+  "use_isentropic_a11": true,
+  "critical_flow": "Henry-Fauske",
+  "N": 24,
+  "dt": 5e-05,
+  "t_end": 0.6,
+  "overall_mape": 26.74,
+  "per_station": {
+    "GS-1": 53.03,
+    "GS-2": 33.62,
+    "GS-3": 18.54,
+    "GS-4": 13.0,
+    "GS-5": 24.07,
+    "GS-6": 16.54,
+    "GS-7": 28.4
+  },
+  "void_mae_gs5": 0.2238,
+  "onset_ms": 5.0,
+  "wall_time_s": 27.88
+}

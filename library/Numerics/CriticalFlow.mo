@@ -71,12 +71,15 @@ package CriticalFlow "Critical (choked) flow models for break boundaries"
     input Real h_g "Saturated vapour enthalpy [J/kg]";
     input Real rho_f "Saturated liquid density [kg/m^3]";
     input Real rho_g "Saturated vapour density [kg/m^3]";
+    input Real rho_f_c "Saturated liquid density at throat pressure [kg/m^3]";
+    input Real rho_g_c "Saturated vapour density at throat pressure [kg/m^3]";
     input Real p_back "Back-pressure [Pa]";
     input Real A_flow "Flow area [m^2]";
     input Real C_d "Discharge coefficient [-]";
     input Real x_ne "Non-equilibrium transition quality [-] (0.05 for sharp orifice)";
     input Real N_param "Non-equilibrium parameter [-] (0=frozen, 1=full HF)";
     input Real c_floor "Minimum sound speed [m/s] (numerical floor only)";
+    input Real c_cell "Sound speed at cell conditions [m/s] (0 = disable acoustic limit)";
     output Real mdot_crit "Critical mass flow rate [kg/s]";
   protected
     Real h_fg = max(h_g - h_f, 1e3);
@@ -125,11 +128,10 @@ package CriticalFlow "Critical (choked) flow models for break boundaries"
     // but not below back-pressure.
     p_c := max(p_back, (2.0 / 3.0) * p_cell);
 
-    // Specific volume terms (evaluated at p_cell; approximation valid
-    // for low x_e and N near 0. For N > 0 with significant quality,
-    // properties should be evaluated at p_c — deferred improvement.)
-    v_f := 1.0 / rho_f;
-    v_fg := 1.0 / max(rho_g, 0.01) - v_f;
+    // Specific volume terms evaluated at throat pressure p_c.
+    // rho_f_c and rho_g_c are saturation densities at p_c, passed by the caller.
+    v_f := 1.0 / rho_f_c;
+    v_fg := 1.0 / max(rho_g_c, 0.01) - v_f;
 
     // Pressure drop to throat
     dp_c := max(p_cell - p_c, 0.0);
@@ -157,6 +159,13 @@ package CriticalFlow "Critical (choked) flow models for break boundaries"
 
     // Ensure critical flux is at least HEM value
     G_crit := max(G_crit, G_HEM);
+
+    // Acoustic choking limit: critical flux cannot exceed rho*c_cell.
+    // When c_cell = 0, this limit is disabled (backward compatibility).
+    // Ref: RELAP5/MOD3 Vol I §3.5.1 — subcooled choking is min(Bernoulli, acoustic).
+    if c_cell > c_floor then
+      G_crit := min(G_crit, rho * c_cell);
+    end if;
 
     mdot_crit := C_d * A_flow * G_crit;
     annotation(Inline=true);

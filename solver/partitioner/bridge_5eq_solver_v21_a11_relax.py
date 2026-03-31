@@ -1,17 +1,19 @@
 """
-bridge_5eq_solver_v11_a12mod.py -- Variant 11: A12 time-constant moderation.
+bridge_5eq_solver_v21_a11_relax.py -- Variant 21: A11 relaxation blend + time-adaptive tau_mix.
 
-Based on V5 (2x2 block Thomas). V5's A12 = V/dt * (rho_v - rho_l) is ~-2.5e6
-at Edwards conditions, creating massive pressure feedback from tiny void changes.
-V11 moderates the A12 coupling with a thermal relaxation timescale:
+Based on V11 (A12 time-constant moderation) with two additions from V20/V21:
 
-    A12 = V/dt * (rho_v - rho_l) / (1 + tau_mix / dt)
+1. Time-adaptive tau_mix: During onset, tau_mix = tau_mix_onset (small, fast response).
+   Post-onset, tau_mix transitions to tau_mix_steady (large, correct wave speed).
+   Transition is either time-based (tanh sigmoid) or alpha-based (global max(alpha)).
 
-When tau_mix >> dt: A12 -> V/tau_mix * (rho_v - rho_l) -- heavily damped.
-When tau_mix << dt: A12 -> V/dt * (rho_v - rho_l) -- full coupling (same as V5).
-
-The h_mix drho_dp captures thermal relaxation implicitly via saturation curve
-shift; tau_mix makes the timescale explicit in the block coupling.
+2. A11 compressibility blend (GLOBAL, not per-cell like V17):
+   - During onset: A11 uses phasic drho_dp = (1-alpha)*drho_l_dp + alpha*drho_v_dp
+     (fast mechanical waves, onset-friendly).
+   - Post-onset: A11 transitions to h_mix drho_dp from bridge (correct wave speed
+     capturing thermal relaxation via saturation curve shift).
+   - The same blend parameter drives both tau_mix and A11 transition.
+   - Set a11_blend=False to get V20 behavior (adaptive tau_mix only).
 
 The block system per cell is:
     [A11  A12] [delta_p    ]   [R1]
@@ -35,18 +37,14 @@ from .codegen.equation_bridge import OMEquationBridge
 
 
 class BridgeDriftFluxSolver:
-    """5-equation drift-flux solver with 2x2 block Thomas and A12 moderation.
+    """5-equation drift-flux solver with 2x2 block Thomas, A12 moderation,
+    time-adaptive tau_mix, and A11 compressibility blend.
 
-    Based on V5 block Thomas. Moderates the A12 coupling term (mixture density
-    response to void changes) with a thermal relaxation timescale tau_mix.
-    This prevents the ~-2.5e6 A12 from creating excessive pressure feedback
-    from small void fraction changes during rapid depressurization.
-
-    Optional:
-    - use_isentropic_a11: Use isentropic phasic compressibility (1/c²)
-      for the A11 diagonal instead of isenthalpic (drho_dp|_h). The
-      isentropic derivative is the physically correct compressibility for
-      acoustic wave propagation (frozen phase change). Default True.
+    Based on V11 block Thomas. Adds V20/V21 enhancements:
+    - tau_mix transitions from tau_mix_onset (fast onset) to tau_mix_steady
+      (correct post-onset wave speed).
+    - A11 compressibility blends from phasic drho_dp (onset) to h_mix drho_dp
+      (post-onset) using the same global blend parameter.
 
     Physics (properties, closures, friction multiplier, interfacial transfer)
     from OM-generated C. Numerics (block tridiagonal solve, momentum, phasic
@@ -55,8 +53,11 @@ class BridgeDriftFluxSolver:
 
     def __init__(self, bridge: OMEquationBridge, spec, es=None,
                  reconstruction='donor_cell', use_block_coupling=False,
-                 corrector_steps=0, tau_mix=5e-4,
-                 use_isentropic_a11=True):
+                 corrector_steps=0,
+                 tau_mix_onset=3e-4, tau_mix_steady=5e-3,
+                 transition_mode='alpha', t_transition=0.05,
+                 alpha_threshold=0.05, transition_width=0.02,
+                 a11_blend=True):
         """
         Args:
             bridge: OMEquationBridge with compiled Modelica model
@@ -68,19 +69,30 @@ class BridgeDriftFluxSolver:
                 block coupling is always active in V5.
             corrector_steps: accepted for API compatibility but ignored --
                 block solve is implicit, no corrector needed.
-            tau_mix: thermal relaxation timescale [s] for A12 moderation.
-                Moderates A12 = V/dt*(rho_v - rho_l) / (1 + tau_mix/dt).
-                Default 5e-4 s (~10x dt at dt=50us). Set to 0 for full coupling (V5).
-            use_isentropic_a11: Use isentropic phasic compressibility (1/c²)
-                for A11 instead of isenthalpic (drho_dp|_h). Default True.
-                Requires drho_l_dp_s and drho_v_dp_s from bridge.
+            tau_mix_onset: thermal relaxation timescale during onset phase [s].
+                Small value = fast response, onset-friendly.
+            tau_mix_steady: thermal relaxation timescale during established two-phase [s].
+                Larger value = correct wave speed post-onset.
+            transition_mode: 'time' (tanh sigmoid at t_transition) or
+                'alpha' (global max(alpha) threshold).
+            t_transition: switch time [s] if transition_mode='time'.
+            alpha_threshold: global max(alpha) threshold if transition_mode='alpha'.
+                blend = min(max_alpha / alpha_threshold, 1.0).
+            transition_width: smooth transition width for tanh sigmoid [s].
+            a11_blend: whether to also blend A11 compressibility. False = V20
+                behavior (adaptive tau_mix only, A11 stays phasic).
         """
         self.reconstruction = reconstruction
         # V5: block coupling is always active; corrector is unnecessary
         self.use_block_coupling = True
         self.corrector_steps = 0
-        self.tau_mix = tau_mix
-        self.use_isentropic_a11 = use_isentropic_a11
+        self.tau_mix_onset = tau_mix_onset
+        self.tau_mix_steady = tau_mix_steady
+        self.transition_mode = transition_mode
+        self.t_transition = t_transition
+        self.alpha_threshold = alpha_threshold
+        self.transition_width = transition_width
+        self.a11_blend = a11_blend
         self.bridge = bridge
         self.N = bridge.N
         self.spec = spec
@@ -217,6 +229,8 @@ class BridgeDriftFluxSolver:
         mixture mass (Row 1) and vapour mass (Row 2) conservation. This
         eliminates the explicit void transport step and predictor-corrector.
 
+        V21 additions: time-adaptive tau_mix and A11 compressibility blend.
+
         Modifies all arrays in-place.
         """
         N = self.N
@@ -260,17 +274,21 @@ class BridgeDriftFluxSolver:
             drho_l_dp = drho_dp * 0.1   # liquid is ~10x less compressible
             drho_v_dp = drho_dp * 10.0   # vapor is ~10x more compressible
 
-        # Isentropic phasic compressibility (1/c² from IAPWS sound speed)
-        if self.use_isentropic_a11 and self.bridge.has('drho_l_dp_s'):
-            drho_l_dp_s = self.bridge.get('drho_l_dp_s')
-            drho_v_dp_s = self.bridge.get('drho_v_dp_s')
-        else:
-            drho_l_dp_s = drho_l_dp
-            drho_v_dp_s = drho_v_dp
-
         # ====================================================================
         # NUMERICAL METHOD ONLY BELOW
         # ====================================================================
+
+        # -- Time-adaptive tau_mix + A11 blend (V21) --
+        t = getattr(self, 'time', 0.0)
+        if self.transition_mode == 'time':
+            x = (t - self.t_transition) / max(self.transition_width, 1e-6)
+            blend = max(0.0, min(1.0, 0.5 * (1.0 + np.tanh(x))))
+        elif self.transition_mode == 'alpha':
+            max_alpha = np.max(alpha_old)
+            blend = min(max_alpha / max(self.alpha_threshold, 1e-10), 1.0)
+        else:
+            blend = 0.0
+        tau_mix_eff = self.tau_mix_onset + (self.tau_mix_steady - self.tau_mix_onset) * blend
 
         # -- Critical flow (from Modelica via bridge) --
         mdot_crit = 1e10
@@ -314,7 +332,7 @@ class BridgeDriftFluxSolver:
         #   [A11  A12] [delta_p    ]   [R1]
         #   [A21  A22] [delta_alpha] = [R2]
         #
-        # Row 1 (mixture mass): V/dt * drho_mech * dp + V/dt * (rho_v - rho_l) * dalpha
+        # Row 1 (mixture mass): V/dt * drho_eff * dp + V/dt * (rho_v - rho_l) * dalpha
         #   = (mdot_in - mdot_out) + pressure coupling from neighbors
         # Row 2 (vapour mass): V/dt * alpha * drho_v_dp * dp + V/dt * rho_v * dalpha
         #   = (mdot_v_in - mdot_v_out) + V * Gamma
@@ -337,12 +355,17 @@ class BridgeDriftFluxSolver:
             # ---- Row 1: Mixture mass conservation ----
             # Mechanical compressibility: how mixture density changes with p
             # at fixed void fraction
-            drho_mech = (1 - al) * drho_l_dp_s[i] + al * drho_v_dp_s[i]
-            A11 = self.V_cell / dt * drho_mech + bL + bR
+            drho_mech = (1 - al) * drho_l_dp[i] + al * drho_v_dp[i]
+            if self.a11_blend:
+                drho_hmix = drho_dp[i]  # h_mix-evaluated, from bridge
+                drho_eff = (1.0 - blend) * drho_mech + blend * drho_hmix
+            else:
+                drho_eff = drho_mech
+            A11 = self.V_cell / dt * drho_eff + bL + bR
             # Void changes mixture density: d(rho_m)/d(alpha) = rho_v - rho_l
-            # Moderated by thermal relaxation timescale tau_mix.
-            # At tau_mix=0 this recovers V5. At tau_mix >> dt, A12 is damped.
-            A12 = self.V_cell / dt * (rv_i - rl_i) / (1.0 + self.tau_mix / dt)
+            # Moderated by thermal relaxation timescale tau_mix_eff.
+            # At tau_mix_eff=0 this recovers V5. At tau_mix_eff >> dt, A12 is damped.
+            A12 = self.V_cell / dt * (rv_i - rl_i) / (1.0 + tau_mix_eff / dt)
 
             # RHS Row 1: mass residual + implicit friction correction
             # The delta formulation requires the old pressure gradient terms:

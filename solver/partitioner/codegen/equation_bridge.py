@@ -33,11 +33,12 @@ class OMEquationBridge:
         self._DP = ctypes.POINTER(ctypes.c_double)
         self._IP = ctypes.POINTER(ctypes.c_int)
 
-        self._setup_signatures()
-
-        # Detect model structure from info
+        # Detect model structure from info (must be before _setup_signatures
+        # because media function lookup uses self.prefix)
         self.prefix = self._detect_prefix()
         self.N = self._detect_N()
+
+        self._setup_signatures()
 
         # Build index arrays for variable groups (computed once, reused every step)
         # Use a generic pattern-based approach — works for HEM and DriftFlux
@@ -56,7 +57,8 @@ class OMEquationBridge:
         for name in ['alpha', 'h_l', 'h_v', 'h_mix', 'rho_l', 'rho_v', 'rho_m',
                       'Gamma', 'q_i_l', 'q_i_v', 'V_gj', 'a_i', 'alpha_eff',
                       'T_l', 'T_sat_cell', 'h_sat_l', 'h_sat_v',
-                      'drho_l_dp', 'drho_v_dp', 'tau_eff']:
+                      'drho_l_dp', 'drho_v_dp', 'drho_l_dp_s', 'drho_v_dp_s',
+                      'tau_eff']:
             self._build_var_group(name, self.N)
         # Face-level variables (N+1 entries)
         for name in ['Phi2', 'mdot_v', 'mdot_l', 'j_face',

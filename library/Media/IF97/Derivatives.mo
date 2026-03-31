@@ -177,6 +177,44 @@ package Derivatives
     val := drho_dT_p / cp_val;
   end drho_dh_p_R2;
 
+  function sound_speed_R1
+    "Isentropic sound speed for Region 1 [m/s]. IAPWS-IF97 Table 3."
+    input Real p "Pressure [Pa]";
+    input Real T "Temperature [K]";
+    output Real w;
+  protected
+    Real pi_v = Region1.pi_R1(p);
+    Real tau_v = Region1.tau_R1(T);
+    Real gpi = Region1.g_pi(pi_v, tau_v);
+    Real gpipi = Region1.g_pipi(pi_v, tau_v);
+    Real gpitau = Region1.g_pitau(pi_v, tau_v);
+    Real gtautau = Region1.g_tautau(pi_v, tau_v);
+    Real denom = (gpi - tau_v * gpitau) * (gpi - tau_v * gpitau)
+                 / (tau_v * tau_v * gtautau) - gpipi;
+  algorithm
+    w := sqrt(Constants.R * T * gpi * gpi / denom);
+    annotation(Inline=true);
+  end sound_speed_R1;
+
+  function sound_speed_R2
+    "Isentropic sound speed for Region 2 [m/s]. IAPWS-IF97 Table 3."
+    input Real p "Pressure [Pa]";
+    input Real T "Temperature [K]";
+    output Real w;
+  protected
+    Real pi_v = Region2.pi_R2(p);
+    Real tau_v = Region2.tau_R2(T);
+    Real gpi = Region2.g_pi_tot(pi_v, tau_v);
+    Real gpipi = Region2.g_pipi_tot(pi_v, tau_v);
+    Real gpitau = Region2.g_pitau_tot(pi_v, tau_v);
+    Real gtautau = Region2.g_tautau_tot(pi_v, tau_v);
+    Real denom = (gpi - tau_v * gpitau) * (gpi - tau_v * gpitau)
+                 / (tau_v * tau_v * gtautau) - gpipi;
+  algorithm
+    w := sqrt(Constants.R * T * gpi * gpi / denom);
+    annotation(Inline=true);
+  end sound_speed_R2;
+
   annotation(Documentation(info="<html>
 <p><b>Analytical thermodynamic derivatives for the Phase 2 semi-implicit solver</b></p>
 <h4>Purpose</h4>

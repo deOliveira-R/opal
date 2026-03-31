@@ -1,17 +1,31 @@
 """
-bridge_5eq_solver_v11_a12mod.py -- Variant 11: A12 time-constant moderation.
+bridge_5eq_solver_v23_energy_first.py -- Variant 23: Energy-first operator splitting.
 
-Based on V5 (2x2 block Thomas). V5's A12 = V/dt * (rho_v - rho_l) is ~-2.5e6
-at Edwards conditions, creating massive pressure feedback from tiny void changes.
-V11 moderates the A12 coupling with a thermal relaxation timescale:
+Based on V11 (A12 time-constant moderation). Reorders the semi-implicit sequence
+so energy is updated BEFORE the pressure solve. The pressure solve then sees
+updated h_mix (via bridge re-evaluation), which may help the saturation transition
+occur at the correct time. Uses previous step's dp_dt for the energy pre-update.
 
-    A12 = V/dt * (rho_v - rho_l) / (1 + tau_mix / dt)
+V11's operator splitting order:
+    1. Bridge evaluate (physics at old state)
+    2. Extract physics variables
+    3. Friction assembly
+    4. Block assembly + solve (p, alpha update)
+    5. Momentum update
+    6. Energy update (h_l, h_v, explicit)
 
-When tau_mix >> dt: A12 -> V/tau_mix * (rho_v - rho_l) -- heavily damped.
-When tau_mix << dt: A12 -> V/dt * (rho_v - rho_l) -- full coupling (same as V5).
+V23's operator splitting order:
+    1. Energy pre-update using self._prev_dp_dt
+    2. Re-evaluate bridge (set_state with updated h_l, h_v, old p, alpha, mdot)
+    3. Extract physics variables (from re-evaluated state)
+    4. Friction assembly
+    5. Block assembly + solve (p, alpha update)
+    6. Momentum update
+    7. Store dp_dt for next step
+    (No second energy update -- already done at step 1)
 
-The h_mix drho_dp captures thermal relaxation implicitly via saturation curve
-shift; tau_mix makes the timescale explicit in the block coupling.
+Cost: 2 bridge evaluations per step (one for energy pre-update properties,
+one after re-setting state with updated enthalpies).
 
 The block system per cell is:
     [A11  A12] [delta_p    ]   [R1]
@@ -19,6 +33,9 @@ The block system per cell is:
 
 Row 1: mixture mass conservation (pressure equation)
 Row 2: vapour mass conservation (void equation)
+
+A12 is moderated with tau_mix (same as V11):
+    A12 = V/dt * (rho_v - rho_l) / (1 + tau_mix / dt)
 
 ALL physics evaluation (properties, closures, friction multiplier, interfacial
 transfer) from OM-generated C via the equation bridge. The solver provides
@@ -35,18 +52,13 @@ from .codegen.equation_bridge import OMEquationBridge
 
 
 class BridgeDriftFluxSolver:
-    """5-equation drift-flux solver with 2x2 block Thomas and A12 moderation.
+    """5-equation drift-flux solver with energy-first operator splitting.
 
-    Based on V5 block Thomas. Moderates the A12 coupling term (mixture density
-    response to void changes) with a thermal relaxation timescale tau_mix.
-    This prevents the ~-2.5e6 A12 from creating excessive pressure feedback
-    from small void fraction changes during rapid depressurization.
-
-    Optional:
-    - use_isentropic_a11: Use isentropic phasic compressibility (1/c²)
-      for the A11 diagonal instead of isenthalpic (drho_dp|_h). The
-      isentropic derivative is the physically correct compressibility for
-      acoustic wave propagation (frozen phase change). Default True.
+    Based on V11 block Thomas with A12 moderation. Reorders the semi-implicit
+    sequence so phasic enthalpies are updated first (using previous step's dp/dt),
+    then the bridge is re-evaluated with updated enthalpies before the block
+    pressure-void solve. This ensures the pressure solve sees the most current
+    thermodynamic state, which may improve saturation transition timing.
 
     Physics (properties, closures, friction multiplier, interfacial transfer)
     from OM-generated C. Numerics (block tridiagonal solve, momentum, phasic
@@ -55,8 +67,7 @@ class BridgeDriftFluxSolver:
 
     def __init__(self, bridge: OMEquationBridge, spec, es=None,
                  reconstruction='donor_cell', use_block_coupling=False,
-                 corrector_steps=0, tau_mix=5e-4,
-                 use_isentropic_a11=True):
+                 corrector_steps=0, tau_mix=5e-4):
         """
         Args:
             bridge: OMEquationBridge with compiled Modelica model
@@ -71,16 +82,12 @@ class BridgeDriftFluxSolver:
             tau_mix: thermal relaxation timescale [s] for A12 moderation.
                 Moderates A12 = V/dt*(rho_v - rho_l) / (1 + tau_mix/dt).
                 Default 5e-4 s (~10x dt at dt=50us). Set to 0 for full coupling (V5).
-            use_isentropic_a11: Use isentropic phasic compressibility (1/c²)
-                for A11 instead of isenthalpic (drho_dp|_h). Default True.
-                Requires drho_l_dp_s and drho_v_dp_s from bridge.
         """
         self.reconstruction = reconstruction
         # V5: block coupling is always active; corrector is unnecessary
         self.use_block_coupling = True
         self.corrector_steps = 0
         self.tau_mix = tau_mix
-        self.use_isentropic_a11 = use_isentropic_a11
         self.bridge = bridge
         self.N = bridge.N
         self.spec = spec
@@ -104,6 +111,9 @@ class BridgeDriftFluxSolver:
 
         # Set bridge parameters from spec + XML (es provides closure params)
         bridge.set_params_from_spec(spec, es=es)
+
+        # V23: store previous step's dp/dt for energy pre-update
+        self._prev_dp_dt = None  # pressure rate from previous step
 
     @staticmethod
     def _minmod(a, b):
@@ -211,11 +221,14 @@ class BridgeDriftFluxSolver:
         return x
 
     def step(self, p, alpha, h_l, h_v, mdot, dt):
-        """One semi-implicit timestep with 2x2 block Thomas solve.
+        """One semi-implicit timestep with energy-first operator splitting.
 
-        The block solve couples pressure and void fraction implicitly via
-        mixture mass (Row 1) and vapour mass (Row 2) conservation. This
-        eliminates the explicit void transport step and predictor-corrector.
+        V23 reorders the V11 semi-implicit sequence:
+        1. Energy pre-update using previous step's dp/dt
+        2. Re-evaluate bridge with updated enthalpies
+        3. Block pressure-void solve with refreshed physics
+        4. Momentum update
+        5. Store dp/dt for next step
 
         Modifies all arrays in-place.
         """
@@ -227,13 +240,112 @@ class BridgeDriftFluxSolver:
         mdot_old = mdot.copy()
 
         # ====================================================================
-        # PHYSICS EVALUATION -- ALL from OM-generated C
+        # STEP (b): ENERGY PRE-UPDATE using previous step's dp/dt (V23)
         # ====================================================================
-        # Set simulation time for time-varying BCs (RampedBreak, etc.)
+        if self._prev_dp_dt is None:
+            self._prev_dp_dt = np.zeros(N)
+
+        # Need bridge evaluation to get old-state properties for energy update
         self.bridge.set_time(getattr(self, 'time', 0.0))
         self.bridge.set_state(p, alpha=alpha, h_l=h_l, h_v=h_v, mdot=mdot)
         self.bridge.evaluate()
 
+        # Get properties needed for energy update
+        rho_l_pre = self.bridge.get('rho_l')
+        rho_v_pre = self.bridge.get('rho_v')
+        Gamma_pre = self.bridge.get('Gamma')
+        q_i_l_pre = self.bridge.get('q_i_l')
+        q_i_v_pre = self.bridge.get('q_i_v')
+        h_sat_l_pre = self.bridge.get('h_sat_l')
+        h_sat_v_pre = self.bridge.get('h_sat_v')
+
+        has_drift_flux_pre = self.bridge.has('mdot_v') and self.bridge.has('mdot_l')
+        if has_drift_flux_pre:
+            mdot_v_face_pre = self.bridge.get('mdot_v')
+            mdot_l_face_pre = self.bridge.get('mdot_l')
+
+        dp_dt_est = self._prev_dp_dt
+
+        # -- Phasic energy pre-update (explicit, using _old enthalpy values) --
+        # All advection uses h_l_old/h_v_old to prevent directional bias from
+        # sequential cell updates. Uses mdot_old since momentum hasn't updated yet.
+        for i in range(N):
+            al = alpha_old[i]
+
+            # Liquid energy
+            m_l = max((1 - al) * rho_l_pre[i] * self.V_cell, 1e-12)
+            if (1 - al) > 1e-6:
+                if has_drift_flux_pre:
+                    ml_in = mdot_l_face_pre[i]
+                    ml_out = mdot_l_face_pre[i + 1]
+                else:
+                    al_in = alpha_old[i - 1] if i > 0 and mdot_old[i] >= 0 else al
+                    al_out = al if mdot_old[i + 1] >= 0 else (alpha_old[i + 1] if i < N - 1 else al)
+                    ml_in = mdot_old[i] * (1 - al_in)
+                    ml_out = mdot_old[i + 1] * (1 - al_out)
+
+                # Face enthalpy reconstruction using OLD values
+                flow_in = ml_in if has_drift_flux_pre else mdot_old[i]
+                flow_out = ml_out if has_drift_flux_pre else mdot_old[i + 1]
+                if self.reconstruction == 'muscl':
+                    h_in = self._muscl_face(h_l_old, i, N, flow_in, h_l_old[0], h_l_old[N - 1])
+                    h_out = self._muscl_face(h_l_old, i + 1, N, flow_out, h_l_old[0], h_l_old[N - 1])
+                else:
+                    h_in = h_l_old[i - 1] if (i > 0 and flow_in >= 0) else h_l_old[i]
+                    h_out = h_l_old[i] if flow_out >= 0 else (h_l_old[i + 1] if i < N - 1 else h_l_old[i])
+
+                flux = ml_in * (h_in - h_l_old[i]) - ml_out * (h_out - h_l_old[i])
+                pw = (1 - al) * self.V_cell * dp_dt_est[i]
+                qi = q_i_l_pre[i] * self.V_cell
+                phase = -Gamma_pre[i] * h_l_old[i] * self.V_cell
+
+                h_l[i] = h_l_old[i] + dt / m_l * (flux + pw + qi + phase)
+                h_l[i] = max(1e4, min(h_l[i], h_sat_v_pre[i]))
+            else:
+                h_l[i] = h_sat_l_pre[i]
+
+            # Vapour energy
+            m_v = max(al * rho_v_pre[i] * self.V_cell, 1e-12)
+            if al > 1e-6:
+                if has_drift_flux_pre:
+                    mv_in = mdot_v_face_pre[i]
+                    mv_out = mdot_v_face_pre[i + 1]
+                else:
+                    al_in = alpha_old[i - 1] if i > 0 and mdot_old[i] >= 0 else al
+                    al_out = al if mdot_old[i + 1] >= 0 else (alpha_old[i + 1] if i < N - 1 else al)
+                    mv_in = mdot_old[i] * al_in
+                    mv_out = mdot_old[i + 1] * al_out
+
+                # Face enthalpy reconstruction using OLD values
+                flow_in_v = mv_in if has_drift_flux_pre else mdot_old[i]
+                flow_out_v = mv_out if has_drift_flux_pre else mdot_old[i + 1]
+                if self.reconstruction == 'muscl':
+                    hv_in = self._muscl_face(h_v_old, i, N, flow_in_v, h_v_old[0], h_v_old[N - 1])
+                    hv_out = self._muscl_face(h_v_old, i + 1, N, flow_out_v, h_v_old[0], h_v_old[N - 1])
+                else:
+                    hv_in = h_v_old[i - 1] if (i > 0 and flow_in_v >= 0) else h_v_old[i]
+                    hv_out = h_v_old[i] if flow_out_v >= 0 else (h_v_old[i + 1] if i < N - 1 else h_v_old[i])
+
+                flux_v = mv_in * (hv_in - h_v_old[i]) - mv_out * (hv_out - h_v_old[i])
+                pw_v = al * self.V_cell * dp_dt_est[i]
+                qi_v = q_i_v_pre[i] * self.V_cell
+                phase_v = Gamma_pre[i] * h_v_old[i] * self.V_cell
+
+                h_v[i] = h_v_old[i] + dt / m_v * (flux_v + pw_v + qi_v + phase_v)
+                h_v[i] = max(h_sat_v_pre[i], min(h_v[i], 4e6))
+            else:
+                h_v[i] = h_sat_v_pre[i]
+
+        # ====================================================================
+        # STEP (c): RE-EVALUATE BRIDGE with updated h_l, h_v
+        # ====================================================================
+        # h_l, h_v have been modified in-place above; p, alpha, mdot unchanged
+        self.bridge.set_state(p, alpha=alpha, h_l=h_l, h_v=h_v, mdot=mdot)
+        self.bridge.evaluate()
+
+        # ====================================================================
+        # STEP (d): EXTRACT PHYSICS VARIABLES (from re-evaluated state)
+        # ====================================================================
         drho_dp = self.bridge.get('drho_dp')
         rho_face = self.bridge.get('rho_face')
         rho_l = self.bridge.get('rho_l')
@@ -259,14 +371,6 @@ class BridgeDriftFluxSolver:
             # the phasic derivatives from the bridge.
             drho_l_dp = drho_dp * 0.1   # liquid is ~10x less compressible
             drho_v_dp = drho_dp * 10.0   # vapor is ~10x more compressible
-
-        # Isentropic phasic compressibility (1/c² from IAPWS sound speed)
-        if self.use_isentropic_a11 and self.bridge.has('drho_l_dp_s'):
-            drho_l_dp_s = self.bridge.get('drho_l_dp_s')
-            drho_v_dp_s = self.bridge.get('drho_v_dp_s')
-        else:
-            drho_l_dp_s = drho_l_dp
-            drho_v_dp_s = drho_v_dp
 
         # ====================================================================
         # NUMERICAL METHOD ONLY BELOW
@@ -337,7 +441,7 @@ class BridgeDriftFluxSolver:
             # ---- Row 1: Mixture mass conservation ----
             # Mechanical compressibility: how mixture density changes with p
             # at fixed void fraction
-            drho_mech = (1 - al) * drho_l_dp_s[i] + al * drho_v_dp_s[i]
+            drho_mech = (1 - al) * drho_l_dp[i] + al * drho_v_dp[i]
             A11 = self.V_cell / dt * drho_mech + bL + bR
             # Void changes mixture density: d(rho_m)/d(alpha) = rho_v - rho_l
             # Moderated by thermal relaxation timescale tau_mix.
@@ -455,74 +559,9 @@ class BridgeDriftFluxSolver:
         else:
             mdot[N] = mdot_mom
 
-        # -- Phasic energy (explicit, using _old enthalpy values) --
-        # All advection uses h_l_old/h_v_old to prevent directional bias from
-        # sequential cell updates. Ref: C++ prototype five_eq_model.cpp:339-340.
-        dp_dt = (p - p_old) / dt
+        # ====================================================================
+        # STEP (h): STORE dp/dt for next step's energy pre-update
+        # ====================================================================
+        self._prev_dp_dt = ((p - p_old) / dt).copy()
 
-        for i in range(N):
-            al = alpha_old[i]
-
-            # Liquid energy
-            m_l = max((1 - al) * rho_l[i] * self.V_cell, 1e-12)
-            if (1 - al) > 1e-6:
-                if has_drift_flux:
-                    ml_in = mdot_l_face[i]
-                    ml_out = mdot_l_face[i + 1]
-                else:
-                    al_in = alpha_old[i - 1] if i > 0 and mdot[i] >= 0 else al
-                    al_out = al if mdot[i + 1] >= 0 else (alpha_old[i + 1] if i < N - 1 else al)
-                    ml_in = mdot[i] * (1 - al_in)
-                    ml_out = mdot[i + 1] * (1 - al_out)
-
-                # Face enthalpy reconstruction using OLD values
-                flow_in = ml_in if has_drift_flux else mdot[i]
-                flow_out = ml_out if has_drift_flux else mdot[i + 1]
-                if self.reconstruction == 'muscl':
-                    h_in = self._muscl_face(h_l_old, i, N, flow_in, h_l_old[0], h_l_old[N - 1])
-                    h_out = self._muscl_face(h_l_old, i + 1, N, flow_out, h_l_old[0], h_l_old[N - 1])
-                else:
-                    h_in = h_l_old[i - 1] if (i > 0 and flow_in >= 0) else h_l_old[i]
-                    h_out = h_l_old[i] if flow_out >= 0 else (h_l_old[i + 1] if i < N - 1 else h_l_old[i])
-
-                flux = ml_in * (h_in - h_l_old[i]) - ml_out * (h_out - h_l_old[i])
-                pw = (1 - al) * self.V_cell * dp_dt[i]
-                qi = q_i_l[i] * self.V_cell
-                phase = -Gamma[i] * h_l_old[i] * self.V_cell
-
-                h_l[i] = h_l_old[i] + dt / m_l * (flux + pw + qi + phase)
-                h_l[i] = max(1e4, min(h_l[i], h_sat_v[i]))
-            else:
-                h_l[i] = h_sat_l[i]
-
-            # Vapour energy
-            m_v = max(al * rho_v[i] * self.V_cell, 1e-12)
-            if al > 1e-6:
-                if has_drift_flux:
-                    mv_in = mdot_v_face[i]
-                    mv_out = mdot_v_face[i + 1]
-                else:
-                    al_in = alpha_old[i - 1] if i > 0 and mdot[i] >= 0 else al
-                    al_out = al if mdot[i + 1] >= 0 else (alpha_old[i + 1] if i < N - 1 else al)
-                    mv_in = mdot[i] * al_in
-                    mv_out = mdot[i + 1] * al_out
-
-                # Face enthalpy reconstruction using OLD values
-                flow_in_v = mv_in if has_drift_flux else mdot[i]
-                flow_out_v = mv_out if has_drift_flux else mdot[i + 1]
-                if self.reconstruction == 'muscl':
-                    hv_in = self._muscl_face(h_v_old, i, N, flow_in_v, h_v_old[0], h_v_old[N - 1])
-                    hv_out = self._muscl_face(h_v_old, i + 1, N, flow_out_v, h_v_old[0], h_v_old[N - 1])
-                else:
-                    hv_in = h_v_old[i - 1] if (i > 0 and flow_in_v >= 0) else h_v_old[i]
-                    hv_out = h_v_old[i] if flow_out_v >= 0 else (h_v_old[i + 1] if i < N - 1 else h_v_old[i])
-
-                flux_v = mv_in * (hv_in - h_v_old[i]) - mv_out * (hv_out - h_v_old[i])
-                pw_v = al * self.V_cell * dp_dt[i]
-                qi_v = q_i_v[i] * self.V_cell
-                phase_v = Gamma[i] * h_v_old[i] * self.V_cell
-
-                h_v[i] = h_v_old[i] + dt / m_v * (flux_v + pw_v + qi_v + phase_v)
-                h_v[i] = max(h_sat_v[i], min(h_v[i], 4e6))
-            else:
-                h_v[i] = h_sat_v[i]
+        # NO second energy update -- already done at step (b)

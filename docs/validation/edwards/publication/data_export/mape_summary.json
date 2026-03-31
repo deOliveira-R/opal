@@ -1,0 +1,89 @@
+{
+  "opal": {
+    "model": "5-eq drift-flux, Henry-Fauske, RampedBreak, N=24",
+    "overall_mape": 28.31,
+    "per_station": {
+      "GS-1": 43.72,
+      "GS-2": 26.46,
+      "GS-3": 23.1,
+      "GS-4": 27.52,
+      "GS-5": 22.45,
+      "GS-6": 30.35,
+      "GS-7": 24.55
+    }
+  },
+  "relap5_modified": {
+    "model": "6-eq two-fluid, Ransom-Trapp (modified model)",
+    "overall_mape": 27.16,
+    "per_station": {
+      "GS-1": 33.92,
+      "GS-2": 45.69,
+      "GS-3": 29.95,
+      "GS-4": 15.94,
+      "GS-5": 23.22,
+      "GS-6": 12.73,
+      "GS-7": 28.64
+    }
+  },
+  "mesh_convergence": [
+    {
+      "N": 12,
+      "dx_m": 0.341,
+      "mape_pct": 23.1,
+      "wall_time_s": 3.6
+    },
+    {
+      "N": 24,
+      "dx_m": 0.171,
+      "mape_pct": 28.3,
+      "wall_time_s": 13.8
+    },
+    {
+      "N": 48,
+      "dx_m": 0.085,
+      "mape_pct": 39.9,
+      "wall_time_s": 55.6
+    },
+    {
+      "N": 96,
+      "dx_m": 0.043,
+      "mape_pct": 49.9,
+      "wall_time_s": 220.9
+    }
+  ],
+  "feature_impact": [
+    {
+      "config": "3-eq HEM + IAPWS",
+      "mape_pct": 81.0
+    },
+    {
+      "config": "5-eq, no metastable",
+      "mape_pct": 79.8
+    },
+    {
+      "config": "+ metastable T_l",
+      "mape_pct": 30.0
+    },
+    {
+      "config": "+ extraction bridge",
+      "mape_pct": 36.0
+    },
+    {
+      "config": "+ implicit friction",
+      "mape_pct": 28.4
+    },
+    {
+      "config": "+ RT + break ramp",
+      "mape_pct": 31.8
+    },
+    {
+      "config": "+ Henry- Fauske",
+      "mape_pct": 28.3
+    }
+  ],
+  "void_fraction_mae_gs5": {
+    "opal": 0.2706,
+    "relap5_modified": 0.1114,
+    "relap5_henry_fauske": 0.1436
+  }
+}

@@ -50,6 +50,8 @@ model Pipe1D_DriftFlux
   parameter Real tau_flash_DT_ref = 1.0
     "Reference superheat for tau_flash scaling [K]. tau_eff = tau_flash when
      superheat <= DT_ref. Default 1K means tau_flash_n=1 gives 1:1 K-to-speedup.";
+  parameter Real use_regime_iac = 0
+    "0=bubbly only (baseline), 1=regime-dependent bubbly/annular (Ishii-Mishima 1984)";
 
   // Generic source terms (phasic)
   parameter Real S_energy_l[N] = zeros(N) "Liquid energy source per cell [W]";
@@ -90,11 +92,17 @@ model Pipe1D_DriftFlux
   Real h_i[N] "Interfacial film heat transfer coefficient [W/(m^2*K)]";
   Real alpha_eff[N] "Effective void fraction (with nucleation) [-]";
   Real d_b_eff[N] "Effective bubble diameter (reduced during flashing inception) [m]";
+  Real blend_regime[N] "Bubbly-to-annular blend factor [-]";
+  Real delta_film[N] "Annular liquid film thickness [m]";
   Real tau_eff[N] "Effective flashing relaxation time (superheat-dependent) [s]";
 
   // Phasic mechanical compressibility (for block-coupled pressure-void solve)
   Real drho_l_dp[N] "Liquid compressibility at h_l [kg/(m^3*Pa)]";
   Real drho_v_dp[N] "Vapour compressibility at h_v [kg/(m^3*Pa)]";
+
+  // Isentropic phasic compressibility for Wood's frozen mixture sound speed
+  Real drho_l_dp_s[N] "Liquid isentropic compressibility 1/c_l^2 [kg/(m^3*Pa)]";
+  Real drho_v_dp_s[N] "Vapour isentropic compressibility 1/c_v^2 [kg/(m^3*Pa)]";
 
   // Drift-flux (per cell)
   Real V_gj[N] "Drift velocity [m/s]";
@@ -206,6 +214,11 @@ equation
     // kept for critical flow sound speed and as fallback.
     drho_l_dp[i] = Medium.drho_dp_h(p[i], noEvent(min(h_l[i], h_sat_l[i] - 100.0)));
     drho_v_dp[i] = Medium.drho_dp_h(p[i], noEvent(max(h_v[i], h_sat_v[i] + 100.0)));
+
+    // Isentropic phasic compressibility: 1/c^2 where c = isentropic sound speed.
+    // Matches drho_l_dp/drho_v_dp pattern: 100 J/kg margin prevents Region 4 crossing.
+    drho_l_dp_s[i] = 1.0 / Medium.c_ph(p[i], noEvent(min(h_l[i], h_sat_l[i] - 100.0)))^2;
+    drho_v_dp_s[i] = 1.0 / Medium.c_ph(p[i], noEvent(max(h_v[i], h_sat_v[i] + 100.0)))^2;
   end for;
 
   // ─────────────────────────────────────────────────────────────────
@@ -225,15 +238,33 @@ equation
                                            / (alpha_flash - alpha_nucleation), 0.0), 1.0))),
                      d_b_min);
 
-    // Interfacial area concentration [1/m] — bubbly flow geometry
-    // a_i = 6*alpha*(1-alpha)/d_b_eff for monodisperse spherical bubbles.
-    // Ref: Ishii & Hibiki, "Thermo-Fluid Dynamics of Two-Phase Flow", Ch. 9
-    a_i[i] = 6 * alpha_eff[i] * (1 - alpha_eff[i]) / d_b_eff[i];
+    // ── Interfacial area concentration [1/m] and HTC [W/(m^2*K)] ──
+    // use_regime_iac = 0: bubbly-only (baseline, backward compatible)
+    //   a_i = 6*alpha*(1-alpha)/d_b, h_i = Nu*k_f/d_b
+    //   Ref: Ishii & Hibiki Ch. 9 (spherical bubbles)
+    // use_regime_iac = 1: regime-dependent (bubbly → annular transition)
+    //   Bubbly (alpha < 0.3): a_i = 6*alpha/d_b, h_i = Nu*k_f/d_b
+    //   Annular (alpha > 0.5): a_i = 4*sqrt(alpha)/D_h, h_i = k_f/delta_film
+    //   Transition: smooth blend over alpha in [0.3, 0.5]
+    //   Ref: Ishii & Mishima (1984), RELAP5/MOD3 Vol I §3.2
+    blend_regime[i] = noEvent(min(max((alpha_eff[i] - 0.3) / 0.2, 0.0), 1.0));
+    delta_film[i] = D_h * (1.0 - sqrt(noEvent(max(alpha_eff[i], 0.01)))) / 2.0;
 
-    // Interfacial film heat transfer coefficient [W/(m^2*K)]
-    // Nu = 2 for conduction around sphere (Ranz-Marshall at Re_b = 0, no-slip).
-    // Ref: Ranz & Marshall (1952), conduction limit.
-    h_i[i] = Nu_i * Medium.k_f(p[i]) / d_b_eff[i];
+    a_i[i] = (1 - use_regime_iac)
+               * 6.0 * alpha_eff[i] * (1.0 - alpha_eff[i]) / d_b_eff[i]
+             + use_regime_iac
+               * ((1.0 - blend_regime[i])
+                    * 6.0 * alpha_eff[i] / max(d_b_eff[i], d_b_min)
+                  + blend_regime[i]
+                    * 4.0 * sqrt(noEvent(max(alpha_eff[i], 0.01))) / D_h);
+
+    h_i[i] = (1 - use_regime_iac)
+               * Nu_i * Medium.k_f(p[i]) / d_b_eff[i]
+             + use_regime_iac
+               * ((1.0 - blend_regime[i])
+                    * Nu_i * Medium.k_f(p[i]) / max(d_b_eff[i], d_b_min)
+                  + blend_regime[i]
+                    * Medium.k_f(p[i]) / max(delta_film[i], 1e-5));
 
     // Superheat-dependent flashing relaxation time [s].
     // tau_eff = tau_flash / max(DeltaT/DT_ref, 1)^n. Backward compatible: n=0 → tau_eff = tau_flash.

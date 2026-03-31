@@ -133,6 +133,27 @@ package Water "OPAL water medium — unified IAPWS-IF97 API with event-free regi
     end if;
   end drho_dh_p;
 
+  redeclare function c_ph
+    "Isentropic speed of sound [m/s] from (p, h)"
+    input Real p "Pressure [Pa]";
+    input Real h "Specific enthalpy [J/kg]";
+    output Real c_val;
+  protected
+    Integer reg = region_ph(p, h);
+    Real T_val;
+  algorithm
+    if reg == 1 then
+      T_val := IF97.Region1.T_ph(p, h);
+      c_val := IF97.Derivatives.sound_speed_R1(p, T_val);
+    elseif reg == 2 then
+      T_val := IF97.Region2.T_ph(p, h);
+      c_val := IF97.Derivatives.sound_speed_R2(p, T_val);
+    else
+      // Two-phase fallback (not used directly — phasic c_ph uses clamped h)
+      c_val := 100.0;
+    end if;
+  end c_ph;
+
   // ---------------------------------------------------------------------------
   // Phasic (saturation) properties — delegating to IF97.Saturation
   // ---------------------------------------------------------------------------

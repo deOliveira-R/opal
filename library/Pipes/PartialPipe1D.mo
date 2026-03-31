@@ -40,6 +40,8 @@ partial model PartialPipe1D
   parameter Real N_param = 0.0
     "Henry-Fauske: non-equilibrium parameter (0=frozen/sharp orifice, 1=full HF) [-]";
   parameter Real c_floor = 10.0 "Minimum sound speed for critical flow [m/s] (numerical floor only)";
+  parameter Real use_acoustic_cf_limit = 0
+    "1=enable acoustic choking limit on critical flow (requires c_ph in Medium)";
 
   // Time-varying discharge coefficient (for break opening ramp).
   // Must be set at system level: pipe.C_d_eff = C_d (constant) or
@@ -116,7 +118,10 @@ equation
       library.Numerics.CriticalFlow.henry_fauske(
         p[N], h_mix_outlet, rho_outlet, drho_dp[N],
         Medium.h_f(p[N]), Medium.h_g(p[N]), Medium.rho_f(p[N]), Medium.rho_g(p[N]),
-        port_b.p, A_flow, C_d_eff, x_ne, N_param, c_floor)
+        Medium.rho_f(max(port_b.p, (2.0 / 3.0) * p[N])),
+        Medium.rho_g(max(port_b.p, (2.0 / 3.0) * p[N])),
+        port_b.p, A_flow, C_d_eff, x_ne, N_param, c_floor,
+        if use_acoustic_cf_limit == 1 then Medium.c_ph(p[N], h_mix_outlet) else 0.0)
     else
       library.Numerics.CriticalFlow.ransom_trapp(
         p[N], h_mix_outlet, rho_outlet, drho_dp[N],

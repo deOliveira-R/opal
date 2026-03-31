@@ -76,6 +76,12 @@ def _import_solver(name):
         from partitioner.bridge_5eq_solver_v18_joint_sweep import BridgeDriftFluxSolver
     elif name == 'v19':
         from partitioner.bridge_5eq_solver_v19_drhodh import BridgeDriftFluxSolver
+    elif name == 'v20':
+        from partitioner.bridge_5eq_solver_v20_time_adaptive_tau import BridgeDriftFluxSolver
+    elif name == 'v21':
+        from partitioner.bridge_5eq_solver_v21_a11_relax import BridgeDriftFluxSolver
+    elif name == 'v23':
+        from partitioner.bridge_5eq_solver_v23_energy_first import BridgeDriftFluxSolver
     else:
         raise ValueError(f"Unknown variant: {name}")
     return BridgeDriftFluxSolver

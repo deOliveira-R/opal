@@ -20,6 +20,12 @@ partial package PartialMedium
     output Real val;
   end drho_dh_p;
 
+  function c_ph "Isentropic speed of sound [m/s] from (p, h)"
+    input Real p "Pressure [Pa]";
+    input Real h "Specific enthalpy [J/kg]";
+    output Real c_val;
+  end c_ph;
+
   function T_ph "Temperature [K] from (p, h)"
     input Real p "Pressure [Pa]";
     input Real h "Specific enthalpy [J/kg]";
