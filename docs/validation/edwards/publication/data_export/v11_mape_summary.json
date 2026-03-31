@@ -1,26 +1,27 @@
 {
   "production": {
-    "model": "v11_production",
-    "solver": "BridgeDriftFluxSolver (V11, A12 moderation)",
+    "model": "v24_flash_production",
+    "solver": "BridgeDriftFluxSolver (V24, break form loss + V11 A12 moderation)",
     "tau_mix": 0.00045,
     "use_isentropic_a11": true,
+    "break_form_loss": true,
     "critical_flow": "Henry-Fauske",
     "N": 24,
     "dt": 5e-05,
     "t_end": 0.6,
-    "overall_mape": 26.26,
+    "overall_mape": 24.11,
     "per_station": {
-      "GS-1": 55.85,
-      "GS-2": 33.82,
+      "GS-1": 43.2,
+      "GS-2": 32.59,
       "GS-3": 18.63,
-      "GS-4": 14.51,
-      "GS-5": 14.72,
-      "GS-6": 20.11,
-      "GS-7": 26.19
+      "GS-4": 12.45,
+      "GS-5": 17.22,
+      "GS-6": 18.17,
+      "GS-7": 26.51
     },
-    "void_mae_gs5": 0.262,
+    "void_mae_gs5": 0.2539,
     "onset_ms": 5.0,
-    "wall_time_s": 26.29
+    "wall_time_s": 26.49
   },
   "balanced": {
     "model": "v11_balanced",
