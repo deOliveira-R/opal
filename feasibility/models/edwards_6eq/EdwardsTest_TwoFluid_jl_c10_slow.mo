@@ -1,5 +1,5 @@
-model EdwardsTest_TwoFluid_HF_Ramp
-  "Edwards blowdown: 6-eq two-fluid + IAPWS + Henry-Fauske + ramped break opening"
+model EdwardsTest_TwoFluid_jl_c10_slow
+  "Edwards blowdown: 6-eq two-fluid + J/L strong feedback, slower flashing (tau_flash=0.050)"
   library.Boundary.ClosedEnd closed_end;
   library.Pipes.Pipe1D_TwoFluid pipe(
     redeclare package Medium = library.Media.Water,
@@ -7,9 +7,13 @@ model EdwardsTest_TwoFluid_HF_Ramp
     p_init=7e6, h_l_init=986.6e3, h_v_init=2772.6e3, alpha_init=1e-6,
     d_b=3e-4, alpha_nucleation=1e-3,
     mu_l_const=2.8e-4,
+    // Jones/Lahey relaxation with strong alpha feedback, slower flashing
+    use_relaxation=1, tau_flash=0.050, tau_flash_n=1, tau_flash_DT_ref=40.0,
+    tau_cond=0.005, C_tau_alpha=10.0,
+    // Henry-Fauske critical flow
     use_critical_flow=true,
     critical_flow_model=2.0,
-    C_d=0.61, x_ne=0.05, N_param=0.0, c_floor=10.0);
+    C_d=0.61, x_ne=0.14, N_param=0.0, c_floor=10.0);
   library.Boundary.RampedBreak break_bc(
     p_back=101325.0,
     C_d_final=0.61,
@@ -20,4 +24,4 @@ equation
   connect(pipe.port_b, break_bc.port);
   // Override pipe's C_d_eff with time-varying value from RampedBreak
   pipe.C_d_eff = break_bc.C_d;
-end EdwardsTest_TwoFluid_HF_Ramp;
+end EdwardsTest_TwoFluid_jl_c10_slow;

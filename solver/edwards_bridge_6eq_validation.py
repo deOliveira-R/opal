@@ -32,11 +32,11 @@ sys.path.insert(0, str(OPAL_ROOT / "docs" / "validation" / "edwards" / "data"))
 
 from partitioner.codegen.info_parser import parse_info_json
 from partitioner.codegen.equation_bridge import OMEquationBridge
-from partitioner.bridge_6eq_solver import BridgeTwoFluidSolver
+from partitioner.two_fluid_variants.bridge_6eq_solver import BridgeTwoFluidSolver
 from partitioner.xml_reader import load_equation_system
 from partitioner.pipe1d_mapper import map_pipe1d
 
-RESULTS_DIR = OPAL_ROOT / "feasibility" / "results"
+RESULTS_DIR = OPAL_ROOT / "feasibility" / "results" / "edwards_6eq"
 
 
 def parse_args(argv=None):
@@ -48,6 +48,10 @@ def parse_args(argv=None):
                         help='End time in seconds (default: 0.6)')
     parser.add_argument('--save', action='store_true',
                         help='Save .npz and MAPE JSON to results directory')
+    parser.add_argument('--isentropic', action='store_true',
+                        help='Use isentropic compressibility for pressure diagonal')
+    parser.add_argument('--no-break-form-loss', action='store_true',
+                        help='Disable break form loss at outlet')
     return parser.parse_args(argv)
 
 
@@ -69,10 +73,14 @@ def run_validation(args):
                   "import translate_and_build; translate_and_build(\"EdwardsTest_TwoFluid_HF_Ramp\")'")
             sys.exit(1)
 
+    use_isentropic = getattr(args, 'isentropic', False)
+    break_form_loss = not getattr(args, 'no_break_form_loss', False)
+
     print("=" * 70)
     print("Edwards Blowdown — 6-EQ TWO-FLUID via OM Bridge")
     print("  Critical flow: Henry-Fauske | Ramp: Modelica RampedBreak")
-    print("  Interfacial drag: Ishii bubbly (Schiller-Naumann)")
+    print(f"  Compressibility: {'isentropic' if use_isentropic else 'h_mix (thermal)'}")
+    print(f"  Break form loss: {'ON' if break_form_loss else 'OFF'}")
     print("  ALL physics from Modelica — solver provides ONLY numerical methods")
     print("=" * 70)
 
@@ -86,7 +94,9 @@ def run_validation(args):
     es = load_equation_system(str(edwards_xml))
     spec = map_pipe1d(es)
 
-    solver = BridgeTwoFluidSolver(bridge, spec, es=es)
+    solver = BridgeTwoFluidSolver(bridge, spec, es=es,
+                                   use_isentropic_a11=use_isentropic,
+                                   break_form_loss=break_form_loss)
 
     print(f"\nModel: 6-eq two-fluid, N={N}")
     print(f"  {info.summary()}")
@@ -206,8 +216,10 @@ def run_validation(args):
     print(f"  Wall time: {wall_time:.2f}s ({n_steps/wall_time:.0f} steps/s)")
 
     print(f"\nComparison:")
-    print(f"  5-eq drift-flux (canonical): 28.3% MAPE")
-    print(f"  6-eq two-fluid (this run):   {overall:.1f}% MAPE")
+    print(f"  5-eq production (V24+AC10):  22.7% MAPE")
+    print(f"  6-eq previous (pre-J/L):     39.5% MAPE")
+    print(f"  6-eq this run:               {overall:.1f}% MAPE")
+    print(f"  RELAP5 reference:            ~20% MAPE")
 
     # ── Save results ──
     if args.save:

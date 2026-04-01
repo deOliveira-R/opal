@@ -1,17 +1,35 @@
 # 6-Equation Two-Fluid Model: Implementation Plan
 
-## Current State (2026-03-28, updated after Session 2)
+## Updated State (2026-03-31)
 
-### Key Finding from Session 2
+### Why 6-Equation: The Structural Argument
 
-**The interfacial heat transfer model is the bottleneck, not drag or momentum coupling.**
+The 5-equation drift-flux model has a **proven structural Pareto frontier** between
+pressure accuracy and void accuracy (38+ solver variants, JFNK, V33 RELAP5-style —
+all confirmed). The root cause: **the algebraic slip `v_v = C_0*j + V_gj` forces
+instantaneous vapor velocity response to pressure changes**, requiring the artificial
+`tau_mix` parameter to damp the coupling. This creates an irreducible trade-off.
 
-Both the physics reviewer and solver architect independently concluded:
-- The geometric HT model (`H_i = h_i * a_i = 6000 W/(m³·K)`) is **250x too weak** for rapid depressurization flashing
-- Both OPAL 5-eq and 6-eq nucleate ~100ms late at GS-5 (experiment starts voiding at t=50ms)
-- Void fraction MAE: OPAL 5-eq = 0.226, OPAL 6-eq = 0.221, RELAP5 = 0.111
-- The 6-eq coupled momentum framework is algebraically correct (40/40 L0 tests) but cannot fix a closure deficiency
-- The 6-eq model's advantage (phasic momentum) matters for counter-current flow, not co-current blowdown
+The 6-equation model eliminates this frontier by giving vapor its own momentum equation:
+- `α·ρ_v · ∂v_v/∂t = -α·∂p/∂x + F_drag + ...`
+- Vapor velocity responds through **physical inertia**, not instantaneously
+- The pressure equation becomes **scalar** (no 2×2 block, no tau_mix, no h_mix)
+- Interfacial drag provides natural phase coupling
+
+| | 5-equation | 6-equation |
+|--|---|---|
+| Pressure tridiagonal | 2×2 block (p + α coupled) | **Scalar (p only)** |
+| Compressibility diagonal | Needs tau_mix moderation | **Mechanical only** |
+| Void update | Implicit (from block, tau_mix-damped) | **Explicit (vapor mass balance)** |
+| Pareto frontier | **YES (structural)** | **Eliminated** |
+| h_mix needed | Yes (via A12 moderation) | **No** |
+
+### Previous Finding (Session 2, March 28)
+
+The interfacial heat transfer model was the bottleneck at that time — **but this was
+BEFORE Jones/Lahey flashing was implemented.** With current closures (J/L + C_tau_alpha=10
++ break form loss), the 5-eq model achieves 22.7% MAPE. The remaining gap to RELAP5
+(~20%) is now understood to be the Pareto frontier, not the HT closure.
 
 ### What Was Built in Session 2
 
@@ -19,7 +37,7 @@ Both the physics reviewer and solver architect independently concluded:
 |-----------|------|--------|
 | Coupled momentum derivation | `docs/math/derivations/two_fluid_coupled_momentum.py` | Complete, 7 tests pass |
 | Regime drag derivation | `docs/math/derivations/drag_regime_map.py` | Complete, 8 tests pass |
-| 2x2 Cramer block solve | `solver/partitioner/bridge_6eq_solver.py` | Complete (sigma-only, no explicit drag) |
+| 2x2 Cramer block solve | `solver/partitioner/two_fluid_variants/bridge_6eq_solver.py` | Complete (sigma-only, no explicit drag) |
 | Regime map drag | `library/Numerics/InterfacialDrag.mo` → `regime_map_drag()` | Complete (bubbly+slug+annular) |
 | C_D cap at 0.44 | `library/Numerics/InterfacialDrag.mo` → both drag functions | Complete |
 | Selectable drag model | `library/Pipes/Pipe1D_TwoFluid.mo` → `drag_model` parameter | Complete (1=ishii, 2=regime) |
@@ -50,7 +68,7 @@ The 6-equation two-fluid model is **functional end-to-end** with all components 
 | Edwards test case | `feasibility/models/EdwardsTest_TwoFluid_HF_Ramp.mo` | Complete |
 | Compiled bridge | `feasibility/results/opal_bridge_EdwardsTest_TwoFluid_HF_Ramp.so` | 146KB, compiles in 7.5s |
 | Bridge pipeline extensions | `solver/partitioner/codegen/equation_bridge.py` | Modified: mdot_l/mdot_v state support |
-| Semi-implicit solver | `solver/partitioner/bridge_6eq_solver.py` | Complete (BridgeTwoFluidSolver) |
+| Semi-implicit solver | `solver/partitioner/two_fluid_variants/bridge_6eq_solver.py` | Complete (BridgeTwoFluidSolver) |
 | Validation driver | `solver/edwards_bridge_6eq_validation.py` | Complete |
 | Results | `docs/validation/edwards/results/six_eq_hf_ramp/` | .npz + MAPE JSON saved |
 
@@ -184,7 +202,7 @@ Pipe1D_TwoFluid.mo          InterfacialDrag.mo
 40 L0 + 17 swap-detection tests pass. Algebraically correct but does not improve
 Edwards MAPE because drag coupling is not the binding constraint.
 
-**Files:** `solver/partitioner/bridge_6eq_solver.py`, `docs/math/derivations/two_fluid_coupled_momentum.py`
+**Files:** `solver/partitioner/two_fluid_variants/bridge_6eq_solver.py`, `docs/math/derivations/two_fluid_coupled_momentum.py`
 
 ### COMPLETED: Task 2 — Flow Regime-Dependent Drag
 
@@ -334,19 +352,33 @@ without a cap or warning.
 
 ---
 
-## Execution Order (Revised)
+## Execution Order (Revised March 31, 2026)
+
+The flashing model is DONE (Jones/Lahey + C_tau_alpha=10, validated on 5-eq at 22.7% MAPE).
+The next breakthrough requires re-implementing the 6-eq solver with current physics.
 
 ```
-Flashing model (CRITICAL) ──→ Validate on 5-eq ──→ Port to 6-eq
-                                                        │
-Alpha cap removal (LOW)    ─────────────────────────→   │
-                                                        ▼
-L2 integration test ──→ Per-phase sigma regression   Void comparison
+Step 1: Port current physics to Pipe1D_TwoFluid.mo
+        (Jones/Lahey, break form loss, AsymCond C_tau_alpha=10)
+
+Step 2: Rewrite bridge_6eq_solver.py with:
+        - Scalar pressure (mechanical compressibility, no tau_mix)
+        - 2×2 Cramer per face (coupled phasic momentum + drag)
+        - Explicit void (vapor mass balance with new phasic flows)
+        - Optional Schur augmentation (dGamma/dp for splitting lag)
+
+Step 3: Edwards validation — compare 6-eq vs 5-eq at 22.7%
+        Target: break the Pareto frontier (good MAPE AND good VoidMAE)
+
+Step 4: Darwinian games — sweep drag models, HT closures, etc.
 ```
 
-The flashing model is the single highest-impact physics gap in OPAL.
-It benefits both 5-eq and 6-eq models. Validate on 5-eq first (stable
-solver, no confounding variables), then port to 6-eq.
+### Key Changes from Previous Plan
+
+1. **Flashing is no longer the bottleneck** — J/L + C_tau_alpha=10 solved it
+2. **The solver structure IS the bottleneck** — 38+ 5-eq variants proved the Pareto is structural
+3. **6-eq is now about eliminating tau_mix**, not about separate-flow momentum per se
+4. **All current physics ports to 6-eq** — J/L, break form loss, isentropic A11, C_tau_alpha
 
 ---
 
@@ -619,14 +651,14 @@ This is the RELAP5/TRACE approach. Estimated implementation: ~500 lines in
 
 Apply the same changes to the 6-eq two-fluid model:
 - `library/Pipes/Pipe1D_TwoFluid.mo`: add use_relaxation, tau_flash, split q_i_l
-- `solver/partitioner/bridge_6eq_solver.py`: add semi-implicit void coupling + T_l/T_sat reads
+- `solver/partitioner/two_fluid_variants/bridge_6eq_solver.py`: add semi-implicit void coupling + T_l/T_sat reads
 - `feasibility/models/EdwardsTest_TwoFluid_HF_Ramp_Flash.mo`: new test case
 
 ### Priority 2: Port Flashing Model to 6-eq (MEDIUM)
 
 Apply the same changes to the 6-eq two-fluid model:
 - `library/Pipes/Pipe1D_TwoFluid.mo`: add use_relaxation, tau_flash, split q_i_l
-- `solver/partitioner/bridge_6eq_solver.py`: add semi-implicit void coupling + T_l/T_sat reads
+- `solver/partitioner/two_fluid_variants/bridge_6eq_solver.py`: add semi-implicit void coupling + T_l/T_sat reads
 - `feasibility/models/EdwardsTest_TwoFluid_HF_Ramp_Flash.mo`: new test case
 
 The 6-eq model has v_rel directly available, enabling Ranz-Marshall Nu as an additional

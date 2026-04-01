@@ -171,6 +171,101 @@ package CriticalFlow "Critical (choked) flow models for break boundaries"
     annotation(Inline=true);
   end henry_fauske;
 
+  function moody_slip
+    "Moody (1965) slip-corrected critical mass flux [kg/s].
+     Separate-flow model with optimal slip ratio s* = (rho_l/rho_g)^(1/3).
+     Gives 1.5-3x higher G_crit than HEM at low quality (x < 0.2) because
+     it accounts for phase velocity differences at the throat.
+     Ref: Moody (1965), Trans. ASME J. Heat Transfer 87:134-142."
+    input Real p_cell "Cell pressure adjacent to break [Pa]";
+    input Real h_mix "Mixture enthalpy at break cell [J/kg]";
+    input Real rho "Mixture density at break cell [kg/m^3]";
+    input Real drho_dp_h "drho/dp at constant h [kg/(m^3*Pa)]";
+    input Real h_f "Saturated liquid enthalpy [J/kg]";
+    input Real h_g "Saturated vapour enthalpy [J/kg]";
+    input Real rho_f "Saturated liquid density [kg/m^3]";
+    input Real rho_g "Saturated vapour density [kg/m^3]";
+    input Real rho_f_c "Saturated liquid density at throat pressure [kg/m^3]";
+    input Real rho_g_c "Saturated vapour density at throat pressure [kg/m^3]";
+    input Real p_back "Back-pressure [Pa]";
+    input Real A_flow "Flow area [m^2]";
+    input Real C_d "Discharge coefficient [-]";
+    input Real x_ne "Quality transition for Moody->HEM blend [-]";
+    input Real c_floor "Minimum sound speed [m/s] (numerical floor only)";
+    output Real mdot_crit "Critical mass flow rate [kg/s]";
+  protected
+    Real h_fg = max(h_g - h_f, 1e3);
+    Real x_e "Equilibrium quality [-]";
+    Real dp_sub, G_sub "Subcooled Bernoulli";
+    Real c_hem, G_HEM "HEM critical flux";
+    Real s_opt "Optimal slip ratio (rho_l/rho_g)^(1/3) [-]";
+    Real p_c "Critical throat pressure [Pa]";
+    Real dp_c "Pressure drop to throat [Pa]";
+    Real v_m_slip "Slip-weighted specific volume [m^3/kg]";
+    Real G_moody "Moody critical mass flux [kg/(m^2*s)]";
+    Real G_crit "Selected critical mass flux [kg/(m^2*s)]";
+    Real blend "Blending factor [-]";
+  algorithm
+    // ── Equilibrium quality ──
+    if h_mix <= h_f then
+      x_e := 0.0;
+    elseif h_mix >= h_g then
+      x_e := 1.0;
+    else
+      x_e := (h_mix - h_f) / h_fg;
+    end if;
+
+    // ── Subcooled: Bernoulli discharge ──
+    dp_sub := max(p_cell - p_back, 0.0);
+    G_sub := sqrt(2.0 * rho_f * dp_sub);
+
+    // ── HEM critical mass flux (high-quality fallback) ──
+    if drho_dp_h > 0 then
+      c_hem := max(sqrt(1.0 / (rho * drho_dp_h)), c_floor);
+    else
+      c_hem := c_floor;
+    end if;
+    G_HEM := rho * c_hem;
+
+    // ── Moody slip critical flow (low-to-moderate quality) ──
+    // Optimal slip ratio: s* = (rho_l/rho_g)^(1/3), Moody 1965 Eq. 12.
+    // Evaluated at throat conditions for accuracy.
+    s_opt := max((rho_f_c / max(rho_g_c, 0.01)) ^ (1.0 / 3.0), 1.0);
+
+    // Critical throat pressure: Moody uses ~0.55*p0 (vs 0.667 for incompressible).
+    p_c := max(p_back, 0.55 * p_cell);
+    dp_c := max(p_cell - p_c, 0.0);
+
+    // Slip-weighted specific volume at throat:
+    // v_m = x * v_g * s + (1-x) * v_f  (Moody Eq. 8)
+    // At the throat, the flow state is approximated by stagnation properties.
+    v_m_slip := x_e / max(rho_g_c, 0.01) * s_opt
+                + (1.0 - x_e) / rho_f_c;
+
+    // Moody mass flux: G = sqrt(2 * dp / v_m_slip)
+    G_moody := sqrt(2.0 * dp_c / max(v_m_slip, 1e-6));
+
+    // ── Regime blending: subcooled → Moody → HEM ──
+    if x_e <= 0.0 then
+      // Subcooled: pure Bernoulli
+      G_crit := G_sub;
+    elseif x_e < x_ne then
+      // Low quality: Moody with smooth blend toward HEM
+      blend := x_e / x_ne;
+      // Quadratic blend: more Moody at low x, smooth transition to HEM
+      G_crit := G_moody * (1.0 - blend * blend) + G_HEM * blend * blend;
+    else
+      // High quality: full HEM
+      G_crit := G_HEM;
+    end if;
+
+    // Ensure critical flux is at least HEM value
+    G_crit := max(G_crit, G_HEM);
+
+    mdot_crit := C_d * A_flow * G_crit;
+    annotation(Inline=true);
+  end moody_slip;
+
   annotation(Documentation(info="<html>
 <p>Critical (choked) flow models for break boundaries.</p>
 <p><b>ransom_trapp</b>: Quality-blended subcooled Bernoulli + HEM sound speed model.
@@ -179,5 +274,8 @@ Based on RELAP5/MOD3 Code Manual Vol 1, §3.5.1.</p>
 Accounts for delayed flashing at the break plane (frozen flow for sharp orifices).
 Based on Henry &amp; Fauske (1971), J. Heat Transfer 93(2):179-187.
 See also RELAP5/MOD3 Code Manual Vol 1, §3.5.2.</p>
+<p><b>moody_slip</b>: Separate-flow choking model with optimal slip ratio.
+Gives higher critical mass flux than HEM at low quality due to phase velocity
+differences at the throat. Based on Moody (1965), Trans. ASME 87:134-142.</p>
 </html>"));
 end CriticalFlow;

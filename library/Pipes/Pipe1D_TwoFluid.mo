@@ -47,8 +47,11 @@ model Pipe1D_TwoFluid
   parameter Real C_d = 1.0 "Break discharge coefficient [-]";
   parameter Real x_trans = 0.10 "Ransom-Trapp: quality transition for blend [-]";
   parameter Real x_ne = 0.05 "Henry-Fauske: non-equilibrium transition quality [-]";
-  parameter Real N_param = 0.0 "Henry-Fauske: non-equilibrium parameter [-]";
+  parameter Real N_param = 0.0
+    "Henry-Fauske: non-equilibrium parameter (0=frozen/sharp orifice, 1=full HF) [-]";
   parameter Real c_floor = 10.0 "Minimum sound speed for critical flow [m/s]";
+  parameter Real use_acoustic_cf_limit = 0
+    "1=enable acoustic choking limit on critical flow (requires c_ph in Medium)";
   Real C_d_eff "Effective discharge coefficient (time-varying) [-]";
 
   // ═══════════════════════════════════════════════════════════════════
@@ -61,6 +64,33 @@ model Pipe1D_TwoFluid
     "Liquid dynamic viscosity [Pa.s] (constant; future: from Medium.mu_f)";
   parameter Real drag_model = 1
     "Interfacial drag model: 1 = Ishii bubbly (Schiller-Naumann), 2 = regime map (bubbly+slug+annular)";
+
+  // ── Flashing model parameters (ported from Pipe1D_DriftFlux_AsymCond) ──
+  parameter Real d_b_min = 1e-5 "Minimum bubble diameter (numerical floor) [m]";
+  parameter Real use_inception = 0
+    "1.0 to enable d_b_eff inception model (small d_b during nucleation).";
+  parameter Real use_relaxation = 0
+    "1.0 to enable Jones/Lahey relaxation model. RECOMMENDED for rapid depressurization.
+     H_eff = alpha*(1-alpha)*rho_l*cp_f/tau. Ref: Jones (1982), Lahey & Moody (1993).";
+  parameter Real d_b_flash = 3e-5
+    "Nucleation bubble diameter [m] (use_inception=1 only). Default 30um.";
+  parameter Real alpha_flash = 0.05
+    "Void fraction above which d_b_eff returns to bulk d_b [-] (use_inception=1 only)";
+  parameter Real tau_flash = 0.005
+    "Flashing relaxation time [s] (use_relaxation=1). Smaller = faster flashing.";
+  parameter Real tau_flash_n = 0
+    "Superheat exponent for tau_flash [-]. 0 = constant.
+     tau_eff = tau_flash / max(DeltaT/DT_ref, 1)^n.";
+  parameter Real tau_flash_DT_ref = 1.0
+    "Reference superheat for tau_flash scaling [K].";
+  parameter Real use_regime_iac = 0
+    "0=bubbly only (baseline), 1=regime-dependent bubbly/annular (Ishii-Mishima 1984)";
+  parameter Real tau_cond = 0.005
+    "Condensation relaxation time [s]. Faster than evaporation (no nucleation barrier).";
+  parameter Real C_tau_alpha = 0.0
+    "Alpha-dependence coefficient for evaporation tau [-].
+     tau_eff = tau_flash / ((1 + C*alpha) * superheat_factor).
+     C=0: baseline. C=10: 11x faster at alpha=1.";
 
   // ═══════════════════════════════════════════════════════════════════
   // Replaceable medium
@@ -110,6 +140,21 @@ model Pipe1D_TwoFluid
   Real a_i[N] "Interfacial area concentration [1/m]";
   Real h_i[N] "Interfacial film heat transfer coefficient [W/(m^2*K)]";
   Real alpha_eff[N] "Effective void fraction (with nucleation) [-]";
+  Real d_b_eff[N] "Effective bubble diameter (reduced during flashing inception) [m]";
+  Real blend_regime[N] "Bubbly-to-annular blend factor [-]";
+  Real delta_film[N] "Annular liquid film thickness [m]";
+  Real tau_eff[N] "Effective flashing relaxation time (superheat-dependent) [s]";
+
+  // Phasic mechanical compressibility (for block-coupled pressure-void solve)
+  Real drho_l_dp[N] "Liquid compressibility at h_l [kg/(m^3*Pa)]";
+  Real drho_v_dp[N] "Vapour compressibility at h_v [kg/(m^3*Pa)]";
+
+  // Isentropic phasic compressibility for frozen mixture sound speed
+  Real drho_l_dp_s[N] "Liquid isentropic compressibility 1/c_l^2 [kg/(m^3*Pa)]";
+  Real drho_v_dp_s[N] "Vapour isentropic compressibility 1/c_v^2 [kg/(m^3*Pa)]";
+
+  // Mechanical compressibility for 6-eq pressure equation (frozen composition)
+  Real drho_mech[N] "Phasic isentropic drho/dp for pressure diagonal [kg/(m^3*Pa)]";
 
   // ═══════════════════════════════════════════════════════════════════
   // Face-averaged properties (for phasic momentum)
@@ -175,18 +220,82 @@ equation
     // Mixture derivatives for pressure linearisation
     drho_dp[i] = Medium.drho_dp_h(p[i], h_mix[i]);
     drho_dh[i] = Medium.drho_dh_p(p[i], h_mix[i]);
+
+    // Phasic mechanical compressibility (100 J/kg margin avoids Region 4)
+    drho_l_dp[i] = Medium.drho_dp_h(p[i], noEvent(min(h_l[i], h_sat_l[i] - 100.0)));
+    drho_v_dp[i] = Medium.drho_dp_h(p[i], noEvent(max(h_v[i], h_sat_v[i] + 100.0)));
+
+    // Isentropic phasic compressibility: 1/c^2
+    drho_l_dp_s[i] = 1.0 / Medium.c_ph(p[i], noEvent(min(h_l[i], h_sat_l[i] - 100.0)))^2;
+    drho_v_dp_s[i] = 1.0 / Medium.c_ph(p[i], noEvent(max(h_v[i], h_sat_v[i] + 100.0)))^2;
+
+    // Mechanical compressibility: frozen-composition phasic weighting
+    // This is the correct 6-eq pressure diagonal: no thermal compressibility.
+    drho_mech[i] = (1 - alpha[i]) * drho_l_dp_s[i] + alpha[i] * drho_v_dp_s[i];
   end for;
 
   // ─────────────────────────────────────────────────────────────────
-  // Interfacial closures (same as Pipe1D_DriftFlux)
+  // Interfacial closures (ported from Pipe1D_DriftFlux_AsymCond)
   // ─────────────────────────────────────────────────────────────────
   for i in 1:N loop
+    // Nucleation onset: when T_l > T_sat, enforce minimum void
     alpha_eff[i] = if T_l[i] > T_sat_cell[i] and alpha[i] < alpha_nucleation
                    then alpha_nucleation else alpha[i];
-    a_i[i] = 6 * alpha_eff[i] * (1 - alpha_eff[i]) / d_b;
-    h_i[i] = Nu_i * Medium.k_f(p[i]) / d_b;
-    q_i_l[i] = h_i[i] * a_i[i] * (T_sat_cell[i] - T_l[i]);
+
+    // Effective bubble diameter: ramp from d_b_flash to d_b with void fraction
+    d_b_eff[i] = max(d_b - use_inception * (d_b - d_b_flash)
+                     * (1 - noEvent(min(max((alpha_eff[i] - alpha_nucleation)
+                                           / (alpha_flash - alpha_nucleation), 0.0), 1.0))),
+                     d_b_min);
+
+    // ── Interfacial area concentration [1/m] and HTC [W/(m^2*K)] ──
+    // use_regime_iac=0: bubbly-only. use_regime_iac=1: bubbly→annular blend.
+    blend_regime[i] = noEvent(min(max((alpha_eff[i] - 0.3) / 0.2, 0.0), 1.0));
+    delta_film[i] = D_h * (1.0 - sqrt(noEvent(max(alpha_eff[i], 0.01)))) / 2.0;
+
+    a_i[i] = (1 - use_regime_iac)
+               * 6.0 * alpha_eff[i] * (1.0 - alpha_eff[i]) / d_b_eff[i]
+             + use_regime_iac
+               * ((1.0 - blend_regime[i])
+                    * 6.0 * alpha_eff[i] / max(d_b_eff[i], d_b_min)
+                  + blend_regime[i]
+                    * 4.0 * sqrt(noEvent(max(alpha_eff[i], 0.01))) / D_h);
+
+    h_i[i] = (1 - use_regime_iac)
+               * Nu_i * Medium.k_f(p[i]) / d_b_eff[i]
+             + use_regime_iac
+               * ((1.0 - blend_regime[i])
+                    * Nu_i * Medium.k_f(p[i]) / max(d_b_eff[i], d_b_min)
+                  + blend_regime[i]
+                    * Medium.k_f(p[i]) / max(delta_film[i], 1e-5));
+
+    // Alpha-dependent + superheat-dependent flashing relaxation time
+    tau_eff[i] = tau_flash
+                 / ((1.0 + C_tau_alpha * alpha_eff[i])
+                    * noEvent(max((T_l[i] - T_sat_cell[i]) / tau_flash_DT_ref, 1.0))
+                      ^ tau_flash_n);
+
+    // Asymmetric condensation/evaporation interfacial heat transfer [W/m^3]
+    // Condensation (T_l < T_sat): uses tau_cond (no nucleation barrier)
+    // Evaporation (T_l > T_sat): uses tau_eff with C_tau_alpha feedback
+    // Ref: Jones (1982), Lahey & Moody (1993), RELAP5/MOD3 Vol I §3.2.
+    q_i_l[i] = (h_i[i] * a_i[i]
+                + use_relaxation
+                  * (alpha_eff[i] * (1 - alpha_eff[i]) * rho_l[i]
+                     * Medium.cp_f(p[i]) / tau_cond
+                     - h_i[i] * a_i[i]))
+               * noEvent(max(T_sat_cell[i] - T_l[i], 0.0))
+              - (h_i[i] * a_i[i]
+                 + use_relaxation
+                   * (alpha_eff[i] * (1 - alpha_eff[i]) * rho_l[i]
+                      * Medium.cp_f(p[i]) / tau_eff[i]
+                      - h_i[i] * a_i[i]))
+                * noEvent(max(T_l[i] - T_sat_cell[i], 0.0));
+
+    // Mass transfer from interfacial heat
     Gamma[i] = -q_i_l[i] / max(h_sat_v[i] - h_sat_l[i], 1.0);
+
+    // Vapour heat: interface energy balance
     q_i_v[i] = -Gamma[i] * (h_v[i] - h_l[i]) - q_i_l[i];
   end for;
 
@@ -253,11 +362,16 @@ equation
   // ─────────────────────────────────────────────────────────────────
   mdot_crit = if use_critical_flow then
     (if critical_flow_model == 2 then
+      // Henry-Fauske non-equilibrium model
       library.Numerics.CriticalFlow.henry_fauske(
         p[N], h_mix[N], rho_m[N], drho_dp[N],
         Medium.h_f(p[N]), Medium.h_g(p[N]), Medium.rho_f(p[N]), Medium.rho_g(p[N]),
-        port_b.p, A_flow, C_d_eff, x_ne, N_param, c_floor)
+        Medium.rho_f(max(port_b.p, (2.0 / 3.0) * p[N])),
+        Medium.rho_g(max(port_b.p, (2.0 / 3.0) * p[N])),
+        port_b.p, A_flow, C_d_eff, x_ne, N_param, c_floor,
+        if use_acoustic_cf_limit == 1 then Medium.c_ph(p[N], h_mix[N]) else 0.0)
     else
+      // Ransom-Trapp (default)
       library.Numerics.CriticalFlow.ransom_trapp(
         p[N], h_mix[N], rho_m[N], drho_dp[N],
         Medium.h_f(p[N]), Medium.h_g(p[N]), Medium.rho_f(p[N]),
@@ -364,6 +478,9 @@ equation
   // MASS CONSERVATION (per cell) — pressure linearisation
   //   V * (drho_dp * der(p) + drho_dh * der(h_mix)) = mdot_in - mdot_out
   //   where total mass flow at face = mdot_l + mdot_v
+  //   NOTE: drho_dp is at h_mix (thermal compressibility). The solver may
+  //   use isentropic compressibility (drho_mech) for the pressure diagonal
+  //   instead — this is a numerical choice, not a physics change.
   // ─────────────────────────────────────────────────────────────────
   for i in 1:N loop
     V_cell * (drho_dp[i] * der(p[i])
@@ -437,9 +554,12 @@ vapour enthalpy h_v. Per face: liquid mass flow mdot_l, vapour mass flow mdot_v.
 <li>Vapour energy (phasic, with interfacial HT and phase-change coupling)</li>
 </ol>
 <p><b>New closures vs drift-flux:</b> Ishii bubbly interfacial drag (Schiller-Naumann C_D),
-per-phase Darcy wall friction (no Martinelli-Nelson Φ² needed).</p>
-<p><b>Retained from drift-flux:</b> interfacial heat transfer (Nu=2), metastable T_l,
-nucleation onset, Henry-Fauske/Ransom-Trapp critical flow, IAPWS-IF97 properties.</p>
+per-phase Darcy wall friction (no Martinelli-Nelson Φ² needed), isentropic phasic
+compressibility (1/c²).</p>
+<p><b>Shared with drift-flux (AsymCond):</b> Jones/Lahey relaxation (asymmetric
+condensation/evaporation), C_tau_alpha alpha-dependent tau, regime-dependent IAC,
+metastable T_l, nucleation onset, Henry-Fauske/Ransom-Trapp critical flow,
+IAPWS-IF97 properties.</p>
 <p>Derived in: derivations/two_fluid_momentum.py, derivations/interfacial_drag.py</p>
 </html>"));
 end Pipe1D_TwoFluid;
